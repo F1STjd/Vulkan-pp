@@ -42,7 +42,9 @@ app::init_vulkan() -> std::expected<void, std::string>
 {
   return create_instance() //
     .and_then([ this ] -> std::expected<void, std::string>
-      { return setup_debug_messenger(); });
+      { return setup_debug_messenger(); })
+    .and_then([ this ] -> std::expected<void, std::string>
+      { return pick_physical_device(); });
 }
 
 void
@@ -222,6 +224,78 @@ app::setup_debug_messenger() -> std::expected<void, std::string>
         debug_messenger_ = std::move(debug_messenger);
         return {};
       });
+}
+
+auto
+app::pick_physical_device() -> std::expected<void, std::string>
+{
+  return map_vk_error(instance_.enumeratePhysicalDevices())
+    .and_then(
+      [ this ](std::span<const vk::raii::PhysicalDevice> physical_devices)
+        -> std::expected<void, std::string>
+      {
+        const auto suitable_device_it = std::ranges::find_if(physical_devices,
+          [ this ](const vk::raii::PhysicalDevice& device)
+          { return is_device_suitable(device); });
+        if (suitable_device_it == physical_devices.end())
+        {
+          return std::expected<void, std::string> {
+            std::unexpect,
+            "No suitable GPU found",
+          };
+        }
+        physical_device_ = *suitable_device_it;
+        return {};
+      });
+}
+
+auto
+app::is_device_suitable(const vk::raii::PhysicalDevice& physical_device) -> bool
+{
+  bool supports_vulkan_13 =
+    physical_device.getProperties().apiVersion >= vk::ApiVersion13;
+
+  const auto queue_family_properties =
+    physical_device.getQueueFamilyProperties();
+  bool supports_graphics = std::ranges::any_of(queue_family_properties,
+    [](const auto& qf_property)
+    {
+      return (static_cast<bool>(
+        qf_property.queueFlags & vk::QueueFlagBits::eGraphics));
+    });
+
+  auto supports_required_device_extensions =
+    physical_device.enumerateDeviceExtensionProperties()
+      .transform(
+        [ & ](
+          std::span<const vk::ExtensionProperties> available_device_extensions)
+        {
+          return std::ranges::all_of(required_device_extensions,
+            [ &available_device_extensions ](
+              const auto& required_device_extension)
+            {
+              return std::ranges::any_of(available_device_extensions,
+                [ required_device_extension ](
+                  const auto& available_device_extension)
+                {
+                  return strcmp(available_device_extension.extensionName,
+                           required_device_extension) == 0;
+                });
+            });
+        })
+      .value_or(false);
+
+  auto features = physical_device.getFeatures2<vk::PhysicalDeviceFeatures2,
+    vk::PhysicalDeviceVulkan13Features,
+    vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+  bool supports_required_features =
+    features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering ==
+      vk::True &&
+    features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
+        .extendedDynamicState == vk::True;
+
+  return supports_vulkan_13 && supports_graphics &&
+    supports_required_device_extensions && supports_required_features;
 }
 
 } // namespace lbn

@@ -22,6 +22,10 @@ constexpr std::array<const char*, 0> validation_layers {};
 constexpr bool enable_validation_layers { true };
 #endif
 
+constexpr std::array required_device_extensions {
+  vk::KHRSwapchainExtensionName
+};
+
 export class app
 {
 public:
@@ -59,6 +63,12 @@ private:
   auto
   setup_debug_messenger() -> std::expected<void, std::string>;
 
+  auto
+  pick_physical_device() -> std::expected<void, std::string>;
+
+  auto
+  is_device_suitable(const vk::raii::PhysicalDevice& physical_device) -> bool;
+
 private:
   sf::Window window_ {
     sf::VideoMode { { window_width, window_height } },
@@ -67,5 +77,6 @@ private:
   vk::raii::Context context_;
   vk::raii::Instance instance_ { nullptr };
   vk::raii::DebugUtilsMessengerEXT debug_messenger_ { nullptr };
+  vk::raii::PhysicalDevice physical_device_ { nullptr };
 };
 } // namespace lbn
