@@ -69,6 +69,9 @@ private:
   auto
   is_device_suitable(const vk::raii::PhysicalDevice& physical_device) -> bool;
 
+  auto
+  create_logical_device() -> std::expected<void, std::string>;
+
 private:
   sf::Window window_ {
     sf::VideoMode { { window_width, window_height } },
@@ -78,5 +81,6 @@ private:
   vk::raii::Instance instance_ { nullptr };
   vk::raii::DebugUtilsMessengerEXT debug_messenger_ { nullptr };
   vk::raii::PhysicalDevice physical_device_ { nullptr };
+  vk::raii::Device device_ { nullptr };
 };
 } // namespace lbn

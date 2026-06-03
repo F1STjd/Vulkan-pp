@@ -88,7 +88,7 @@ app::create_instance() -> std::expected<void, std::string>
     .and_then([ & ]() -> std::expected<vk::raii::Instance, std::string>
       { return map_vk_error(context_.createInstance(create_info)); })
     .and_then(
-      [ & ](vk::raii::Instance instance) -> std::expected<void, std::string>
+      [ & ](vk::raii::Instance&& instance) -> std::expected<void, std::string>
       {
         instance_ = std::move(instance);
         return {};
@@ -298,4 +298,58 @@ app::is_device_suitable(const vk::raii::PhysicalDevice& physical_device) -> bool
     supports_required_device_extensions && supports_required_features;
 }
 
+auto
+app::create_logical_device() -> std::expected<void, std::string>
+{
+  const auto qf_properties = physical_device_.getQueueFamilyProperties();
+  const auto graphics_qf_property = std::ranges::find_if(qf_properties,
+    [](const auto& qf_property)
+    {
+      return (qf_property.queueFlags & vk::QueueFlagBits::eGraphics) !=
+        vk::QueueFlags { 0 };
+    });
+  if (graphics_qf_property == qf_properties.end())
+  {
+    return std::expected<void, std::string> {
+      std::unexpect,
+      "No queue with graphics capabilities found",
+    };
+  }
+  const auto graphics_index = static_cast<std::uint32_t>(
+    std::ranges::distance(qf_properties.begin(), graphics_qf_property));
+
+  static constexpr float graphics_queue_priority { 0.5F };
+  vk::DeviceQueueCreateInfo device_queue_create_info {
+    .queueFamilyIndex = graphics_index,
+    .queueCount = 1,
+    .pQueuePriorities = &graphics_queue_priority,
+  };
+
+  vk::StructureChain feature_chain {
+    vk::PhysicalDeviceFeatures2 {},
+    vk::PhysicalDeviceVulkan13Features {
+      .dynamicRendering = vk::True,
+    },
+    vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT {
+      .extendedDynamicState = vk::True,
+    },
+  };
+
+  vk::DeviceCreateInfo device_create_info {
+    .pNext = &feature_chain.get<vk::PhysicalDeviceFeatures2>(),
+    .queueCreateInfoCount = 1,
+    .pQueueCreateInfos = &device_queue_create_info,
+    .enabledExtensionCount =
+      static_cast<std::uint32_t>(required_device_extensions.size()),
+    .ppEnabledExtensionNames = required_device_extensions.data(),
+  };
+
+  return map_vk_error(physical_device_.createDevice(device_create_info))
+    .and_then(
+      [ this ](vk::raii::Device&& device) -> std::expected<void, std::string>
+      {
+        device_ = std::move(device);
+        return {};
+      });
+}
 } // namespace lbn
