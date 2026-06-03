@@ -315,12 +315,12 @@ app::create_logical_device() -> std::expected<void, std::string>
       "No queue with graphics capabilities found",
     };
   }
-  const auto graphics_index = static_cast<std::uint32_t>(
+  const auto graphics_qf_index = static_cast<std::uint32_t>(
     std::ranges::distance(qf_properties.begin(), graphics_qf_property));
 
   static constexpr float graphics_queue_priority { 0.5F };
   vk::DeviceQueueCreateInfo device_queue_create_info {
-    .queueFamilyIndex = graphics_index,
+    .queueFamilyIndex = graphics_qf_index,
     .queueCount = 1,
     .pQueuePriorities = &graphics_queue_priority,
   };
@@ -346,9 +346,11 @@ app::create_logical_device() -> std::expected<void, std::string>
 
   return map_vk_error(physical_device_.createDevice(device_create_info))
     .and_then(
-      [ this ](vk::raii::Device&& device) -> std::expected<void, std::string>
+      [ this, graphics_qf_index ](
+        vk::raii::Device&& device) -> std::expected<void, std::string>
       {
         device_ = std::move(device);
+        graphics_queue_ = device_.getQueue(graphics_qf_index, 0);
         return {};
       });
 }
