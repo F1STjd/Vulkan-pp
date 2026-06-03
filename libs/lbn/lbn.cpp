@@ -43,6 +43,8 @@ app::init_vulkan() -> std::expected<void, std::string>
   return create_instance() //
     .and_then([ this ] -> std::expected<void, std::string>
       { return setup_debug_messenger(); })
+    .and_then([ this ] -> std::expected<void, std::string> //
+      { return create_surface(); })
     .and_then([ this ] -> std::expected<void, std::string>
       { return pick_physical_device(); });
 }
@@ -227,6 +229,21 @@ app::setup_debug_messenger() -> std::expected<void, std::string>
 }
 
 auto
+app::create_surface() -> std::expected<void, std::string>
+{
+  VkSurfaceKHR _surface {};
+  if (!window_.createVulkanSurface(*instance_, _surface))
+  {
+    return std::expected<void, std::string> {
+      std::unexpect,
+      "Faild to create window surface",
+    };
+  }
+  surface_ = vk::raii::SurfaceKHR(instance_, _surface);
+  return {};
+}
+
+auto
 app::pick_physical_device() -> std::expected<void, std::string>
 {
   return map_vk_error(instance_.enumeratePhysicalDevices())
@@ -302,21 +319,22 @@ auto
 app::create_logical_device() -> std::expected<void, std::string>
 {
   const auto qf_properties = physical_device_.getQueueFamilyProperties();
-  const auto graphics_qf_property = std::ranges::find_if(qf_properties,
-    [](const auto& qf_property)
+  const auto qf_count = static_cast<std::uint32_t>(qf_properties.size());
+  const auto qf_indices = std::views::iota(0U, qf_count);
+  const auto graphics_qf_index_it = std::ranges::find_if(qf_indices,
+    [ this, &qf_properties ](std::uint32_t i)
     {
-      return (qf_property.queueFlags & vk::QueueFlagBits::eGraphics) !=
-        vk::QueueFlags { 0 };
+      return (qf_properties[ i ].queueFlags & vk::QueueFlagBits::eGraphics) &&
+        physical_device_.getSurfaceSupportKHR(i, surface_);
     });
-  if (graphics_qf_property == qf_properties.end())
+  if (graphics_qf_index_it == std::ranges::end(qf_indices))
   {
     return std::expected<void, std::string> {
       std::unexpect,
-      "No queue with graphics capabilities found",
+      "No queue family with graphics and surface present support found",
     };
   }
-  const auto graphics_qf_index = static_cast<std::uint32_t>(
-    std::ranges::distance(qf_properties.begin(), graphics_qf_property));
+  const auto graphics_qf_index = *graphics_qf_index_it;
 
   static constexpr float graphics_queue_priority { 0.5F };
   vk::DeviceQueueCreateInfo device_queue_create_info {

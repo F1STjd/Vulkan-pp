@@ -64,6 +64,9 @@ private:
   setup_debug_messenger() -> std::expected<void, std::string>;
 
   auto
+  create_surface() -> std::expected<void, std::string>;
+
+  auto
   pick_physical_device() -> std::expected<void, std::string>;
 
   auto
@@ -80,6 +83,7 @@ private:
   vk::raii::Context context_;
   vk::raii::Instance instance_ { nullptr };
   vk::raii::DebugUtilsMessengerEXT debug_messenger_ { nullptr };
+  vk::raii::SurfaceKHR surface_ { nullptr };
   vk::raii::PhysicalDevice physical_device_ { nullptr };
   vk::raii::Device device_ { nullptr };
   vk::raii::Queue graphics_queue_;
