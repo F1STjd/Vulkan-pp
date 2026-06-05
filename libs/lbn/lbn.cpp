@@ -1,5 +1,7 @@
 module;
 
+#include "contracts_config.hpp"
+
 #include <SFML/Window.hpp>
 #include <SFML/Window/Vulkan.hpp>
 #include <vulkan/vk_platform.h>

@@ -15,6 +15,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(ProjectWarnings)
 include(ProjectReflection)
 include(ProjectDiagnostics)
+include(ProjectContracts)
 
 find_package(Vulkan REQUIRED)
 find_package(SFML 3 REQUIRED COMPONENTS Window Graphics System)
