@@ -72,7 +72,7 @@ private:
   pick_physical_device() -> std::expected<void, std::string>;
 
   auto
-  is_device_suitable(const vk::raii::PhysicalDevice& physical_device) -> bool;
+  is_device_suitable(const vk::raii::PhysicalDevice&) -> bool;
 
   auto
   create_logical_device() -> std::expected<void, std::string>;
