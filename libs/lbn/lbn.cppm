@@ -78,7 +78,7 @@ private:
   create_logical_device() -> std::expected<void, std::string>;
 
 private:
-  sf::Window window_ {
+  sf::WindowBase window_ {
     sf::VideoMode { { window_width, window_height } },
     "Window_title",
   };
