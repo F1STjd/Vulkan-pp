@@ -222,7 +222,7 @@ app::setup_debug_messenger() -> std::expected<void, std::string>
 
   return map_vk_error(instance_.createDebugUtilsMessengerEXT(create_info))
     .and_then(
-      [ this ](vk::raii::DebugUtilsMessengerEXT debug_messenger)
+      [ this ](vk::raii::DebugUtilsMessengerEXT&& debug_messenger)
         -> std::expected<void, std::string>
       {
         debug_messenger_ = std::move(debug_messenger);
