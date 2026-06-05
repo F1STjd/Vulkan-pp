@@ -48,7 +48,11 @@ app::init_vulkan() -> std::expected<void, std::string>
     .and_then([ this ] -> std::expected<void, std::string> //
       { return create_surface(); })
     .and_then([ this ] -> std::expected<void, std::string>
-      { return pick_physical_device(); });
+      { return pick_physical_device(); })
+    .and_then([ this ] -> std::expected<void, std::string>
+      { return create_logical_device(); })
+    .and_then([ this ] -> std::expected<void, std::string>
+      { return create_swap_chain(); });
 }
 
 void
@@ -374,4 +378,134 @@ app::create_logical_device() -> std::expected<void, std::string>
         return {};
       });
 }
+
+auto
+app::choose_swap_surface_format(std::span<const vk::SurfaceFormatKHR> formats)
+  -> vk::SurfaceFormatKHR
+{
+  const auto format_it = std::ranges::find_if(formats,
+    [](const auto& format) -> bool
+    {
+      return format.format == vk::Format::eB8G8R8A8Srgb &&
+        format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+    });
+  return format_it != formats.end() ? *format_it : formats[ 0 ];
+}
+
+auto
+app::choose_swap_present_mode(std::span<const vk::PresentModeKHR> present_modes)
+  -> vk::PresentModeKHR
+{
+  // We look for mailbox present mode (tripple buffering), but there are
+  // available some new (maybe better) modes, that were not presented in the
+  // tutorial => The revision/study of them needs to be done
+  return std::ranges::any_of(present_modes,
+           [](vk::PresentModeKHR present_mode) -> bool
+           { return present_mode == vk::PresentModeKHR::eMailbox; })
+    ? vk::PresentModeKHR::eMailbox
+    : vk::PresentModeKHR::eFifo;
+}
+
+auto
+app::choose_swap_extent(const vk::SurfaceCapabilitiesKHR& capabilities)
+  -> vk::Extent2D
+{
+  if (capabilities.currentExtent.width !=
+    std::numeric_limits<std::uint32_t>::max())
+  {
+    return capabilities.currentExtent;
+  }
+  auto [ width, height ] = window_.getSize();
+
+  return {
+    .width = std::clamp(width, capabilities.minImageExtent.width,
+      capabilities.maxImageExtent.width),
+    .height = std::clamp(height, capabilities.minImageExtent.height,
+      capabilities.maxImageExtent.height),
+  };
+}
+
+auto
+app::create_swap_chain() -> std::expected<void, std::string>
+{
+  auto surface_capabilities =
+    map_vk_error(physical_device_.getSurfaceCapabilitiesKHR(*surface_));
+  if (!surface_capabilities)
+  {
+    return std::expected<void, std::string> {
+      std::unexpect,
+      std::move(surface_capabilities).error(),
+    };
+  }
+  swap_chain_extent_ = choose_swap_extent(*surface_capabilities);
+  const auto min_image_count =
+    choose_swap_min_image_count(*surface_capabilities);
+
+  auto available_formats =
+    map_vk_error(physical_device_.getSurfaceFormatsKHR(*surface_));
+  if (!available_formats)
+  {
+    return std::expected<void, std::string> {
+      std::unexpect,
+      std::move(available_formats).error(),
+    };
+  }
+  swap_chain_surface_format_ = choose_swap_surface_format(*available_formats);
+
+  auto available_present_modes =
+    map_vk_error(physical_device_.getSurfacePresentModesKHR(*surface_));
+  if (!available_present_modes)
+  {
+    return std::expected<void, std::string> {
+      std::unexpect,
+      std::move(available_present_modes).error(),
+    };
+  }
+  const auto present_mode = choose_swap_present_mode(*available_present_modes);
+
+  vk::SwapchainCreateInfoKHR swap_chain_create_info {
+    .surface = *surface_,
+    .minImageCount = min_image_count,
+    .imageFormat = swap_chain_surface_format_.format,
+    .imageColorSpace = swap_chain_surface_format_.colorSpace,
+    .imageExtent = swap_chain_extent_,
+    .imageArrayLayers = 1U,
+    .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
+    .imageSharingMode = vk::SharingMode::eExclusive,
+    .preTransform = surface_capabilities->currentTransform,
+    .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+    .presentMode = present_mode,
+    .clipped = vk::True,
+    .oldSwapchain = nullptr,
+  };
+
+  return map_vk_error(device_.createSwapchainKHR(swap_chain_create_info))
+    .and_then(
+      [ this ](vk::raii::SwapchainKHR&& swap_chain)
+      {
+        swap_chain_ = std::move(swap_chain);
+        return map_vk_error(swap_chain_.getImages());
+      })
+    .and_then(
+      [ this ](
+        std::vector<vk::Image>&& images) -> std::expected<void, std::string>
+      {
+        swap_chain_images_ = std::move(images);
+        return {};
+      });
+}
+
+auto
+app::choose_swap_min_image_count(
+  const vk::SurfaceCapabilitiesKHR& surface_capabilities) -> std::uint32_t
+{
+  auto min_image_count = std::max(3U, surface_capabilities.minImageCount);
+  if ((surface_capabilities.maxImageCount > 0U) &&
+    (surface_capabilities.maxImageCount < min_image_count))
+  {
+    min_image_count = surface_capabilities.maxImageCount;
+  }
+  return min_image_count;
+}
+
 } // namespace lbn

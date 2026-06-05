@@ -77,6 +77,23 @@ private:
   auto
   create_logical_device() -> std::expected<void, std::string>;
 
+  auto
+  choose_swap_surface_format(std::span<const vk::SurfaceFormatKHR> formats)
+    -> vk::SurfaceFormatKHR PRE(formats.size() > 0);
+
+  auto choose_swap_present_mode(std::span<const vk::PresentModeKHR>)
+    -> vk::PresentModeKHR;
+
+  auto
+  choose_swap_extent(const vk::SurfaceCapabilitiesKHR&) -> vk::Extent2D;
+
+  auto
+  create_swap_chain() -> std::expected<void, std::string>;
+
+  auto
+  choose_swap_min_image_count(const vk::SurfaceCapabilitiesKHR&)
+    -> std::uint32_t;
+
 private:
   sf::WindowBase window_ {
     sf::VideoMode { { window_width, window_height } },
@@ -88,6 +105,10 @@ private:
   vk::raii::SurfaceKHR surface_ { nullptr };
   vk::raii::PhysicalDevice physical_device_ { nullptr };
   vk::raii::Device device_ { nullptr };
-  vk::raii::Queue graphics_queue_;
+  vk::raii::Queue graphics_queue_ { nullptr };
+  vk::raii::SwapchainKHR swap_chain_ { nullptr };
+  std::vector<vk::Image> swap_chain_images_;
+  vk::SurfaceFormatKHR swap_chain_surface_format_;
+  vk::Extent2D swap_chain_extent_;
 };
 } // namespace lbn
