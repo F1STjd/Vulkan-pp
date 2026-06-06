@@ -94,6 +94,9 @@ private:
   choose_swap_min_image_count(const vk::SurfaceCapabilitiesKHR&)
     -> std::uint32_t;
 
+  auto
+  create_image_views() -> std::expected<void,
+    std::string> /* PRE(swap_chain_image_views_.empty()) */;
 private:
   sf::WindowBase window_ {
     sf::VideoMode { { window_width, window_height } },
@@ -110,5 +113,6 @@ private:
   std::vector<vk::Image> swap_chain_images_;
   vk::SurfaceFormatKHR swap_chain_surface_format_;
   vk::Extent2D swap_chain_extent_;
+  std::vector<vk::raii::ImageView> swap_chain_image_views_;
 };
 } // namespace lbn

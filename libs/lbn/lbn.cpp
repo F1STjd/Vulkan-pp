@@ -52,7 +52,9 @@ app::init_vulkan() -> std::expected<void, std::string>
     .and_then([ this ] -> std::expected<void, std::string>
       { return create_logical_device(); })
     .and_then([ this ] -> std::expected<void, std::string>
-      { return create_swap_chain(); });
+      { return create_swap_chain(); })
+    .and_then([ this ] -> std::expected<void, std::string>
+      { return create_image_views(); });
 }
 
 void
@@ -506,6 +508,39 @@ app::choose_swap_min_image_count(
     min_image_count = surface_capabilities.maxImageCount;
   }
   return min_image_count;
+}
+
+auto
+app::create_image_views() -> std::expected<void, std::string>
+{
+  vk::ImageViewCreateInfo image_view_create_info {
+    .viewType = vk::ImageViewType::e2D,
+    .format = swap_chain_surface_format_.format,
+    .subresourceRange = {
+      .aspectMask = vk::ImageAspectFlagBits::eColor,
+      .baseMipLevel = 0,
+      .levelCount = 1,
+      .baseArrayLayer = 0,
+      .layerCount = 1,
+    },
+  };
+  swap_chain_image_views_.clear();
+  swap_chain_image_views_.reserve(swap_chain_images_.size());
+  for (const auto& image : swap_chain_images_)
+  {
+    image_view_create_info.image = image;
+    auto image_view =
+      map_vk_error(device_.createImageView(image_view_create_info));
+    if (!image_view)
+    {
+      return std::expected<void, std::string> {
+        std::unexpect,
+        std::move(image_view).error(),
+      };
+    }
+    swap_chain_image_views_.emplace_back(std::move(*image_view));
+  }
+  return {};
 }
 
 } // namespace lbn
