@@ -30,12 +30,8 @@ namespace lbn
 void
 app::run()
 {
-  const auto result = init_vulkan().and_then(
-    [ this ]() -> std::expected<void, std::string>
-    {
-      main_loop();
-      return {};
-    });
+  const auto result =
+    init_vulkan().transform([ this ]() -> void { main_loop(); });
 
   if (!result) { std::println(stderr, "{}", result.error()); }
 }
@@ -100,12 +96,8 @@ app::create_instance() -> std::expected<void, std::string>
       { return check_window_vulkan_extensions_support(instance_extensions); })
     .and_then([ & ]() -> std::expected<vk::raii::Instance, std::string>
       { return map_vk_error(context_.createInstance(create_info)); })
-    .and_then(
-      [ & ](vk::raii::Instance&& instance) -> std::expected<void, std::string>
-      {
-        instance_ = std::move(instance);
-        return {};
-      });
+    .transform([ & ](vk::raii::Instance&& instance) -> void
+      { instance_ = std::move(instance); });
 }
 
 auto
@@ -230,13 +222,9 @@ app::setup_debug_messenger() -> std::expected<void, std::string>
   };
 
   return map_vk_error(instance_.createDebugUtilsMessengerEXT(create_info))
-    .and_then(
-      [ this ](vk::raii::DebugUtilsMessengerEXT&& debug_messenger)
-        -> std::expected<void, std::string>
-      {
-        debug_messenger_ = std::move(debug_messenger);
-        return {};
-      });
+    .transform(
+      [ this ](vk::raii::DebugUtilsMessengerEXT&& debug_messenger) -> void
+      { debug_messenger_ = std::move(debug_messenger); });
 }
 
 auto
@@ -374,13 +362,11 @@ app::create_logical_device() -> std::expected<void, std::string>
   };
 
   return map_vk_error(physical_device_.createDevice(device_create_info))
-    .and_then(
-      [ this, graphics_qf_index ](
-        vk::raii::Device&& device) -> std::expected<void, std::string>
+    .transform(
+      [ this, graphics_qf_index ](vk::raii::Device&& device) -> void
       {
         device_ = std::move(device);
         graphics_queue_ = device_.getQueue(graphics_qf_index, 0);
-        return {};
       });
 }
 
@@ -491,13 +477,8 @@ app::create_swap_chain() -> std::expected<void, std::string>
         swap_chain_ = std::move(swap_chain);
         return map_vk_error(swap_chain_.getImages());
       })
-    .and_then(
-      [ this ](
-        std::vector<vk::Image>&& images) -> std::expected<void, std::string>
-      {
-        swap_chain_images_ = std::move(images);
-        return {};
-      });
+    .transform([ this ](std::vector<vk::Image>&& images) -> void
+      { swap_chain_images_ = std::move(images); });
 }
 
 auto
