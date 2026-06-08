@@ -105,9 +105,7 @@ app::check_window_vulkan_extensions_support(
   std::span<const char* const> instance_extensions)
   -> std::expected<void, std::string>
 {
-  return context_.enumerateInstanceExtensionProperties()
-    .transform_error(
-      [](vk::Result result) -> std::string { return vk::to_string(result); })
+  return map_vk_error(context_.enumerateInstanceExtensionProperties())
     .and_then(
       [ &instance_extensions ](
         std::span<const vk::ExtensionProperties> vulkan_extensions)
@@ -142,9 +140,8 @@ app::check_validation_layer_support(
   std::span<const char* const> required_layers)
   -> std::expected<void, std::string>
 {
-  return context_.enumerateInstanceLayerProperties()
-    .transform_error(
-      [](vk::Result result) -> std::string { return vk::to_string(result); })
+  // this pipeline triggers: -Wfree-nonheap-object - report sometime
+  return map_vk_error(context_.enumerateInstanceLayerProperties())
     .and_then(
       [ &required_layers ](
         std::span<const vk::LayerProperties> layer_extensions)
