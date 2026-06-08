@@ -3,3 +3,4 @@
 /gcm.cache/
 /.cache/
 compile_commands.json
+/shaders/*.spv
