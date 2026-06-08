@@ -50,6 +50,7 @@ set(_warn_candidates
   -Wrange-loop-construct
   -Wshift-overflow=2
   -Wuse-after-free=3
+  -Wno-free-nonheap-object # GCC false positive (-Wfree-nonheap-object) on std::expected chains
   -Wstringop-overflow=4
   -Warray-bounds=2
   -Wvla
