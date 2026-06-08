@@ -10,6 +10,7 @@ module lbn;
 
 import std;
 import vulkan;
+import load;
 
 namespace
 {
