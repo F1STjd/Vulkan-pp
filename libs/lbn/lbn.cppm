@@ -76,7 +76,9 @@ private:
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_graphics_pipeline(); })
       .and_then([ this ] -> std::expected<void, std::string>
-        { return create_command_pool(); });
+        { return create_command_pool(); })
+      .and_then([ this ] -> std::expected<void, std::string>
+        { return create_command_buffer(); });
   }
 
   void
@@ -695,6 +697,119 @@ private:
     return map_vk_error(device_.createCommandPool(command_pool_create_info))
       .transform([ this ](vk::raii::CommandPool&& command_pool) -> void
         { command_pool_ = std::move(command_pool); });
+  }
+
+  auto
+  create_command_buffer() -> std::expected<void, std::string>
+  {
+    vk::CommandBufferAllocateInfo command_buffer_acclocate_info {
+      .commandPool = command_pool_,
+      .level = vk::CommandBufferLevel::ePrimary,
+      .commandBufferCount = 1U,
+    };
+
+    return map_vk_error(
+      device_.allocateCommandBuffers(command_buffer_acclocate_info))
+      .transform(
+        [ this ](std::vector<vk::raii::CommandBuffer> command_buffers) -> void
+        { command_buffer_ = std::move(command_buffers.front()); });
+  }
+
+  auto
+  record_command_buffer(std::uint32_t image_index)
+    -> std::expected<void, std::string>
+  {
+    return map_vk_error(command_buffer_.begin({}))
+      .transform(
+        [ this, image_index ]() -> void
+        {
+          transition_image_layout(image_index, vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eColorAttachmentOptimal, {},
+            vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput);
+
+          vk::ClearValue clear_color { vk::ClearColorValue {
+            0.0F, 0.0F, 0.0F, 1.0F } };
+          vk::RenderingAttachmentInfo rendering_attachment_info {
+            .imageView = swap_chain_image_views_[ image_index ],
+            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .loadOp = vk::AttachmentLoadOp::eClear,
+            .storeOp = vk::AttachmentStoreOp::eStore,
+            .clearValue = clear_color,
+          };
+          vk::RenderingInfo rendering_info {
+            .renderArea =
+              vk::Rect2D {
+                .offset = { .x = 0, .y = 0 },
+                .extent = swap_chain_extent_,
+              },
+            .layerCount = 1U,
+            .colorAttachmentCount = 1U,
+            .pColorAttachments = &rendering_attachment_info,
+          };
+          command_buffer_.beginRendering(rendering_info);
+          command_buffer_.bindPipeline(
+            vk::PipelineBindPoint::eGraphics, *graphics_pipeline_);
+          command_buffer_.setViewport(0,
+            vk::Viewport {
+              .x = 0.0F,
+              .y = 0.0F,
+              .width = static_cast<float>(swap_chain_extent_.width),
+              .height = static_cast<float>(swap_chain_extent_.height),
+              .minDepth = 0.0F,
+              .maxDepth = 1.0F,
+            });
+          command_buffer_.setScissor(0,
+            vk::Rect2D {
+              .offset = vk::Offset2D { .x = 0, .y = 0 },
+              .extent = swap_chain_extent_,
+            });
+          command_buffer_.draw(3U, 1U, 0U, 0U);
+          command_buffer_.endRendering();
+
+          transition_image_layout(image_index,
+            vk::ImageLayout::eColorAttachmentOptimal,
+            vk::ImageLayout::ePresentSrcKHR,
+            vk::AccessFlagBits2::eColorAttachmentWrite, {},
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits2::eBottomOfPipe);
+        })
+      .and_then([ this ]() -> std::expected<void, std::string>
+        { return map_vk_error(command_buffer_.end()); });
+  }
+
+  void
+  transition_image_layout(std::uint32_t image_index, vk::ImageLayout old_layout,
+    vk::ImageLayout new_layout, vk::AccessFlags2 source_access_mask,
+    vk::AccessFlags2 destination_access_mask,
+    vk::PipelineStageFlags2 source_stage_mask,
+    vk::PipelineStageFlags2 destination_stage_mask)
+  {
+    vk::ImageMemoryBarrier2 memory_barrier {
+      .srcStageMask = source_stage_mask,
+      .srcAccessMask = source_access_mask,
+      .dstStageMask = destination_stage_mask,
+      .dstAccessMask = destination_access_mask,
+      .oldLayout = old_layout,
+      .newLayout = new_layout,
+      .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+      .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+      .image = swap_chain_images_[ image_index ],
+      .subresourceRange = {
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = 1,
+      },
+    };
+    vk::DependencyInfo dependency_info {
+      .dependencyFlags = {},
+      .imageMemoryBarrierCount = 1U,
+      .pImageMemoryBarriers = &memory_barrier,
+    };
+    command_buffer_.pipelineBarrier2(dependency_info);
   }
 
 private:
