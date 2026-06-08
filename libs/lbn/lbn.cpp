@@ -55,7 +55,9 @@ app::init_vulkan() -> std::expected<void, std::string>
     .and_then([ this ] -> std::expected<void, std::string>
       { return create_swap_chain(); })
     .and_then([ this ] -> std::expected<void, std::string>
-      { return create_image_views(); });
+      { return create_image_views(); })
+    .and_then([ this ] -> std::expected<void, std::string>
+      { return create_graphics_pipeline(); });
 }
 
 void
@@ -542,6 +544,141 @@ app::create_image_views() -> std::expected<void, std::string>
     swap_chain_image_views_.emplace_back(std::move(*image_view));
   }
   return {};
+}
+
+auto
+app::create_graphics_pipeline() -> std::expected<void, std::string>
+{
+  return load::read_shader_file(SHADER_DIRECTORY "slang.spv")
+    .and_then([ this ](std::span<const char> code)
+      { return create_shader_module(code); })
+    .and_then(
+      [ this ](const vk::raii::ShaderModule& shader_module)
+        -> std::expected<vk::raii::Pipeline, std::string>
+      {
+        const vk::PipelineShaderStageCreateInfo
+          vertex_shader_stage_create_info {
+            .stage = vk::ShaderStageFlagBits::eVertex,
+            .module = shader_module,
+            .pName = "vertex_main",
+            .pSpecializationInfo = nullptr,
+          };
+        const vk::PipelineShaderStageCreateInfo
+          fragment_shader_stage_create_info {
+            .stage = vk::ShaderStageFlagBits::eFragment,
+            .module = shader_module,
+            .pName = "fragment_main",
+            .pSpecializationInfo = nullptr,
+          };
+        const std::array shader_stages {
+          vertex_shader_stage_create_info,
+          fragment_shader_stage_create_info,
+        };
+
+        constexpr vk::PipelineVertexInputStateCreateInfo
+          vertex_shader_input_create_info {};
+        constexpr vk::PipelineInputAssemblyStateCreateInfo
+          input_assembly_create_info {
+            .topology = vk::PrimitiveTopology::eTriangleList,
+          };
+        constexpr vk::PipelineViewportStateCreateInfo
+          viewport_state_create_info {
+            .viewportCount = 1U,
+            .scissorCount = 1U,
+          };
+        constexpr vk::PipelineRasterizationStateCreateInfo
+          rasterizer_create_info {
+            .depthClampEnable = vk::False,
+            .rasterizerDiscardEnable = vk::False,
+            .polygonMode = vk::PolygonMode::eFill,
+            .cullMode = vk::CullModeFlagBits::eBack,
+            .frontFace = vk::FrontFace::eClockwise,
+            .depthBiasEnable = vk::False,
+            .lineWidth = 1.0F,
+          };
+        constexpr vk::PipelineMultisampleStateCreateInfo
+          multisampling_create_info {
+            .rasterizationSamples = vk::SampleCountFlagBits::e1,
+            .sampleShadingEnable = vk::False,
+          };
+
+        static constexpr vk::PipelineColorBlendAttachmentState
+          color_blend_attachment {
+            .blendEnable = vk::False,
+            .colorWriteMask = vk::ColorComponentFlagBits::eR |
+              vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB |
+              vk::ColorComponentFlagBits::eA,
+          };
+        constexpr vk::PipelineColorBlendStateCreateInfo
+          color_blend_create_info {
+            .logicOpEnable = vk::False,
+            .logicOp = vk::LogicOp::eCopy,
+            .attachmentCount = 1U,
+            .pAttachments = &color_blend_attachment,
+          };
+
+        static constexpr std::array dynamic_states {
+          vk::DynamicState::eViewport,
+          vk::DynamicState::eScissor,
+        };
+        constexpr vk::PipelineDynamicStateCreateInfo dynamic_state {
+          .dynamicStateCount =
+            static_cast<std::uint32_t>(dynamic_states.size()),
+          .pDynamicStates = dynamic_states.data(),
+        };
+
+        vk::PipelineLayoutCreateInfo pipeline_layout_create_info {
+          .setLayoutCount = 0,
+          .pushConstantRangeCount = 0,
+        };
+
+        auto maybe_layout = map_vk_error(
+          device_.createPipelineLayout(pipeline_layout_create_info));
+        if (!maybe_layout)
+        {
+          return std::expected<vk::raii::Pipeline, std::string> {
+            std::unexpect,
+            std::move(maybe_layout).error(),
+          };
+        }
+        pipeline_layout_ = std::move(*maybe_layout);
+
+        vk::StructureChain pipeline_create_info_chain {
+          vk::GraphicsPipelineCreateInfo {
+            .stageCount = 2,
+            .pStages = shader_stages.data(),
+            .pVertexInputState = &vertex_shader_input_create_info,
+            .pInputAssemblyState = &input_assembly_create_info,
+            .pViewportState = &viewport_state_create_info,
+            .pRasterizationState = &rasterizer_create_info,
+            .pMultisampleState = &multisampling_create_info,
+            .pColorBlendState = &color_blend_create_info,
+            .pDynamicState = &dynamic_state,
+            .layout = pipeline_layout_,
+            .renderPass = nullptr,
+          },
+          vk::PipelineRenderingCreateInfo {
+            .colorAttachmentCount = 1,
+            .pColorAttachmentFormats = &swap_chain_surface_format_.format,
+          },
+        };
+        return map_vk_error(device_.createGraphicsPipeline(nullptr,
+          pipeline_create_info_chain.get<vk::GraphicsPipelineCreateInfo>()));
+      })
+    .transform([ this ](vk::raii::Pipeline&& pipeline) -> void
+      { graphics_pipeline_ = std::move(pipeline); });
+}
+
+[[nodiscard]] auto
+app::create_shader_module(std::span<const char> code)
+  -> std::expected<vk::raii::ShaderModule, std::string>
+{
+  vk::ShaderModuleCreateInfo shader_module_create_info {
+    .codeSize = code.size_bytes(),
+    .pCode = std::start_lifetime_as<std::uint32_t>(code.data()),
+  };
+
+  return map_vk_error(device_.createShaderModule(shader_module_create_info));
 }
 
 } // namespace lbn

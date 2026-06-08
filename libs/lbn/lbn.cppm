@@ -97,6 +97,13 @@ private:
   auto
   create_image_views() -> std::expected<void,
     std::string> /* PRE(swap_chain_image_views_.empty()) */;
+
+  auto
+  create_graphics_pipeline() -> std::expected<void, std::string>;
+
+  [[nodiscard]] auto create_shader_module(std::span<const char>)
+    -> std::expected<vk::raii::ShaderModule, std::string>;
+
 private:
   sf::WindowBase window_ {
     sf::VideoMode { { window_width, window_height } },
@@ -114,5 +121,7 @@ private:
   vk::SurfaceFormatKHR swap_chain_surface_format_;
   vk::Extent2D swap_chain_extent_;
   std::vector<vk::raii::ImageView> swap_chain_image_views_;
+  vk::raii::PipelineLayout pipeline_layout_ { nullptr };
+  vk::raii::Pipeline graphics_pipeline_ { nullptr };
 };
 } // namespace lbn
