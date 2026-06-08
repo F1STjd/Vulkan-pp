@@ -3,33 +3,20 @@ CompileFlags:
   # Run once: cmake --preset clang-debug && cmake --build --preset clang-debug
   CompilationDatabase: build/clang-debug
   Remove:
+    # Warnings stay in compile_commands.json for ninja builds; clangd skips them.
+    - -W*
+    - -pedantic-errors
     - -fanalyzer
     - -fdiagnostics-color
+    - -fcolor-diagnostics
     - -fdiagnostics-urls=*
     - -fdiagnostics-parseable-fixits
     - -fdiagnostics-generate-patch
-    - -Wno-error=analyzer-*
-    - -Wabi
-    - -Wsuggest-attribute=*
-    - -Wnoexcept
-    - -Wredundant-tags
-    - -Wfatal-errors
-    - -Wnrvo
-    - -Wtrampolines
-    - -Wunsafe-loop-optimizations
-    - -Wuseless-cast
-    - -Wlogical-op
-    - -Wsuggest-final-types
-    - -Wsuggest-final-methods
-    - -Wduplicated-branches
-    - -Wduplicated-cond
-    - -Walloc-zero
-    - -Warith-conversion
+    - -fdiagnostics-show-option
     # GCC-only module scanner flags (ignored for clang CDB anyway)
     - -fmodules-ts
     - -fmodule-mapper=*
     - -fdeps-format=*
-    - -Werror
 
 Diagnostics:
   UnusedIncludes: None
