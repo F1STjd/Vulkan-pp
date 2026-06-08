@@ -24,6 +24,10 @@ if(NOT TARGET Vulkan::Headers)
 endif()
 include(VulkanCxxModule)
 include(TutorialDependencies)
+include(SlangShaders)
+
+set(SHADER_SLANG_SOURCES ${CMAKE_SOURCE_DIR}/shaders/shader.slang)
+add_slang_shader_target(slang_shaders SOURCES ${SHADER_SLANG_SOURCES})
 
 add_subdirectory(libs/utils)
 add_subdirectory(libs/lbn)
