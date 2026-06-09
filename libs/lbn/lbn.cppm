@@ -1,6 +1,7 @@
 module;
 
 #include "contracts_config.hpp"
+#include "vk_error_config.hpp"
 
 #include <SFML/Window.hpp>
 #include <SFML/Window/VideoMode.hpp>
@@ -11,18 +12,7 @@ export module lbn;
 import std;
 import vulkan;
 import load;
-
-namespace
-{
-template<typename T>
-auto
-map_vk_error(std::expected<T, vk::Result>&& result)
-  -> std::expected<T, std::string>
-{
-  return std::move(result).transform_error(
-    [](vk::Result error) -> std::string { return vk::to_string(error); });
-}
-} // namespace
+import utils;
 
 namespace lbn
 {
@@ -91,7 +81,15 @@ private:
       {
         if (event->is<sf::Event::Closed>()) { window_.close(); }
       }
+      if (auto result = draw_frame(); !result)
+      {
+        return std::expected<void, std::string> {
+          std::unexpect,
+          std::move(result).error(),
+        };
+      }
     }
+    return UTILS_VK(device_.waitIdle(), ^^vk::raii::Device::waitIdle);
   }
 
 private:
@@ -121,8 +119,12 @@ private:
       .and_then(
         [ this, &instance_extensions ]() -> std::expected<void, std::string>
         { return check_window_vulkan_extensions_support(instance_extensions); })
-      .and_then([ & ]() -> std::expected<vk::raii::Instance, std::string>
-        { return map_vk_error(context_.createInstance(create_info)); })
+      .and_then(
+        [ & ]() -> std::expected<vk::raii::Instance, std::string>
+        {
+          return UTILS_VK(context_.createInstance(create_info),
+            ^^vk::raii::Context::createInstance);
+        })
       .transform([ & ](vk::raii::Instance&& instance) -> void
         { instance_ = std::move(instance); });
   }
@@ -132,7 +134,8 @@ private:
     std::span<const char* const> instance_extensions)
     -> std::expected<void, std::string>
   {
-    return map_vk_error(context_.enumerateInstanceExtensionProperties())
+    return UTILS_VK(context_.enumerateInstanceExtensionProperties(),
+      ^^vk::raii::Context::enumerateInstanceExtensionProperties)
       .and_then(
         [ &instance_extensions ](
           std::span<const vk::ExtensionProperties> vulkan_extensions)
@@ -167,7 +170,8 @@ private:
     -> std::expected<void, std::string>
   {
     // this pipeline triggers: -Wfree-nonheap-object - report sometime
-    return map_vk_error(context_.enumerateInstanceLayerProperties())
+    return UTILS_VK(context_.enumerateInstanceLayerProperties(),
+      ^^vk::raii::Context::enumerateInstanceLayerProperties)
       .and_then(
         [ &required_layers ](
           std::span<const vk::LayerProperties> layer_extensions)
@@ -244,7 +248,8 @@ private:
       .pfnUserCallback = &debug_callback
     };
 
-    return map_vk_error(instance_.createDebugUtilsMessengerEXT(create_info))
+    return UTILS_VK(instance_.createDebugUtilsMessengerEXT(create_info),
+      ^^vk::raii::Instance::createDebugUtilsMessengerEXT)
       .transform(
         [ this ](vk::raii::DebugUtilsMessengerEXT&& debug_messenger) -> void
         { debug_messenger_ = std::move(debug_messenger); });
@@ -268,7 +273,8 @@ private:
   auto
   pick_physical_device() -> std::expected<void, std::string>
   {
-    return map_vk_error(instance_.enumeratePhysicalDevices())
+    return UTILS_VK(instance_.enumeratePhysicalDevices(),
+      ^^vk::raii::Instance::enumeratePhysicalDevices)
       .and_then(
         [ this ](std::span<const vk::raii::PhysicalDevice> physical_devices)
           -> std::expected<void, std::string>
@@ -384,7 +390,8 @@ private:
       .ppEnabledExtensionNames = required_device_extensions.data(),
     };
 
-    return map_vk_error(physical_device_.createDevice(device_create_info))
+    return UTILS_VK(physical_device_.createDevice(device_create_info),
+      ^^vk::raii::PhysicalDevice::createDevice)
       .transform(
         [ this ](vk::raii::Device&& device) -> void
         {
@@ -443,7 +450,8 @@ private:
   create_swap_chain() -> std::expected<void, std::string>
   {
     auto surface_capabilities =
-      map_vk_error(physical_device_.getSurfaceCapabilitiesKHR(*surface_));
+      UTILS_VK(physical_device_.getSurfaceCapabilitiesKHR(*surface_),
+        ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR);
     if (!surface_capabilities)
     {
       return std::expected<void, std::string> {
@@ -456,7 +464,8 @@ private:
       choose_swap_min_image_count(*surface_capabilities);
 
     auto available_formats =
-      map_vk_error(physical_device_.getSurfaceFormatsKHR(*surface_));
+      UTILS_VK(physical_device_.getSurfaceFormatsKHR(*surface_),
+        ^^vk::raii::PhysicalDevice::getSurfaceFormatsKHR);
     if (!available_formats)
     {
       return std::expected<void, std::string> {
@@ -467,7 +476,8 @@ private:
     swap_chain_surface_format_ = choose_swap_surface_format(*available_formats);
 
     auto available_present_modes =
-      map_vk_error(physical_device_.getSurfacePresentModesKHR(*surface_));
+      UTILS_VK(physical_device_.getSurfacePresentModesKHR(*surface_),
+        ^^vk::raii::PhysicalDevice::getSurfacePresentModesKHR);
     if (!available_present_modes)
     {
       return std::expected<void, std::string> {
@@ -494,12 +504,14 @@ private:
       .oldSwapchain = nullptr,
     };
 
-    return map_vk_error(device_.createSwapchainKHR(swap_chain_create_info))
+    return UTILS_VK(device_.createSwapchainKHR(swap_chain_create_info),
+      ^^vk::raii::Device::createSwapchainKHR)
       .and_then(
         [ this ](vk::raii::SwapchainKHR&& swap_chain)
         {
           swap_chain_ = std::move(swap_chain);
-          return map_vk_error(swap_chain_.getImages());
+          return UTILS_VK(
+            swap_chain_.getImages(), ^^vk::raii::SwapchainKHR::getImages);
         })
       .transform([ this ](std::vector<vk::Image>&& images) -> void
         { swap_chain_images_ = std::move(images); });
@@ -539,7 +551,8 @@ private:
     {
       image_view_create_info.image = image;
       auto image_view =
-        map_vk_error(device_.createImageView(image_view_create_info));
+        UTILS_VK(device_.createImageView(image_view_create_info),
+          ^^vk::raii::Device::createImageView);
       if (!image_view)
       {
         return std::expected<void, std::string> {
@@ -638,8 +651,9 @@ private:
             .pushConstantRangeCount = 0,
           };
 
-          auto maybe_layout = map_vk_error(
-            device_.createPipelineLayout(pipeline_layout_create_info));
+          auto maybe_layout =
+            UTILS_VK(device_.createPipelineLayout(pipeline_layout_create_info),
+              ^^vk::raii::Device::createPipelineLayout);
           if (!maybe_layout)
           {
             return std::expected<vk::raii::Pipeline, std::string> {
@@ -668,8 +682,10 @@ private:
               .pColorAttachmentFormats = &swap_chain_surface_format_.format,
             },
           };
-          return map_vk_error(device_.createGraphicsPipeline(nullptr,
-            pipeline_create_info_chain.get<vk::GraphicsPipelineCreateInfo>()));
+          return UTILS_VK(
+            device_.createGraphicsPipeline(nullptr,
+              pipeline_create_info_chain.get<vk::GraphicsPipelineCreateInfo>()),
+            ^^vk::raii::Device::createGraphicsPipeline);
         })
       .transform([ this ](vk::raii::Pipeline&& pipeline) -> void
         { graphics_pipeline_ = std::move(pipeline); });
@@ -684,7 +700,8 @@ private:
       .pCode = std::start_lifetime_as<std::uint32_t>(code.data()),
     };
 
-    return map_vk_error(device_.createShaderModule(shader_module_create_info));
+    return UTILS_VK(device_.createShaderModule(shader_module_create_info),
+      ^^vk::raii::Device::createShaderModule);
   }
 
   auto
@@ -695,7 +712,8 @@ private:
       .queueFamilyIndex = graphics_qf_index_,
     };
 
-    return map_vk_error(device_.createCommandPool(command_pool_create_info))
+    return UTILS_VK(device_.createCommandPool(command_pool_create_info),
+      ^^vk::raii::Device::createCommandPool)
       .transform([ this ](vk::raii::CommandPool&& command_pool) -> void
         { command_pool_ = std::move(command_pool); });
   }
@@ -709,8 +727,9 @@ private:
       .commandBufferCount = 1U,
     };
 
-    return map_vk_error(
-      device_.allocateCommandBuffers(command_buffer_acclocate_info))
+    return UTILS_VK(
+      device_.allocateCommandBuffers(command_buffer_acclocate_info),
+      ^^vk::raii::Device::allocateCommandBuffers)
       .transform(
         [ this ](std::vector<vk::raii::CommandBuffer> command_buffers) -> void
         { command_buffer_ = std::move(command_buffers.front()); });
@@ -720,7 +739,8 @@ private:
   record_command_buffer(std::uint32_t image_index)
     -> std::expected<void, std::string>
   {
-    return map_vk_error(command_buffer_.begin({}))
+    const auto& command_buffer = command_buffers_[ frame_index_ ];
+    return UTILS_VK(command_buffer.begin({}), ^^vk::raii::CommandBuffer::begin)
       .transform(
         [ this, image_index ]() -> void
         {
@@ -776,8 +796,11 @@ private:
             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             vk::PipelineStageFlagBits2::eBottomOfPipe);
         })
-      .and_then([ this ]() -> std::expected<void, std::string>
-        { return map_vk_error(command_buffer_.end()); });
+      .and_then(
+        [ &command_buffer ]() -> std::expected<void, std::string>
+        {
+          return UTILS_VK(command_buffer.end(), ^^vk::raii::CommandBuffer::end);
+        });
   }
 
   void
