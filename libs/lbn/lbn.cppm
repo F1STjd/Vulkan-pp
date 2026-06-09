@@ -69,11 +69,13 @@ private:
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_command_pool(); })
       .and_then([ this ] -> std::expected<void, std::string>
-        { return create_command_buffer(); });
+        { return create_command_buffers(); })
+      .and_then([ this ] -> std::expected<void, std::string>
+        { return create_sync_objects(); });
   }
 
-  void
-  main_loop()
+  auto
+  main_loop() -> std::expected<void, std::string>
   {
     while (window_.isOpen())
     {
@@ -560,7 +562,7 @@ private:
           std::move(image_view).error(),
         };
       }
-      swap_chain_image_views_.emplace_back(std::move(*image_view));
+      swap_chain_image_views_.push_back(std::move(*image_view));
     }
     return {};
   }
@@ -719,20 +721,20 @@ private:
   }
 
   auto
-  create_command_buffer() -> std::expected<void, std::string>
+  create_command_buffers() -> std::expected<void, std::string>
   {
     vk::CommandBufferAllocateInfo command_buffer_acclocate_info {
       .commandPool = command_pool_,
       .level = vk::CommandBufferLevel::ePrimary,
-      .commandBufferCount = 1U,
+      .commandBufferCount = max_frames_in_flight,
     };
 
     return UTILS_VK(
       device_.allocateCommandBuffers(command_buffer_acclocate_info),
       ^^vk::raii::Device::allocateCommandBuffers)
       .transform(
-        [ this ](std::vector<vk::raii::CommandBuffer> command_buffers) -> void
-        { command_buffer_ = std::move(command_buffers.front()); });
+        [ this ](std::vector<vk::raii::CommandBuffer>&& command_buffers) -> void
+        { command_buffers_ = std::move(command_buffers); });
   }
 
   auto
@@ -742,7 +744,7 @@ private:
     const auto& command_buffer = command_buffers_[ frame_index_ ];
     return UTILS_VK(command_buffer.begin({}), ^^vk::raii::CommandBuffer::begin)
       .transform(
-        [ this, image_index ]() -> void
+        [ this, image_index, &command_buffer ]() -> void
         {
           transition_image_layout(image_index, vk::ImageLayout::eUndefined,
             vk::ImageLayout::eColorAttachmentOptimal, {},
@@ -769,10 +771,10 @@ private:
             .colorAttachmentCount = 1U,
             .pColorAttachments = &rendering_attachment_info,
           };
-          command_buffer_.beginRendering(rendering_info);
-          command_buffer_.bindPipeline(
+          command_buffer.beginRendering(rendering_info);
+          command_buffer.bindPipeline(
             vk::PipelineBindPoint::eGraphics, *graphics_pipeline_);
-          command_buffer_.setViewport(0,
+          command_buffer.setViewport(0,
             vk::Viewport {
               .x = 0.0F,
               .y = 0.0F,
@@ -781,13 +783,13 @@ private:
               .minDepth = 0.0F,
               .maxDepth = 1.0F,
             });
-          command_buffer_.setScissor(0,
+          command_buffer.setScissor(0,
             vk::Rect2D {
               .offset = vk::Offset2D { .x = 0, .y = 0 },
               .extent = swap_chain_extent_,
             });
-          command_buffer_.draw(3U, 1U, 0U, 0U);
-          command_buffer_.endRendering();
+          command_buffer.draw(3U, 1U, 0U, 0U);
+          command_buffer.endRendering();
 
           transition_image_layout(image_index,
             vk::ImageLayout::eColorAttachmentOptimal,
@@ -833,7 +835,138 @@ private:
       .imageMemoryBarrierCount = 1U,
       .pImageMemoryBarriers = &memory_barrier,
     };
-    command_buffer_.pipelineBarrier2(dependency_info);
+    command_buffers_[ frame_index_ ].pipelineBarrier2(dependency_info);
+  }
+
+  auto
+  draw_frame() -> std::expected<void, std::string>
+  {
+    if (auto result = device_.waitForFences(*in_flight_fences_[ frame_index_ ],
+          vk::True, std::numeric_limits<std::uint64_t>::max());
+      result != vk::Result::eSuccess)
+    {
+      return std::expected<void, std::string> { std::unexpect,
+        std::format("Failed to wait for fence: {}", vk::to_string(result)) };
+    }
+    std::uint32_t image_index {};
+    return UTILS_VK(device_.resetFences(*in_flight_fences_[ frame_index_ ]),
+      ^^vk::raii::Device::resetFences)
+      .and_then(
+        [ this, &image_index ]() -> std::expected<void, std::string>
+        {
+          auto [ result, idx_temp ] = swap_chain_.acquireNextImage(
+            std::numeric_limits<std::uint64_t>::max(),
+            *present_complete_semaphores_[ frame_index_ ], nullptr);
+          if (result != vk::Result::eSuccess)
+          {
+            return std::expected<void, std::string> {
+              std::unexpect,
+              std::format(
+                "Failed to acquire next image from the swap chain: {}",
+                vk::to_string(result)),
+            };
+          }
+          image_index = idx_temp;
+          return UTILS_VK(command_buffers_[ frame_index_ ].reset(),
+            ^^vk::raii::CommandBuffer::reset);
+        })
+      .and_then([ this, &image_index ]() -> std::expected<void, std::string>
+        { return record_command_buffer(image_index); })
+      .and_then(
+        [ this, image_index ]() -> std::expected<void, std::string>
+        {
+          vk::PipelineStageFlags wait_destination_stage_mask {
+            vk::PipelineStageFlagBits::eColorAttachmentOutput
+          };
+          const vk::SubmitInfo submit_info {
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &*present_complete_semaphores_[ frame_index_ ],
+            .pWaitDstStageMask = &wait_destination_stage_mask,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &*command_buffers_[ frame_index_ ],
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &*render_finished_semaphores_[ image_index ],
+          };
+          return UTILS_VK(graphics_queue_.submit(
+                            submit_info, *in_flight_fences_[ frame_index_ ]),
+            ^^vk::raii::Queue::submit);
+        })
+      .and_then(
+        [ this, &image_index ]() -> std::expected<void, std::string>
+        {
+          const vk::PresentInfoKHR present_info {
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &*render_finished_semaphores_[ image_index ],
+            .swapchainCount = 1,
+            .pSwapchains = &*swap_chain_,
+            .pImageIndices = &image_index,
+            .pResults = nullptr,
+          };
+
+          auto result = graphics_queue_.presentKHR(present_info);
+          switch (result)
+          {
+          case vk::Result::eSuccess:
+          {
+            ++frame_index_ %= max_frames_in_flight;
+            return {};
+          }
+          default:
+          {
+            return std::expected<void, std::string> {
+              std::unexpect,
+              std::format(
+                "vk::Qeueue::presentKHR() returned: {}", vk::to_string(result)),
+            };
+          }
+          }
+        });
+  }
+
+  auto
+  create_sync_objects() -> std::expected<void, std::string>
+  {
+    for (auto _ : std::views::iota(0UZ, swap_chain_images_.size()))
+    {
+      auto maybe_render_semaphore = UTILS_VK(
+        device_.createSemaphore({}), ^^vk::raii::Device::createSemaphore);
+      if (!maybe_render_semaphore)
+      {
+        return std::expected<void, std::string> {
+          std::unexpect,
+          std::move(maybe_render_semaphore).error(),
+        };
+      }
+      render_finished_semaphores_.push_back(std::move(*maybe_render_semaphore));
+    }
+
+    for (auto _ : std::views::iota(0U, max_frames_in_flight))
+    {
+      auto maybe_present_semaphore = UTILS_VK(
+        device_.createSemaphore({}), ^^vk::raii::Device::createSemaphore);
+      if (!maybe_present_semaphore)
+      {
+        return std::expected<void, std::string> {
+          std::unexpect,
+          std::move(maybe_present_semaphore).error(),
+        };
+      }
+      present_complete_semaphores_.push_back(
+        std::move(*maybe_present_semaphore));
+
+      auto maybe_draw_fence = UTILS_VK(
+        device_.createFence({ .flags = vk::FenceCreateFlagBits::eSignaled }),
+        ^^vk::raii::Device::createFence);
+      if (!maybe_draw_fence)
+      {
+        return std::expected<void, std::string> {
+          std::unexpect,
+          std::move(maybe_draw_fence).error(),
+        };
+      }
+      in_flight_fences_.push_back(std::move(*maybe_draw_fence));
+    }
+    return {};
   }
 
 private:
@@ -856,8 +989,11 @@ private:
   vk::raii::PipelineLayout pipeline_layout_ { nullptr };
   vk::raii::Pipeline graphics_pipeline_ { nullptr };
   vk::raii::CommandPool command_pool_ { nullptr };
-  vk::raii::CommandBuffer command_buffer_ { nullptr };
-
+  std::vector<vk::raii::CommandBuffer> command_buffers_;
+  std::vector<vk::raii::Semaphore> present_complete_semaphores_;
+  std::vector<vk::raii::Semaphore> render_finished_semaphores_;
+  std::vector<vk::raii::Fence> in_flight_fences_;
   std::uint32_t graphics_qf_index_ { ~0U };
+  std::uint32_t frame_index_ { 0U };
 };
 } // namespace lbn
