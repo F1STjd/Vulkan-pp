@@ -338,6 +338,8 @@ private:
     bool supports_required_features =
       features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering ==
         vk::True &&
+      features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 ==
+        vk::True &&
       features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
           .extendedDynamicState == vk::True;
 
@@ -376,6 +378,7 @@ private:
     vk::StructureChain feature_chain {
       vk::PhysicalDeviceFeatures2 {},
       vk::PhysicalDeviceVulkan13Features {
+        .synchronization2 = vk::True,
         .dynamicRendering = vk::True,
       },
       vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT {
