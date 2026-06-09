@@ -41,22 +41,23 @@ constexpr std::array required_device_extensions {
   vk::KHRSwapchainExtensionName
 };
 
+constexpr std::uint32_t max_frames_in_flight { 2U };
+static_assert(max_frames_in_flight > 0,
+  "variable % max_frames_in_flight is used later, so being 0 is UB");
+
 export class app
 {
 public:
   void
   run()
   {
-    const auto result =
-      init_vulkan().transform([ this ]() -> void { main_loop(); });
+    const auto result = init_vulkan().and_then(
+      [ this ]() -> std::expected<void, std::string> { return main_loop(); });
 
     if (!result) { std::println(stderr, "{}", result.error()); }
   }
 
 private:
-  void
-  init_window();
-
   auto
   init_vulkan() -> std::expected<void, std::string>
   {
