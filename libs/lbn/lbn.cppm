@@ -45,6 +45,7 @@ public:
       [ this ]() -> std::expected<void, std::string> { return main_loop(); });
 
     if (!result) { std::println(stderr, "{}", result.error()); }
+    cleanup_swap_chain();
   }
 
 private:
@@ -77,12 +78,15 @@ private:
   auto
   main_loop() -> std::expected<void, std::string>
   {
+    const auto on_close = [ this ](const sf::Event::Closed&) -> void
+    { window_.close(); };
+
+    const auto on_resize = [ this ](const sf::Event::Resized&) -> void
+    { resized_ = true; };
+
     while (window_.isOpen())
     {
-      while (const auto event = window_.pollEvent())
-      {
-        if (event->is<sf::Event::Closed>()) { window_.close(); }
-      }
+      window_.handleEvents(on_close, on_resize);
       if (auto result = draw_frame(); !result)
       {
         return std::expected<void, std::string> {
@@ -841,8 +845,49 @@ private:
     command_buffers_[ frame_index_ ].pipelineBarrier2(dependency_info);
   }
 
+  [[nodiscard]] auto
+  is_swapchain_extent_valid() -> bool
+  {
+    const auto surface_capabilities =
+      UTILS_VK(physical_device_.getSurfaceCapabilitiesKHR(*surface_),
+        ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR);
+    if (!surface_capabilities) { return false; }
+
+    const auto extent = choose_swap_extent(*surface_capabilities);
+    return extent.width > 0U && extent.height > 0U;
+  }
+
   auto
-  draw_frame() -> std::expected<void, std::string>
+  suspend_rendering() -> std::expected<void, std::string>
+  {
+    if (frame_rendering_state_ == frame_rendering_state::suspended &&
+      swap_chain_ == nullptr)
+    {
+      return {};
+    }
+
+    frame_rendering_state_ = frame_rendering_state::suspended;
+    resized_ = false;
+
+    if (swap_chain_ == nullptr) { return {}; }
+
+    return UTILS_VK(device_.waitIdle(), ^^vk::raii::Device::waitIdle)
+      .transform([ this ]() -> void { cleanup_swap_chain(); });
+  }
+
+  auto
+  draw_frame_resume() -> std::expected<void, std::string>
+  {
+    return recreate_swap_chain().and_then(
+      [ this ]() -> std::expected<void, std::string>
+      {
+        frame_rendering_state_ = frame_rendering_state::active;
+        return draw_frame_active();
+      });
+  }
+
+  auto
+  draw_frame_active() -> std::expected<void, std::string>
   {
     if (auto result = device_.waitForFences(*in_flight_fences_[ frame_index_ ],
           vk::True, std::numeric_limits<std::uint64_t>::max());
@@ -851,25 +896,28 @@ private:
       return std::expected<void, std::string> { std::unexpect,
         std::format("Failed to wait for fence: {}", vk::to_string(result)) };
     }
-    std::uint32_t image_index {};
+    auto [ result, image_index ] =
+      swap_chain_.acquireNextImage(std::numeric_limits<std::uint64_t>::max(),
+        *present_complete_semaphores_[ frame_index_ ], nullptr);
+    if (result == vk::Result::eErrorOutOfDateKHR)
+    {
+      return is_swapchain_extent_valid() ? recreate_swap_chain()
+                                         : suspend_rendering();
+    }
+    if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
+    {
+      return std::expected<void, std::string> {
+        std::unexpect,
+        std::format("Failed to acquire next image from the swap chain: {}",
+          vk::to_string(result)),
+      };
+    }
+
     return UTILS_VK(device_.resetFences(*in_flight_fences_[ frame_index_ ]),
       ^^vk::raii::Device::resetFences)
       .and_then(
-        [ this, &image_index ]() -> std::expected<void, std::string>
+        [ this ]() -> std::expected<void, std::string>
         {
-          auto [ result, idx_temp ] = swap_chain_.acquireNextImage(
-            std::numeric_limits<std::uint64_t>::max(),
-            *present_complete_semaphores_[ frame_index_ ], nullptr);
-          if (result != vk::Result::eSuccess)
-          {
-            return std::expected<void, std::string> {
-              std::unexpect,
-              std::format(
-                "Failed to acquire next image from the swap chain: {}",
-                vk::to_string(result)),
-            };
-          }
-          image_index = idx_temp;
           return UTILS_VK(command_buffers_[ frame_index_ ].reset(),
             ^^vk::raii::CommandBuffer::reset);
         })
@@ -895,7 +943,7 @@ private:
             ^^vk::raii::Queue::submit);
         })
       .and_then(
-        [ this, &image_index ]() -> std::expected<void, std::string>
+        [ this, &image_index, &result ]() -> std::expected<void, std::string>
         {
           const vk::PresentInfoKHR present_info {
             .waitSemaphoreCount = 1,
@@ -906,24 +954,39 @@ private:
             .pResults = nullptr,
           };
 
-          auto result = graphics_queue_.presentKHR(present_info);
-          switch (result)
-          {
-          case vk::Result::eSuccess:
+          result = graphics_queue_.presentKHR(present_info);
+
+          if (result == vk::Result::eSuccess)
           {
             ++frame_index_ %= max_frames_in_flight;
             return {};
           }
-          default:
+          if (result == vk::Result::eSuboptimalKHR ||
+            result == vk::Result::eErrorOutOfDateKHR || resized_)
           {
-            return std::expected<void, std::string> {
-              std::unexpect,
-              std::format(
-                "vk::Qeueue::presentKHR() returned: {}", vk::to_string(result)),
-            };
+            resized_ = false;
+            return is_swapchain_extent_valid() ? recreate_swap_chain()
+                                               : suspend_rendering();
           }
-          }
+          return std::expected<void, std::string> {
+            std::unexpect,
+            std::format(
+              "vk::Qeueue::presentKHR() returned: {}", vk::to_string(result)),
+          };
         });
+  }
+
+  auto
+  draw_frame() -> std::expected<void, std::string>
+  {
+    if (!is_swapchain_extent_valid()) { return suspend_rendering(); }
+
+    if (frame_rendering_state_ == frame_rendering_state::suspended)
+    {
+      return draw_frame_resume();
+    }
+
+    return draw_frame_active();
   }
 
   auto
@@ -972,6 +1035,41 @@ private:
     return {};
   }
 
+  // It is possible to create a new swap chain while drawing commands on an
+  // image from the old swap chain are still in-flight. You need to pass the
+  // previous swap chain to the oldSwapchain field in the
+  // vk::SwapchainCreateInfoKHR struct and destroy the old swap chain as soon as
+  // you’ve finished using it.
+  auto
+  recreate_swap_chain() -> std::expected<void, std::string>
+  {
+    if (!is_swapchain_extent_valid()) { return suspend_rendering(); }
+
+    return UTILS_VK(device_.waitIdle(), ^^vk::raii::Device::waitIdle)
+      .and_then(
+        [ this ]() -> std::expected<void, std::string>
+        {
+          cleanup_swap_chain();
+          return create_swap_chain();
+        })
+      .and_then([ this ]() -> std::expected<void, std::string>
+        { return create_image_views(); });
+  }
+
+  void
+  cleanup_swap_chain()
+  {
+    swap_chain_image_views_.clear();
+    swap_chain_ = nullptr;
+  }
+
+private:
+  enum class frame_rendering_state : std::uint8_t
+  {
+    active,
+    suspended,
+  };
+
 private:
   sf::WindowBase window_ {
     sf::VideoMode { { window_width, window_height } },
@@ -998,5 +1096,10 @@ private:
   std::vector<vk::raii::Fence> in_flight_fences_;
   std::uint32_t graphics_qf_index_ { ~0U };
   std::uint32_t frame_index_ { 0U };
+
+  bool resized_ { false };
+  frame_rendering_state frame_rendering_state_ {
+    frame_rendering_state::active
+  };
 };
 } // namespace lbn
