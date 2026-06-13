@@ -1,7 +1,7 @@
 {
   "clangd.path": "D:/msys2/mingw64/bin/clangd.exe",
   "clangd.arguments": [
-    //"--experimental-modules-support",
+    "--experimental-modules-support",
     "--compile-commands-dir=${workspaceFolder}/build/clang-debug",
     "--query-driver=D:/msys2/mingw64/bin/*",
     "--header-insertion=never",
