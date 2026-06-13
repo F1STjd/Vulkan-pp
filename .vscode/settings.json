@@ -11,6 +11,5 @@
   ],
   "files.watcherExclude": {
     "**/build/**": true
-  },
-  "C_Cpp.intelliSenseEngine": "disabled"
+  }
 }
