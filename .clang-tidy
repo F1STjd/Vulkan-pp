@@ -21,7 +21,8 @@ Checks: "bugprone-*,
          -clang-diagnostic-unknown-warning-option,
          -clang-diagnostic-unknown-argument,
          -clang-diagnostic-error,
-         -misc-include-cleaner"
+         -misc-include-cleaner,
+         -cppcoreguidelines-pro-bounds-constant-array-index"
 
 WarningsAsErrors: ''
 HeaderFileExtensions: ['', 'h', 'hh', 'hpp', 'hxx']
