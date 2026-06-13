@@ -13,6 +13,7 @@ import std;
 import vulkan;
 import load;
 import utils;
+import vertex;
 
 namespace lbn
 {
@@ -69,6 +70,8 @@ private:
         { return create_graphics_pipeline(); })
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_command_pool(); })
+      .and_then([ this ] -> std::expected<void, std::string>
+        { return create_vertex_buffer(); })
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_command_buffers(); })
       .and_then([ this ] -> std::expected<void, std::string>
@@ -603,18 +606,29 @@ private:
             fragment_shader_stage_create_info,
           };
 
-          constexpr vk::PipelineVertexInputStateCreateInfo
-            vertex_shader_input_create_info {};
-          constexpr vk::PipelineInputAssemblyStateCreateInfo
+          static constexpr auto binding_description =
+            vertex::get_binding_description();
+          static constexpr auto attribute_descriptions =
+            vertex::get_attribute_descriptions();
+          static constexpr vk::PipelineVertexInputStateCreateInfo
+            vertex_input_create_info {
+              .vertexBindingDescriptionCount = 1U,
+              .pVertexBindingDescriptions = &binding_description,
+              .vertexAttributeDescriptionCount =
+                static_cast<std::uint32_t>(attribute_descriptions.size()),
+              .pVertexAttributeDescriptions = attribute_descriptions.data(),
+            };
+
+          static constexpr vk::PipelineInputAssemblyStateCreateInfo
             input_assembly_create_info {
               .topology = vk::PrimitiveTopology::eTriangleList,
             };
-          constexpr vk::PipelineViewportStateCreateInfo
+          static constexpr vk::PipelineViewportStateCreateInfo
             viewport_state_create_info {
               .viewportCount = 1U,
               .scissorCount = 1U,
             };
-          constexpr vk::PipelineRasterizationStateCreateInfo
+          static constexpr vk::PipelineRasterizationStateCreateInfo
             rasterizer_create_info {
               .depthClampEnable = vk::False,
               .rasterizerDiscardEnable = vk::False,
@@ -624,7 +638,7 @@ private:
               .depthBiasEnable = vk::False,
               .lineWidth = 1.0F,
             };
-          constexpr vk::PipelineMultisampleStateCreateInfo
+          static constexpr vk::PipelineMultisampleStateCreateInfo
             multisampling_create_info {
               .rasterizationSamples = vk::SampleCountFlagBits::e1,
               .sampleShadingEnable = vk::False,
@@ -637,7 +651,7 @@ private:
                 vk::ColorComponentFlagBits::eG |
                 vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
             };
-          constexpr vk::PipelineColorBlendStateCreateInfo
+          static constexpr vk::PipelineColorBlendStateCreateInfo
             color_blend_create_info {
               .logicOpEnable = vk::False,
               .logicOp = vk::LogicOp::eCopy,
@@ -649,16 +663,17 @@ private:
             vk::DynamicState::eViewport,
             vk::DynamicState::eScissor,
           };
-          constexpr vk::PipelineDynamicStateCreateInfo dynamic_state {
+          static constexpr vk::PipelineDynamicStateCreateInfo dynamic_state {
             .dynamicStateCount =
               static_cast<std::uint32_t>(dynamic_states.size()),
             .pDynamicStates = dynamic_states.data(),
           };
 
-          vk::PipelineLayoutCreateInfo pipeline_layout_create_info {
-            .setLayoutCount = 0,
-            .pushConstantRangeCount = 0,
-          };
+          static constexpr vk::PipelineLayoutCreateInfo
+            pipeline_layout_create_info {
+              .setLayoutCount = 0,
+              .pushConstantRangeCount = 0,
+            };
 
           auto maybe_layout =
             UTILS_VK(device_.createPipelineLayout(pipeline_layout_create_info),
@@ -676,7 +691,7 @@ private:
             vk::GraphicsPipelineCreateInfo {
               .stageCount = 2,
               .pStages = shader_stages.data(),
-              .pVertexInputState = &vertex_shader_input_create_info,
+              .pVertexInputState = &vertex_input_create_info,
               .pInputAssemblyState = &input_assembly_create_info,
               .pViewportState = &viewport_state_create_info,
               .pRasterizationState = &rasterizer_create_info,
@@ -725,6 +740,94 @@ private:
       ^^vk::raii::Device::createCommandPool)
       .transform([ this ](vk::raii::CommandPool&& command_pool) -> void
         { command_pool_ = std::move(command_pool); });
+  }
+
+  auto
+  create_vertex_buffer() -> std::expected<void, std::string>
+  {
+    vk::BufferCreateInfo buffer_create_info {
+      .size = std::span { vertices }.size_bytes(),
+      .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+      .sharingMode = vk::SharingMode::eExclusive,
+    };
+
+    return UTILS_VK(device_.createBuffer(buffer_create_info),
+      ^^vk::raii::Device::createBuffer)
+      .and_then(
+        [ this ](vk::raii::Buffer&& buffer)
+          -> std::expected<vk::raii::DeviceMemory, std::string>
+        {
+          vertex_buffer_ = std::move(buffer);
+          const auto memory_requirements =
+            vertex_buffer_.getMemoryRequirements();
+          const auto memory_type =
+            find_memory_type(memory_requirements.memoryTypeBits,
+              vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+          if (!memory_type)
+          {
+            return std::expected<vk::raii::DeviceMemory, std::string> {
+              std::unexpect,
+              std::move(memory_type).error(),
+            };
+          }
+          vk::MemoryAllocateInfo memory_allocate_info {
+            .allocationSize = memory_requirements.size,
+            .memoryTypeIndex = *memory_type,
+          };
+
+          return UTILS_VK(device_.allocateMemory(memory_allocate_info),
+            ^^vk::raii::Device::allocateMemory);
+        })
+      .and_then(
+        [ this ](
+          vk::raii::DeviceMemory&& memory) -> std::expected<void, std::string>
+        {
+          vertex_buffer_memory_ = std::move(memory);
+          return UTILS_VK(
+            vertex_buffer_.bindMemory(*vertex_buffer_memory_, 0ULL),
+            ^^vk::raii::Buffer::bindMemory);
+        })
+      .and_then(
+        [ this, &buffer_create_info ]() -> std::expected<void*, std::string>
+        {
+          return UTILS_VK(
+            vertex_buffer_memory_.mapMemory(0, buffer_create_info.size),
+            ^^vk::raii::DeviceMemory::mapMemory);
+        })
+      .transform(
+        [ this, &buffer_create_info ](void* data) -> void
+        {
+          std::memcpy(data, vertices.data(), buffer_create_info.size);
+          vertex_buffer_memory_.unmapMemory();
+        });
+  }
+
+  auto
+  find_memory_type(
+    std::uint32_t type_filter, vk::MemoryPropertyFlags properties)
+    -> std::expected<std::uint32_t, std::string>
+  {
+    const auto available_properties = physical_device_.getMemoryProperties();
+    const auto memory_types =
+      std::views::iota(0U, available_properties.memoryTypeCount);
+    auto memory_type_it = std::ranges::find_if(memory_types,
+      [ type_filter, properties, &available_properties ](
+        std::uint32_t memory_type) -> bool
+      {
+        return (type_filter & (1U << memory_type)) &&
+          (available_properties.memoryTypes[ memory_type ].propertyFlags &
+            properties) == properties;
+      });
+    if (memory_type_it == memory_types.end())
+    {
+      return std::expected<std::uint32_t, std::string> {
+        std::unexpect,
+        "Failed to find suitable memory type",
+      };
+    }
+
+    return *memory_type_it;
   }
 
   auto
@@ -795,7 +898,9 @@ private:
               .offset = vk::Offset2D { .x = 0, .y = 0 },
               .extent = swap_chain_extent_,
             });
-          command_buffer.draw(3U, 1U, 0U, 0U);
+          command_buffer.bindVertexBuffers(0, *vertex_buffer_, { 0 });
+          command_buffer.draw(
+            static_cast<std::uint32_t>(vertices.size()), 1U, 0U, 0U);
           command_buffer.endRendering();
 
           transition_image_layout(image_index,
@@ -1096,6 +1201,8 @@ private:
   std::vector<vk::raii::Fence> in_flight_fences_;
   std::uint32_t graphics_qf_index_ { ~0U };
   std::uint32_t frame_index_ { 0U };
+  vk::raii::Buffer vertex_buffer_ { nullptr };
+  vk::raii::DeviceMemory vertex_buffer_memory_ { nullptr };
 
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {
