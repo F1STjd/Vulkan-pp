@@ -402,6 +402,9 @@ private:
       .ppEnabledExtensionNames = required_device_extensions.data(),
     };
 
+    // TODO: Konrad - Create additional (transfer) queue for any transfering
+    // operations. Help:
+    // https://docs.vulkan.org/tutorial/latest/04_Vertex_buffers/02_Staging_buffer.html#_transfer_queue
     return UTILS_VK(physical_device_.createDevice(device_create_info),
       ^^vk::raii::PhysicalDevice::createDevice)
       .transform(
@@ -742,31 +745,32 @@ private:
         { command_pool_ = std::move(command_pool); });
   }
 
+  using buffer_memory_pair =
+    std::pair<vk::raii::Buffer, vk::raii::DeviceMemory>;
+
   auto
-  create_vertex_buffer() -> std::expected<void, std::string>
+  create_buffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
+    vk::MemoryPropertyFlags properties)
+    -> std::expected<buffer_memory_pair, std::string>
   {
     vk::BufferCreateInfo buffer_create_info {
-      .size = std::span { vertices }.size_bytes(),
-      .usage = vk::BufferUsageFlagBits::eVertexBuffer,
+      .size = size,
+      .usage = usage,
       .sharingMode = vk::SharingMode::eExclusive,
     };
 
     return UTILS_VK(device_.createBuffer(buffer_create_info),
       ^^vk::raii::Device::createBuffer)
       .and_then(
-        [ this ](vk::raii::Buffer&& buffer)
-          -> std::expected<vk::raii::DeviceMemory, std::string>
+        [ this, properties ](vk::raii::Buffer&& buffer)
+          -> std::expected<buffer_memory_pair, std::string>
         {
-          vertex_buffer_ = std::move(buffer);
-          const auto memory_requirements =
-            vertex_buffer_.getMemoryRequirements();
+          const auto memory_requirements = buffer.getMemoryRequirements();
           const auto memory_type =
-            find_memory_type(memory_requirements.memoryTypeBits,
-              vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
+            find_memory_type(memory_requirements.memoryTypeBits, properties);
           if (!memory_type)
           {
-            return std::expected<vk::raii::DeviceMemory, std::string> {
+            return std::expected<buffer_memory_pair, std::string> {
               std::unexpect,
               std::move(memory_type).error(),
             };
@@ -776,30 +780,125 @@ private:
             .memoryTypeIndex = *memory_type,
           };
 
-          return UTILS_VK(device_.allocateMemory(memory_allocate_info),
+          auto memory = UTILS_VK(device_.allocateMemory(memory_allocate_info),
             ^^vk::raii::Device::allocateMemory);
+          if (!memory)
+          {
+            return std::expected<buffer_memory_pair, std::string> {
+              std::unexpect,
+              std::move(memory).error(),
+            };
+          }
+
+          auto bind_memory_result = UTILS_VK(
+            buffer.bindMemory(**memory, 0ULL), ^^vk::raii::Buffer::bindMemory);
+          if (!bind_memory_result)
+          {
+            return std::expected<buffer_memory_pair, std::string> {
+              std::unexpect,
+              std::move(bind_memory_result).error(),
+            };
+          }
+
+          return std::pair { std::move(buffer), std::move(*memory) };
+        });
+  }
+
+  // #TODO: Create new command pool for copying (for short-lived buffers), with
+  // vk::CommandPoolCreateFlagBits::eTransient
+  auto
+  copy_buffer(vk::raii::Buffer& source, vk::raii::Buffer& destination,
+    vk::DeviceSize size) -> std::expected<void, std::string>
+  {
+    vk::CommandBufferAllocateInfo command_buffer_allocate_info {
+      .commandPool = command_pool_,
+      .level = vk::CommandBufferLevel::ePrimary,
+      .commandBufferCount = 1,
+    };
+
+    vk::raii::CommandBuffer command_copy_buffer { nullptr };
+
+    return UTILS_VK(
+      device_.allocateCommandBuffers(command_buffer_allocate_info),
+      ^^vk::raii::Device::allocateCommandBuffers)
+      .and_then(
+        [ &command_copy_buffer ](
+          std::vector<vk::raii::CommandBuffer> command_buffers)
+          -> std::expected<void, std::string>
+        {
+          command_copy_buffer = std::move(command_buffers.front());
+          return UTILS_VK(
+            command_copy_buffer.begin(
+              { .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit }),
+            ^^vk::raii::CommandBuffer::begin);
         })
       .and_then(
-        [ this ](
-          vk::raii::DeviceMemory&& memory) -> std::expected<void, std::string>
+        [ &, this ]() -> std::expected<void, std::string>
         {
-          vertex_buffer_memory_ = std::move(memory);
+          command_copy_buffer.copyBuffer(*source, *destination,
+            vk::BufferCopy {
+              .srcOffset = 0,
+              .dstOffset = 0,
+              .size = size,
+            });
           return UTILS_VK(
-            vertex_buffer_.bindMemory(*vertex_buffer_memory_, 0ULL),
-            ^^vk::raii::Buffer::bindMemory);
+            command_copy_buffer.end(), ^^vk::raii::CommandBuffer::end);
         })
       .and_then(
-        [ this, &buffer_create_info ]() -> std::expected<void*, std::string>
+        [ this, &command_copy_buffer ]() -> std::expected<void, std::string>
+        {
+          return UTILS_VK( //
+            graphics_queue_.submit(
+              vk::SubmitInfo {
+                .commandBufferCount = 1,
+                .pCommandBuffers = &*command_copy_buffer,
+              },
+              nullptr),
+            ^^vk::raii::Queue::submit);
+        })
+      .and_then(
+        [ this ]() -> std::expected<void, std::string>
         {
           return UTILS_VK(
-            vertex_buffer_memory_.mapMemory(0, buffer_create_info.size),
+            graphics_queue_.waitIdle(), ^^vk::raii::Queue::waitIdle);
+        });
+  }
+
+  auto
+  create_vertex_buffer() -> std::expected<void, std::string>
+  {
+    auto buffer_size = std::span { vertices }.size_bytes();
+    vk::raii::Buffer staging_buffer { nullptr };
+    vk::raii::DeviceMemory staging_buffer_memory { nullptr };
+
+    return create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferSrc,
+      vk::MemoryPropertyFlagBits::eHostVisible |
+        vk::MemoryPropertyFlagBits::eHostCoherent)
+      .and_then(
+        [ &, this, buffer_size ](
+          buffer_memory_pair&& pair) -> std::expected<void*, std::string>
+        {
+          std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
+          return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, buffer_size),
             ^^vk::raii::DeviceMemory::mapMemory);
         })
-      .transform(
-        [ this, &buffer_create_info ](void* data) -> void
+      .and_then(
+        [ &, this, buffer_size ](
+          void* data_staging) -> std::expected<buffer_memory_pair, std::string>
         {
-          std::memcpy(data, vertices.data(), buffer_create_info.size);
-          vertex_buffer_memory_.unmapMemory();
+          std::memcpy(data_staging, vertices.data(), buffer_size);
+          staging_buffer_memory.unmapMemory();
+          return create_buffer(buffer_size,
+            vk::BufferUsageFlagBits::eVertexBuffer |
+              vk::BufferUsageFlagBits::eTransferDst,
+            vk::MemoryPropertyFlagBits::eDeviceLocal);
+        })
+      .and_then(
+        [ &, this, buffer_size ](
+          buffer_memory_pair&& pair) -> std::expected<void, std::string>
+        {
+          std::tie(vertex_buffer_, vertex_buffer_memory_) = std::move(pair);
+          return copy_buffer(staging_buffer, vertex_buffer_, buffer_size);
         });
   }
 
