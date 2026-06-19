@@ -835,7 +835,7 @@ private:
             ^^vk::raii::CommandBuffer::begin);
         })
       .and_then(
-        [ &, this ]() -> std::expected<void, std::string>
+        [ & ]() -> std::expected<void, std::string>
         {
           command_copy_buffer.copyBuffer(*source, *destination,
             vk::BufferCopy {
@@ -877,7 +877,7 @@ private:
       vk::MemoryPropertyFlagBits::eHostVisible |
         vk::MemoryPropertyFlagBits::eHostCoherent)
       .and_then(
-        [ &, this, buffer_size ](
+        [ &, buffer_size ](
           buffer_memory_pair&& pair) -> std::expected<void*, std::string>
         {
           std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
@@ -1025,7 +1025,7 @@ private:
           command_buffer.beginRendering(rendering_info);
           command_buffer.bindPipeline(
             vk::PipelineBindPoint::eGraphics, *graphics_pipeline_);
-          command_buffer.setViewport(0,
+          command_buffer.setViewport(0U,
             vk::Viewport {
               .x = 0.0F,
               .y = 0.0F,
@@ -1034,14 +1034,16 @@ private:
               .minDepth = 0.0F,
               .maxDepth = 1.0F,
             });
-          command_buffer.setScissor(0,
+          command_buffer.setScissor(0U,
             vk::Rect2D {
               .offset = vk::Offset2D { .x = 0, .y = 0 },
               .extent = swap_chain_extent_,
             });
-          command_buffer.bindVertexBuffers(0, *vertex_buffer_, { 0 });
-          command_buffer.draw(
-            static_cast<std::uint32_t>(vertices.size()), 1U, 0U, 0U);
+          command_buffer.bindVertexBuffers(0U, *vertex_buffer_, { 0UZ });
+          command_buffer.bindIndexBuffer(
+            *index_buffer_, 0UZ, vk::IndexType::eUint32);
+          command_buffer.drawIndexed(
+            static_cast<std::uint32_t>(indices.size()), 1U, 0U, 0U, 0U);
           command_buffer.endRendering();
 
           transition_image_layout(image_index,
