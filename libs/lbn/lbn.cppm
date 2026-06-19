@@ -73,6 +73,8 @@ private:
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_vertex_buffer(); })
       .and_then([ this ] -> std::expected<void, std::string>
+        { return create_index_buffer(); })
+      .and_then([ this ] -> std::expected<void, std::string>
         { return create_command_buffers(); })
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_sync_objects(); });
@@ -902,6 +904,46 @@ private:
         });
   }
 
+  // #TODO: only data and buffers change - maybe some abstraction:
+  // create_buffer(...)
+  auto
+  create_index_buffer() -> std::expected<void, std::string>
+  {
+    auto buffer_size = std::span { indices }.size_bytes();
+    vk::raii::Buffer staging_buffer { nullptr };
+    vk::raii::DeviceMemory staging_buffer_memory { nullptr };
+
+    return create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferSrc,
+      vk::MemoryPropertyFlagBits::eHostVisible |
+        vk::MemoryPropertyFlagBits::eHostCoherent)
+      .and_then(
+        [ &, buffer_size ](
+          buffer_memory_pair&& pair) -> std::expected<void*, std::string>
+        {
+          std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
+          return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, buffer_size),
+            ^^vk::raii::DeviceMemory::mapMemory);
+        })
+      .and_then(
+        [ &, this, buffer_size ](
+          void* data_staging) -> std::expected<buffer_memory_pair, std::string>
+        {
+          std::memcpy(data_staging, indices.data(), buffer_size);
+          staging_buffer_memory.unmapMemory();
+          return create_buffer(buffer_size,
+            vk::BufferUsageFlagBits::eIndexBuffer |
+              vk::BufferUsageFlagBits::eTransferDst,
+            vk::MemoryPropertyFlagBits::eDeviceLocal);
+        })
+      .and_then(
+        [ &, this, buffer_size ](
+          buffer_memory_pair&& pair) -> std::expected<void, std::string>
+        {
+          std::tie(index_buffer_, index_buffer_memory_) = std::move(pair);
+          return copy_buffer(staging_buffer, index_buffer_, buffer_size);
+        });
+  }
+
   auto
   find_memory_type(
     std::uint32_t type_filter, vk::MemoryPropertyFlags properties)
@@ -1300,8 +1342,12 @@ private:
   std::vector<vk::raii::Fence> in_flight_fences_;
   std::uint32_t graphics_qf_index_ { ~0U };
   std::uint32_t frame_index_ { 0U };
+  // TODO: https://developer.nvidia.com/vulkan-memory-management suggests to use
+  // one vk::raii::Buffer to have more buffers inside, and use offsets
   vk::raii::Buffer vertex_buffer_ { nullptr };
   vk::raii::DeviceMemory vertex_buffer_memory_ { nullptr };
+  vk::raii::Buffer index_buffer_ { nullptr };
+  vk::raii::DeviceMemory index_buffer_memory_ { nullptr };
 
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {

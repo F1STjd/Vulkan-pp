@@ -48,16 +48,22 @@ export struct vertex
 
 export constexpr std::array vertices {
   vertex {
-    .position = { 0.0F, -1.0F },
+    .position = { -0.5F, -0.5F },
     .color = { 1.0F, 0.0F, 0.0F },
   },
   vertex {
-    .position = { 1.0F, 1.0F },
+    .position = { 0.5F, -0.5F },
     .color = { 0.0F, 1.0F, 0.0F },
   },
   vertex {
-    .position = { -1.0F, 1.0F },
+    .position = { 0.5F, 0.5F },
     .color = { 0.0F, 0.0F, 1.0F },
   },
+  vertex {
+    .position = { -0.5F, 0.5F },
+    .color = { 1.0F, 1.0F, 1.0F },
+  },
 };
+
+export constexpr std::array indices { 0U, 1U, 2U, 2U, 3U, 0U };
 } // namespace lbn
