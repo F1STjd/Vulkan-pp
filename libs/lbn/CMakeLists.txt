@@ -4,7 +4,8 @@ target_sources(lbn
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
     FILES
       lbn.cppm
-      vertex.cppm)
+      vertex.cppm
+      uniform_buffer.cppm)
 # GCC -fcontracts only; Clang has no std::contracts yet (see contracts_config.hpp).
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   target_sources(lbn PRIVATE contracts_handler.cpp)

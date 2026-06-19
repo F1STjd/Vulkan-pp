@@ -11,8 +11,10 @@ export module lbn;
 
 import std;
 import vulkan;
+import glm;
 import load;
 import utils;
+import uniform_buffer;
 import vertex;
 
 namespace lbn
@@ -67,6 +69,8 @@ private:
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_image_views(); })
       .and_then([ this ] -> std::expected<void, std::string>
+        { return create_descriptor_set_layout(); })
+      .and_then([ this ] -> std::expected<void, std::string>
         { return create_graphics_pipeline(); })
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_command_pool(); })
@@ -74,6 +78,12 @@ private:
         { return create_vertex_buffer(); })
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_index_buffer(); })
+      .and_then([ this ] -> std::expected<void, std::string>
+        { return create_uniform_buffers(); })
+      .and_then([ this ] -> std::expected<void, std::string>
+        { return create_descriptor_pool(); })
+      .and_then([ this ] -> std::expected<void, std::string>
+        { return create_descriptor_sets(); })
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_command_buffers(); })
       .and_then([ this ] -> std::expected<void, std::string>
@@ -583,6 +593,26 @@ private:
   }
 
   auto
+  create_descriptor_set_layout() -> std::expected<void, std::string>
+  {
+    vk::DescriptorSetLayoutBinding ubo_layout_binding {
+      .binding = 0,
+      .descriptorType = vk::DescriptorType::eUniformBuffer,
+      .descriptorCount = 1,
+      .stageFlags = vk::ShaderStageFlagBits::eVertex,
+    };
+    vk::DescriptorSetLayoutCreateInfo ubo_layout_create_info {
+      .bindingCount = 1,
+      .pBindings = &ubo_layout_binding,
+    };
+
+    return UTILS_VK(device_.createDescriptorSetLayout(ubo_layout_create_info),
+      ^^vk::raii::Device::createDescriptorSetLayout)
+      .transform([ this ](vk::raii::DescriptorSetLayout&& layout) -> void
+        { descriptor_set_layout_ = std::move(layout); });
+  }
+
+  auto
   create_graphics_pipeline() -> std::expected<void, std::string>
   {
     return load::read_shader_file(SHADER_DIRECTORY "slang.spv")
@@ -639,7 +669,7 @@ private:
               .rasterizerDiscardEnable = vk::False,
               .polygonMode = vk::PolygonMode::eFill,
               .cullMode = vk::CullModeFlagBits::eBack,
-              .frontFace = vk::FrontFace::eClockwise,
+              .frontFace = vk::FrontFace::eCounterClockwise,
               .depthBiasEnable = vk::False,
               .lineWidth = 1.0F,
             };
@@ -674,9 +704,10 @@ private:
             .pDynamicStates = dynamic_states.data(),
           };
 
-          static constexpr vk::PipelineLayoutCreateInfo
+          static const vk::PipelineLayoutCreateInfo
             pipeline_layout_create_info {
-              .setLayoutCount = 0,
+              .setLayoutCount = 1,
+              .pSetLayouts = &*descriptor_set_layout_,
               .pushConstantRangeCount = 0,
             };
 
@@ -945,6 +976,135 @@ private:
   }
 
   auto
+  create_uniform_buffers() -> std::expected<void, std::string>
+  {
+    uniform_buffers_.reserve(max_frames_in_flight);
+    uniform_buffers_memory_.reserve(max_frames_in_flight);
+    uniform_buffers_mapped_.reserve(max_frames_in_flight);
+    for (auto _ : std::views::iota(0U, max_frames_in_flight))
+    {
+      static constexpr vk::DeviceSize buffer_size =
+        sizeof(uniform_buffer_object);
+      vk::raii::Buffer buffer { nullptr };
+      vk::raii::DeviceMemory buffer_memory { nullptr };
+
+      const auto result =
+        create_buffer(buffer_size, vk::BufferUsageFlagBits::eUniformBuffer,
+          vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent)
+          .and_then(
+            [ & ](
+              buffer_memory_pair&& pair) -> std::expected<void*, std::string>
+            {
+              uniform_buffers_.emplace_back(std::move(pair).first);
+              uniform_buffers_memory_.emplace_back(std::move(pair).second);
+              return UTILS_VK(
+                uniform_buffers_memory_.back().mapMemory(0ULL, buffer_size),
+                ^^vk::raii::DeviceMemory::mapMemory);
+            })
+          .transform([ this ](void* mapped_memory) -> void
+            { uniform_buffers_mapped_.emplace_back(mapped_memory); });
+      if (!result)
+      {
+        return std::expected<void, std::string> {
+          std::unexpect,
+          std::move(result).error(),
+        };
+      }
+    }
+    return {};
+  }
+
+  auto
+  update_uniform_buffer(std::uint32_t current_image)
+  {
+    static auto start_time = std::chrono::high_resolution_clock::now();
+    auto current_time = std::chrono::high_resolution_clock::now();
+    auto time = std::chrono::duration<float>(current_time - start_time).count();
+    static constexpr auto degrees { glm::radians(90.0F) };
+    static constexpr auto camera_position { glm::vec3 { 2.0F, 2.0F, 2.0F } };
+    static constexpr auto target { glm::vec3 { 0.0F, 0.0F, 0.0F } };
+    static constexpr auto up { glm::vec3 { 0.0F, 0.0F, 1.0F } };
+    static constexpr auto fov_vertical { glm::radians(45.0F) };
+    static const auto aspect_ratio { //
+      static_cast<float>(swap_chain_extent_.width) /
+      static_cast<float>(swap_chain_extent_.height)
+    };
+    static constexpr auto near_plane { 0.1F };
+    static constexpr auto far_plane { 10.0F };
+
+    uniform_buffer_object ubo {
+      .model = glm::gtc::rotate(
+        glm::mat4 { 1.0F }, time * degrees, glm::vec3 { 0.0F, 0.0F, 1.0F }),
+      .view = glm::gtc::lookAt(camera_position, target, up),
+      .projection = glm::gtc::perspective(
+        fov_vertical, aspect_ratio, near_plane, far_plane),
+    };
+    ubo.projection[ 1 ][ 1 ] *= -1;
+
+    std::memcpy(uniform_buffers_mapped_[ current_image ], &ubo, sizeof(ubo));
+  }
+
+  auto
+  create_descriptor_pool() -> std::expected<void, std::string>
+  {
+    vk::DescriptorPoolSize descriptor_pool_size {
+      .type = vk::DescriptorType::eUniformBuffer,
+      .descriptorCount = max_frames_in_flight,
+    };
+    vk::DescriptorPoolCreateInfo descriptor_pool_create_info {
+      .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+      .maxSets = max_frames_in_flight,
+      .poolSizeCount = 1U,
+      .pPoolSizes = &descriptor_pool_size,
+    };
+
+    return UTILS_VK(device_.createDescriptorPool(descriptor_pool_create_info),
+      ^^vk::raii::Device::createDescriptorPool)
+      .transform([ this ](vk::raii::DescriptorPool&& pool) -> void
+        { descriptor_pool_ = std::move(pool); });
+  }
+
+  auto
+  create_descriptor_sets() -> std::expected<void, std::string>
+  {
+    std::vector layouts(max_frames_in_flight, *descriptor_set_layout_);
+    vk::DescriptorSetAllocateInfo descriptor_set_allocate_info {
+      .descriptorPool = *descriptor_pool_,
+      .descriptorSetCount = max_frames_in_flight,
+      .pSetLayouts = layouts.data(),
+    };
+
+    return UTILS_VK(
+      device_.allocateDescriptorSets(descriptor_set_allocate_info),
+      ^^vk::raii::Device::allocateDescriptorSets)
+      .transform(
+        [ this ](std::vector<vk::raii::DescriptorSet>&& sets) -> void
+        {
+          descriptor_sets_ = std::move(sets);
+
+          for (auto frame_index : std::views::iota(0UZ, max_frames_in_flight))
+          {
+            vk::DescriptorBufferInfo descriptor_buffer_info {
+              .buffer = uniform_buffers_[ frame_index ],
+              .offset = 0U,
+              .range = sizeof(uniform_buffer_object),
+            };
+            vk::WriteDescriptorSet descriptor_set_write {
+              .dstSet = descriptor_sets_[ frame_index ],
+              .dstBinding = 0U,
+              .dstArrayElement = 0U,
+              .descriptorCount = 1U,
+              .descriptorType = vk::DescriptorType::eUniformBuffer,
+              .pBufferInfo = &descriptor_buffer_info,
+            };
+
+            device_.updateDescriptorSets(descriptor_set_write, {});
+          }
+        });
+  }
+
+  auto
   find_memory_type(
     std::uint32_t type_filter, vk::MemoryPropertyFlags properties)
     -> std::expected<std::uint32_t, std::string>
@@ -1042,6 +1202,8 @@ private:
           command_buffer.bindVertexBuffers(0U, *vertex_buffer_, { 0UZ });
           command_buffer.bindIndexBuffer(
             *index_buffer_, 0UZ, vk::IndexType::eUint32);
+          command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+            pipeline_layout_, 0U, *descriptor_sets_[ frame_index_ ], nullptr);
           command_buffer.drawIndexed(
             static_cast<std::uint32_t>(indices.size()), 1U, 0U, 0U, 0U);
           command_buffer.endRendering();
@@ -1161,6 +1323,7 @@ private:
       };
     }
 
+    update_uniform_buffer(frame_index_);
     return UTILS_VK(device_.resetFences(*in_flight_fences_[ frame_index_ ]),
       ^^vk::raii::Device::resetFences)
       .and_then(
@@ -1350,6 +1513,12 @@ private:
   vk::raii::DeviceMemory vertex_buffer_memory_ { nullptr };
   vk::raii::Buffer index_buffer_ { nullptr };
   vk::raii::DeviceMemory index_buffer_memory_ { nullptr };
+  std::vector<vk::raii::Buffer> uniform_buffers_;
+  std::vector<vk::raii::DeviceMemory> uniform_buffers_memory_;
+  std::vector<void*> uniform_buffers_mapped_;
+  vk::raii::DescriptorSetLayout descriptor_set_layout_ { nullptr };
+  vk::raii::DescriptorPool descriptor_pool_ { nullptr };
+  std::vector<vk::raii::DescriptorSet> descriptor_sets_;
 
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {
