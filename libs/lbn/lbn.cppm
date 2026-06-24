@@ -965,7 +965,7 @@ private:
             };
           }
 
-          auto bind_memory_result = UTILS_VK(
+          const auto bind_memory_result = UTILS_VK(
             buffer.bindMemory(**memory, 0ULL), ^^vk::raii::Buffer::bindMemory);
           if (!bind_memory_result)
           {
