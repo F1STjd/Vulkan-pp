@@ -18,5 +18,8 @@ add_dependencies(lbn slang_shaders)
 
 file(TO_CMAKE_PATH "${SHADER_OUTPUT_DIRECTORY}" _shader_directory)
 string(REPLACE "\\" "/" _shader_directory "${_shader_directory}")
+file(TO_CMAKE_PATH "${TEXTURE_OUTPUT_DIRECTORY}" _texture_directory)
+string(REPLACE "\\" "/" _texture_directory "${_texture_directory}")
 target_compile_definitions(lbn PRIVATE
-  SHADER_DIRECTORY="${_shader_directory}/")
+  SHADER_DIRECTORY="${_shader_directory}/"
+  TEXTURE_DIRECTORY="${_texture_directory}/")
