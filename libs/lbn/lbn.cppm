@@ -77,6 +77,8 @@ private:
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_command_pool(); })
       .and_then([ this ] -> std::expected<void, std::string>
+        { return create_texture_image(); })
+      .and_then([ this ] -> std::expected<void, std::string>
         { return create_vertex_buffer(); })
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_index_buffer(); })
@@ -778,6 +780,144 @@ private:
       ^^vk::raii::Device::createCommandPool)
       .transform([ this ](vk::raii::CommandPool&& command_pool) -> void
         { command_pool_ = std::move(command_pool); });
+  }
+
+  using image_memory_pair = std::pair<vk::raii::Image, vk::raii::DeviceMemory>;
+
+  // TODO: Konrad - Buffer and image creation is almost same, so create some
+  // abstraction, for creating allocated objects
+  auto
+  create_image(std::uint32_t width, std::uint32_t height, vk::Format format,
+    vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+    vk::MemoryPropertyFlags properties)
+    -> std::expected<image_memory_pair, std::string>
+  {
+    const vk::ImageCreateInfo image_create_info {
+      .imageType = vk::ImageType::e2D,
+      .format = format,
+      .extent = {
+        .width = width,
+        .height = height,
+        .depth = 1U,
+      },
+      .mipLevels = 1,
+      .arrayLayers = 1,
+      .samples = vk::SampleCountFlagBits::e1,
+      .tiling = tiling,
+      .usage = usage,
+      .sharingMode = vk::SharingMode::eExclusive,
+    };
+
+    return UTILS_VK(
+      device_.createImage(image_create_info), ^^vk::raii::Device::createImage)
+      .and_then(
+        [ & ](vk::raii::Image&& image)
+          -> std::expected<image_memory_pair, std::string>
+        {
+          const auto memory_requirements = image.getMemoryRequirements();
+          const auto memory_type =
+            find_memory_type(memory_requirements.memoryTypeBits, properties);
+          if (!memory_type)
+          {
+            return std::expected<image_memory_pair, std::string> {
+              std::unexpect,
+              std::move(memory_type).error(),
+            };
+          }
+          vk::MemoryAllocateInfo memory_allocate_info {
+            .allocationSize = memory_requirements.size,
+            .memoryTypeIndex = *memory_type,
+          };
+
+          auto memory = UTILS_VK(device_.allocateMemory(memory_allocate_info),
+            ^^vk::raii::Device::allocateMemory);
+          if (!memory)
+          {
+            return std::expected<image_memory_pair, std::string> {
+              std::unexpect,
+              std::move(memory).error(),
+            };
+          }
+
+          const auto bind_memory_result = UTILS_VK(
+            image.bindMemory(**memory, 0ULL), ^^vk::raii::Image::bindMemory);
+          if (!bind_memory_result)
+          {
+            return std::expected<image_memory_pair, std::string> {
+              std::unexpect,
+              std::move(bind_memory_result).error(),
+            };
+          }
+
+          return std::pair { std::move(image), std::move(*memory) };
+        });
+  }
+
+  auto
+  create_texture_image() -> std::expected<void, std::string>
+  {
+    std::int32_t texture_width;  // NOLINT
+    std::int32_t texture_height; // NOLINT
+
+    const auto maybe_image = load::texture_file(
+      TEXTURE_DIRECTORY "texture.jpg", texture_width, texture_height);
+    if (!maybe_image)
+    {
+      return std::expected<void, std::string> {
+        std::unexpect,
+        std::move(maybe_image).error(),
+      };
+    }
+    const auto& image = *maybe_image;
+
+    vk::raii::Buffer staging_buffer { nullptr };
+    vk::raii::DeviceMemory staging_buffer_memory { nullptr };
+    vk::raii::CommandBuffer command_buffer { nullptr };
+
+    return create_buffer(image.size(), vk::BufferUsageFlagBits::eTransferSrc,
+      vk::MemoryPropertyFlagBits::eHostVisible |
+        vk::MemoryPropertyFlagBits::eHostCoherent)
+      .and_then(
+        [ & ](buffer_memory_pair&& pair) -> std::expected<void*, std::string>
+        {
+          std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
+          return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, image.size()),
+            ^^vk::raii::DeviceMemory::mapMemory);
+        })
+      .and_then(
+        [ & ](
+          void* data_staging) -> std::expected<image_memory_pair, std::string>
+        {
+          std::memcpy(data_staging, image.data(), image.size());
+          staging_buffer_memory.unmapMemory();
+          stbi_image_free(image.data());
+          return create_image(static_cast<std::uint32_t>(texture_width),
+            static_cast<std::uint32_t>(texture_height),
+            vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eTransferDst |
+              vk::ImageUsageFlagBits::eSampled,
+            vk::MemoryPropertyFlagBits::eDeviceLocal);
+        })
+      .and_then(
+        [ this, &command_buffer ](
+          image_memory_pair&& pair) -> std::expected<void, std::string>
+        {
+          std::tie(texture_image_, texture_image_memory_) = std::move(pair);
+          return begin_single_time_command(command_buffer);
+        })
+      .and_then(
+        [ &, this ]() -> std::expected<void, std::string>
+        {
+          transition_image_layout(command_buffer, texture_image_,
+            vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+          copy_buffer_to_image(command_buffer, staging_buffer, texture_image_,
+            static_cast<std::uint32_t>(texture_width),
+            static_cast<std::uint32_t>(texture_height));
+          transition_image_layout(command_buffer, texture_image_,
+            vk::ImageLayout::eTransferDstOptimal,
+            vk::ImageLayout::eShaderReadOnlyOptimal);
+          return end_single_time_command(command_buffer);
+        });
   }
 
   using buffer_memory_pair =
@@ -1509,6 +1649,8 @@ private:
   std::vector<vk::raii::Fence> in_flight_fences_;
   std::uint32_t graphics_qf_index_ { ~0U };
   std::uint32_t frame_index_ { 0U };
+  vk::raii::Image texture_image_ { nullptr };
+  vk::raii::DeviceMemory texture_image_memory_ { nullptr };
   // TODO: https://developer.nvidia.com/vulkan-memory-management suggests to use
   // one vk::raii::Buffer to have more buffers inside, and use offsets
   vk::raii::Buffer vertex_buffer_ { nullptr };
