@@ -7,6 +7,8 @@ module;
 #include <SFML/Window/VideoMode.hpp>
 #include <vulkan/vk_platform.h>
 
+#include <stb_image.h>
+
 export module lbn;
 
 import std;

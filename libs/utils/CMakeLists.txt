@@ -4,6 +4,7 @@ target_sources(utils
   PUBLIC FILE_SET CXX_MODULES
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
     FILES
+      load/channels.cppm
       load/load.cppm
       utils/utils.cppm)
 target_compile_features(utils PUBLIC cxx_std_26)
