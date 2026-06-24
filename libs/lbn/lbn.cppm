@@ -619,7 +619,7 @@ private:
   auto
   create_graphics_pipeline() -> std::expected<void, std::string>
   {
-    return load::read_shader_file(SHADER_DIRECTORY "slang.spv")
+    return load::shader_file(SHADER_DIRECTORY "slang.spv")
       .and_then([ this ](std::span<const char> code)
         { return create_shader_module(code); })
       .and_then(
