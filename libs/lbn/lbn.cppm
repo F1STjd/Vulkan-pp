@@ -985,28 +985,9 @@ private:
   copy_buffer(vk::raii::Buffer& source, vk::raii::Buffer& destination,
     vk::DeviceSize size) -> std::expected<void, std::string>
   {
-    vk::CommandBufferAllocateInfo command_buffer_allocate_info {
-      .commandPool = command_pool_,
-      .level = vk::CommandBufferLevel::ePrimary,
-      .commandBufferCount = 1,
-    };
-
     vk::raii::CommandBuffer command_copy_buffer { nullptr };
 
-    return UTILS_VK(
-      device_.allocateCommandBuffers(command_buffer_allocate_info),
-      ^^vk::raii::Device::allocateCommandBuffers)
-      .and_then(
-        [ &command_copy_buffer ](
-          std::vector<vk::raii::CommandBuffer> command_buffers)
-          -> std::expected<void, std::string>
-        {
-          command_copy_buffer = std::move(command_buffers.front());
-          return UTILS_VK(
-            command_copy_buffer.begin(
-              { .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit }),
-            ^^vk::raii::CommandBuffer::begin);
-        })
+    return begin_single_time_command(command_copy_buffer)
       .and_then(
         [ & ]() -> std::expected<void, std::string>
         {
@@ -1016,26 +997,7 @@ private:
               .dstOffset = 0,
               .size = size,
             });
-          return UTILS_VK(
-            command_copy_buffer.end(), ^^vk::raii::CommandBuffer::end);
-        })
-      .and_then(
-        [ this, &command_copy_buffer ]() -> std::expected<void, std::string>
-        {
-          return UTILS_VK( //
-            graphics_queue_.submit(
-              vk::SubmitInfo {
-                .commandBufferCount = 1,
-                .pCommandBuffers = &*command_copy_buffer,
-              },
-              nullptr),
-            ^^vk::raii::Queue::submit);
-        })
-      .and_then(
-        [ this ]() -> std::expected<void, std::string>
-        {
-          return UTILS_VK(
-            graphics_queue_.waitIdle(), ^^vk::raii::Queue::waitIdle);
+          return end_single_time_command(command_copy_buffer);
         });
   }
 
@@ -1395,6 +1357,128 @@ private:
       .pImageMemoryBarriers = &memory_barrier,
     };
     command_buffers_[ frame_index_ ].pipelineBarrier2(dependency_info);
+  }
+
+  void
+  transition_image_layout(vk::raii::CommandBuffer& command_buffer,
+    const vk::raii::Image& image, vk::ImageLayout old_layout,
+    vk::ImageLayout new_layout)
+  {
+    vk::ImageMemoryBarrier barrier {
+      .oldLayout = old_layout,
+      .newLayout = new_layout,
+      .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+      .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+      .image = image,
+      .subresourceRange = { .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .levelCount = 1U,
+        .layerCount = 1U },
+    };
+
+    vk::PipelineStageFlags source_stage;
+    vk::PipelineStageFlags destination_stage;
+
+    if (old_layout == vk::ImageLayout::eUndefined &&
+      new_layout == vk::ImageLayout::eTransferDstOptimal)
+    {
+      barrier.srcAccessMask = {};
+      barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+      source_stage = vk::PipelineStageFlagBits::eTopOfPipe;
+      destination_stage = vk::PipelineStageFlagBits::eTransfer;
+    }
+    else if (old_layout == vk::ImageLayout::eTransferDstOptimal &&
+      new_layout == vk::ImageLayout::eShaderReadOnlyOptimal)
+    {
+      barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+      barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+      source_stage = vk::PipelineStageFlagBits::eTransfer;
+      destination_stage = vk::PipelineStageFlagBits::eFragmentShader;
+    }
+
+    command_buffer.pipelineBarrier(
+      source_stage, destination_stage, {}, {}, nullptr, barrier);
+  }
+
+  void
+  copy_buffer_to_image(vk::raii::CommandBuffer& command_buffer,
+    const vk::raii::Buffer& buffer, vk::raii::Image& image, std::uint32_t width,
+    std::uint32_t height)
+  {
+    vk::BufferImageCopy region {
+      .bufferOffset = 0UZ,
+      .bufferRowLength = 0U,
+      .bufferImageHeight = 0U,
+      .imageSubresource = {
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .mipLevel = 0U,
+        .baseArrayLayer = 0U,
+        .layerCount = 1U,
+      },
+      .imageOffset = {
+        .x = 0,
+        .y = 0,
+        .z = 0,
+      },
+      .imageExtent = {
+        .width=width,
+        .height=height,
+        .depth=1U,
+      },
+    };
+
+    command_buffer.copyBufferToImage(
+      buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
+  }
+
+  auto
+  begin_single_time_command(vk::raii::CommandBuffer& command_buffer)
+    -> std::expected<void, std::string>
+  {
+    vk::CommandBufferAllocateInfo allocate_info {
+      .commandPool = command_pool_,
+      .level = vk::CommandBufferLevel::ePrimary,
+      .commandBufferCount = 1,
+    };
+
+    return UTILS_VK(device_.allocateCommandBuffers(allocate_info),
+      ^^vk::raii::Device::allocateCommandBuffers)
+      .and_then(
+        [ &command_buffer ](
+          std::vector<vk::raii::CommandBuffer> command_buffers)
+          -> std::expected<void, std::string>
+        {
+          command_buffer = std::move(command_buffers.front());
+          return UTILS_VK(
+            command_buffer.begin({
+              .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
+            }),
+            ^^vk::raii::CommandBuffer::begin);
+        });
+  }
+
+  auto
+  end_single_time_command(vk::raii::CommandBuffer& command_buffer)
+    -> std::expected<void, std::string>
+  {
+    return UTILS_VK(command_buffer.end(), ^^vk::raii::CommandBuffer::end)
+      .and_then(
+        [ this, &command_buffer ]() -> std::expected<void, std::string>
+        {
+          return UTILS_VK( //
+            graphics_queue_.submit(
+              vk::SubmitInfo {
+                .commandBufferCount = 1U,
+                .pCommandBuffers = &*command_buffer,
+              },
+              nullptr),
+            ^^vk::raii::Queue::submit);
+        })
+      .and_then(
+        [ this ]() -> std::expected<void, std::string>
+        {
+          return UTILS_VK(
+            graphics_queue_.waitIdle(), ^^vk::raii::Queue::waitIdle);
+        });
   }
 
   [[nodiscard]] auto
