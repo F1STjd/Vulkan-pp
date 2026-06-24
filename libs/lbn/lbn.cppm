@@ -979,7 +979,7 @@ private:
         });
   }
 
-  // #TODO: Create new command pool for copying (for short-lived buffers), with
+  // TODO: Create new command pool for copying (for short-lived buffers), with
   // vk::CommandPoolCreateFlagBits::eTransient
   auto
   copy_buffer(vk::raii::Buffer& source, vk::raii::Buffer& destination,
@@ -1077,7 +1077,7 @@ private:
         });
   }
 
-  // #TODO: only data and buffers change - maybe some abstraction:
+  // TODO: only data and buffers change - maybe some abstraction:
   // create_buffer(...)
   auto
   create_index_buffer() -> std::expected<void, std::string>
