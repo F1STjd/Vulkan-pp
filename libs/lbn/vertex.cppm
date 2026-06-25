@@ -14,6 +14,7 @@ export struct vertex
 {
   glm::vec2 position;
   glm::vec3 color;
+  glm::vec2 texture_coordinates;
 
   static consteval auto
   get_binding_description() -> vk::VertexInputBindingDescription
@@ -27,7 +28,7 @@ export struct vertex
 
   static consteval auto
   get_attribute_descriptions()
-    -> std::array<vk::VertexInputAttributeDescription, 2>
+    -> std::array<vk::VertexInputAttributeDescription, 3>
   {
     return std::array {
       vk::VertexInputAttributeDescription {
@@ -42,6 +43,12 @@ export struct vertex
         .format = vk::Format::eR32G32B32Sfloat,
         .offset = offsetof(vertex, color),
       },
+      vk::VertexInputAttributeDescription {
+        .location = 2,
+        .binding = 0,
+        .format = vk::Format::eR32G32Sfloat,
+        .offset = offsetof(vertex, texture_coordinates),
+      },
     };
   }
 };
@@ -50,18 +57,22 @@ export constexpr std::array vertices {
   vertex {
     .position = { -0.5F, -0.5F },
     .color = { 1.0F, 0.0F, 0.0F },
+    .texture_coordinates = { 1.0F, 0.0F },
   },
   vertex {
     .position = { 0.5F, -0.5F },
     .color = { 0.0F, 1.0F, 0.0F },
+    .texture_coordinates = { 0.0F, 0.0F },
   },
   vertex {
     .position = { 0.5F, 0.5F },
     .color = { 0.0F, 0.0F, 1.0F },
+    .texture_coordinates = { 0.0F, 1.0F },
   },
   vertex {
     .position = { -0.5F, 0.5F },
     .color = { 1.0F, 1.0F, 1.0F },
+    .texture_coordinates = { 1.0F, 1.0F },
   },
 };
 
