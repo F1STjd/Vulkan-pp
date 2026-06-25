@@ -581,8 +581,10 @@ private:
       .format = format,
       .subresourceRange = {
         .aspectMask = vk::ImageAspectFlagBits::eColor,
-        .baseMipLevel = 0,
-        .levelCount = 1,
+        .baseMipLevel = 0U,
+        .levelCount = 1U,
+        .baseArrayLayer = 0U,
+        .layerCount = 1U,
       },
     };
 
