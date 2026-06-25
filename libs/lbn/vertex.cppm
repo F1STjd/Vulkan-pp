@@ -12,7 +12,7 @@ namespace lbn
 {
 export struct vertex
 {
-  glm::vec2 position;
+  glm::vec3 position;
   glm::vec3 color;
   glm::vec2 texture_coordinates;
 
@@ -34,7 +34,7 @@ export struct vertex
       vk::VertexInputAttributeDescription {
         .location = 0,
         .binding = 0,
-        .format = vk::Format::eR32G32Sfloat,
+        .format = vk::Format::eR32G32B32Sfloat,
         .offset = offsetof(vertex, position),
       },
       vk::VertexInputAttributeDescription {
@@ -55,26 +55,61 @@ export struct vertex
 
 export constexpr std::array vertices {
   vertex {
-    .position = { -0.5F, -0.5F },
+    .position = { -0.5F, -0.5F, 0.0F },
     .color = { 1.0F, 0.0F, 0.0F },
     .texture_coordinates = { 1.0F, 0.0F },
   },
   vertex {
-    .position = { 0.5F, -0.5F },
+    .position = { 0.5F, -0.5F, 0.0F },
     .color = { 0.0F, 1.0F, 0.0F },
     .texture_coordinates = { 0.0F, 0.0F },
   },
   vertex {
-    .position = { 0.5F, 0.5F },
+    .position = { 0.5F, 0.5F, 0.0F },
     .color = { 0.0F, 0.0F, 1.0F },
     .texture_coordinates = { 0.0F, 1.0F },
   },
   vertex {
-    .position = { -0.5F, 0.5F },
+    .position = { -0.5F, 0.5F, 0.0F },
+    .color = { 1.0F, 1.0F, 1.0F },
+    .texture_coordinates = { 1.0F, 1.0F },
+  },
+
+  vertex {
+    .position = { -0.5F, -0.5F, -0.5F },
+    .color = { 1.0F, 0.0F, 0.0F },
+    .texture_coordinates = { 1.0F, 0.0F },
+  },
+  vertex {
+    .position = { 0.5F, -0.5F, -0.5F },
+    .color = { 0.0F, 1.0F, 0.0F },
+    .texture_coordinates = { 0.0F, 0.0F },
+  },
+  vertex {
+    .position = { 0.5F, 0.5F, -0.5F },
+    .color = { 0.0F, 0.0F, 1.0F },
+    .texture_coordinates = { 0.0F, 1.0F },
+  },
+  vertex {
+    .position = { -0.5F, 0.5F, -0.5F },
     .color = { 1.0F, 1.0F, 1.0F },
     .texture_coordinates = { 1.0F, 1.0F },
   },
 };
 
-export constexpr std::array indices { 0U, 1U, 2U, 2U, 3U, 0U };
+export constexpr std::array indices {
+  0U,
+  1U,
+  2U,
+  2U,
+  3U,
+  0U,
+
+  4U,
+  5U,
+  6U,
+  6U,
+  7U,
+  4U,
+};
 } // namespace lbn
