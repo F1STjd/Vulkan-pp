@@ -79,6 +79,8 @@ private:
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_texture_image(); })
       .and_then([ this ] -> std::expected<void, std::string>
+        { return create_texture_image_view(); })
+      .and_then([ this ] -> std::expected<void, std::string>
         { return create_vertex_buffer(); })
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_index_buffer(); })
@@ -562,28 +564,34 @@ private:
   }
 
   auto
+  create_image_view(const vk::Image& image, vk::Format format)
+    -> std::expected<vk::raii::ImageView, std::string>
+  {
+    vk::ImageViewCreateInfo image_view_info {
+      .image = image,
+      .viewType = vk::ImageViewType::e2D,
+      .format = format,
+      .subresourceRange = {
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+      },
+    };
+
+    return UTILS_VK(device_.createImageView(image_view_info),
+      ^^vk::raii::Device::createImageView);
+  }
+
+  auto
   create_image_views() -> std::expected<void,
     std::string> /* PRE(swap_chain_image_views_.empty()) */
   {
-    vk::ImageViewCreateInfo image_view_create_info {
-    .viewType = vk::ImageViewType::e2D,
-    .format = swap_chain_surface_format_.format,
-    .subresourceRange = {
-      .aspectMask = vk::ImageAspectFlagBits::eColor,
-      .baseMipLevel = 0,
-      .levelCount = 1,
-      .baseArrayLayer = 0,
-      .layerCount = 1,
-    },
-  };
     swap_chain_image_views_.clear();
     swap_chain_image_views_.reserve(swap_chain_images_.size());
     for (const auto& image : swap_chain_images_)
     {
-      image_view_create_info.image = image;
       auto image_view =
-        UTILS_VK(device_.createImageView(image_view_create_info),
-          ^^vk::raii::Device::createImageView);
+        create_image_view(image, swap_chain_surface_format_.format);
       if (!image_view)
       {
         return std::expected<void, std::string> {
@@ -918,6 +926,14 @@ private:
             vk::ImageLayout::eShaderReadOnlyOptimal);
           return end_single_time_command(command_buffer);
         });
+  }
+
+  auto
+  create_texture_image_view() -> std::expected<void, std::string>
+  {
+    return create_image_view(*texture_image_, vk::Format::eR8G8B8A8Srgb)
+      .transform([ this ](vk::raii::ImageView&& view) -> void
+        { texture_image_view_ = std::move(view); });
   }
 
   using buffer_memory_pair =
@@ -1735,6 +1751,7 @@ private:
   std::uint32_t frame_index_ { 0U };
   vk::raii::Image texture_image_ { nullptr };
   vk::raii::DeviceMemory texture_image_memory_ { nullptr };
+  vk::raii::ImageView texture_image_view_ { nullptr };
   // TODO: https://developer.nvidia.com/vulkan-memory-management suggests to use
   // one vk::raii::Buffer to have more buffers inside, and use offsets
   vk::raii::Buffer vertex_buffer_ { nullptr };
