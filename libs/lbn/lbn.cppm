@@ -81,6 +81,8 @@ private:
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_texture_image_view(); })
       .and_then([ this ] -> std::expected<void, std::string>
+        { return create_texture_sampler(); })
+      .and_then([ this ] -> std::expected<void, std::string>
         { return create_vertex_buffer(); })
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_index_buffer(); })
@@ -361,6 +363,8 @@ private:
       vk::PhysicalDeviceVulkan13Features,
       vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
     bool supports_required_features =
+      features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy ==
+        vk::True &&
       features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering ==
         vk::True &&
       features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 ==
@@ -401,7 +405,11 @@ private:
     };
 
     vk::StructureChain feature_chain {
-      vk::PhysicalDeviceFeatures2 {},
+      vk::PhysicalDeviceFeatures2 {
+        .features = {
+          .samplerAnisotropy = vk::True,
+        },
+      },
       vk::PhysicalDeviceVulkan13Features {
         .synchronization2 = vk::True,
         .dynamicRendering = vk::True,
@@ -934,6 +942,34 @@ private:
     return create_image_view(*texture_image_, vk::Format::eR8G8B8A8Srgb)
       .transform([ this ](vk::raii::ImageView&& view) -> void
         { texture_image_view_ = std::move(view); });
+  }
+
+  auto
+  create_texture_sampler() -> std::expected<void, std::string>
+  {
+    const auto properties = physical_device_.getProperties();
+    vk::SamplerCreateInfo sampler_create_info {
+      .magFilter = vk::Filter::eLinear,
+      .minFilter = vk::Filter::eLinear,
+      .mipmapMode = vk::SamplerMipmapMode::eLinear,
+      .addressModeU = vk::SamplerAddressMode::eRepeat,
+      .addressModeV = vk::SamplerAddressMode::eRepeat,
+      .addressModeW = vk::SamplerAddressMode::eRepeat,
+      .mipLodBias = 0.0F,
+      .anisotropyEnable = vk::True,
+      .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
+      .compareEnable = vk::False,
+      .compareOp = vk::CompareOp::eAlways,
+      .minLod = 0.0F,
+      .maxLod = 0.0F,
+      .borderColor = vk::BorderColor::eIntOpaqueBlack,
+      .unnormalizedCoordinates = vk::False,
+    };
+
+    return UTILS_VK(device_.createSampler(sampler_create_info),
+      ^^vk::raii::Device::createSampler)
+      .transform([ this ](vk::raii::Sampler&& sampler) -> void
+        { texture_sampler_ = std::move(sampler); });
   }
 
   using buffer_memory_pair =
@@ -1752,6 +1788,7 @@ private:
   vk::raii::Image texture_image_ { nullptr };
   vk::raii::DeviceMemory texture_image_memory_ { nullptr };
   vk::raii::ImageView texture_image_view_ { nullptr };
+  vk::raii::Sampler texture_sampler_ { nullptr };
   // TODO: https://developer.nvidia.com/vulkan-memory-management suggests to use
   // one vk::raii::Buffer to have more buffers inside, and use offsets
   vk::raii::Buffer vertex_buffer_ { nullptr };
