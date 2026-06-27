@@ -7,7 +7,10 @@ target_sources(glm_cxx_module
     BASE_DIRS "${_glm_inc}"
     FILES "${_glm_cppm}")
 
-target_compile_definitions(glm_cxx_module PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE)
+target_compile_definitions(glm_cxx_module
+  PUBLIC
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    GLM_ENABLE_EXPERIMENTAL)
 target_compile_features(glm_cxx_module PUBLIC cxx_std_26)
 target_link_libraries(glm_cxx_module PUBLIC glm::glm-header-only)
 set_target_properties(glm_cxx_module PROPERTIES CXX_MODULE_STD ON)
