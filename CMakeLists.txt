@@ -32,6 +32,7 @@ set(SHADER_SLANG_SOURCES ${CMAKE_SOURCE_DIR}/shaders/shader.slang)
 add_slang_shader_target(slang_shaders SOURCES ${SHADER_SLANG_SOURCES})
 
 set(TEXTURE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/textures")
+set(MODEL_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/models")
 
 add_subdirectory(libs/utils)
 add_subdirectory(libs/lbn)
