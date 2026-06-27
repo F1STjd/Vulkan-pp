@@ -4,3 +4,5 @@
 /.cache/
 compile_commands.json
 /shaders/*.spv
+/third-party/tinyobjloader/tiny_obj_loader.h
+/third-party/tinyobjloader/.release_sha
