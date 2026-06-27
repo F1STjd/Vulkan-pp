@@ -89,6 +89,8 @@ private:
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_texture_sampler(); })
       .and_then([ this ] -> std::expected<void, std::string>
+        { return load::model_obj(vertices_, indices_); })
+      .and_then([ this ] -> std::expected<void, std::string>
         { return create_vertex_buffer(); })
       .and_then([ this ] -> std::expected<void, std::string>
         { return create_index_buffer(); })
@@ -973,8 +975,8 @@ private:
     std::int32_t texture_width;  // NOLINT
     std::int32_t texture_height; // NOLINT
 
-    const auto maybe_image = load::texture_file(
-      TEXTURE_DIRECTORY "texture.jpg", texture_width, texture_height);
+    const auto maybe_image =
+      load::texture_file(load::texture_path, texture_width, texture_height);
     if (!maybe_image)
     {
       return std::expected<void, std::string> {
@@ -1155,7 +1157,7 @@ private:
   auto
   create_vertex_buffer() -> std::expected<void, std::string>
   {
-    auto buffer_size = std::span { vertices }.size_bytes();
+    auto buffer_size = std::span { vertices_ }.size_bytes();
     vk::raii::Buffer staging_buffer { nullptr };
     vk::raii::DeviceMemory staging_buffer_memory { nullptr };
 
@@ -1174,7 +1176,7 @@ private:
         [ &, this, buffer_size ](
           void* data_staging) -> std::expected<buffer_memory_pair, std::string>
         {
-          std::memcpy(data_staging, vertices.data(), buffer_size);
+          std::memcpy(data_staging, vertices_.data(), buffer_size);
           staging_buffer_memory.unmapMemory();
           return create_buffer(buffer_size,
             vk::BufferUsageFlagBits::eVertexBuffer |
@@ -1195,7 +1197,7 @@ private:
   auto
   create_index_buffer() -> std::expected<void, std::string>
   {
-    auto buffer_size = std::span { indices }.size_bytes();
+    auto buffer_size = std::span { indices_ }.size_bytes();
     vk::raii::Buffer staging_buffer { nullptr };
     vk::raii::DeviceMemory staging_buffer_memory { nullptr };
 
@@ -1214,7 +1216,7 @@ private:
         [ &, this, buffer_size ](
           void* data_staging) -> std::expected<buffer_memory_pair, std::string>
         {
-          std::memcpy(data_staging, indices.data(), buffer_size);
+          std::memcpy(data_staging, indices_.data(), buffer_size);
           staging_buffer_memory.unmapMemory();
           return create_buffer(buffer_size,
             vk::BufferUsageFlagBits::eIndexBuffer |
@@ -1506,12 +1508,12 @@ private:
               .extent = swap_chain_extent_,
             });
           command_buffer.bindVertexBuffers(0U, *vertex_buffer_, { 0UZ });
-          command_buffer.bindIndexBuffer(
-            *index_buffer_, 0UZ, vk::IndexType::eUint32);
+          command_buffer.bindIndexBuffer(*index_buffer_, 0UZ,
+            vk::IndexTypeValue<decltype(indices_)::value_type>::value);
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
             pipeline_layout_, 0U, *descriptor_sets_[ frame_index_ ], nullptr);
           command_buffer.drawIndexed(
-            static_cast<std::uint32_t>(indices.size()), 1U, 0U, 0U, 0U);
+            static_cast<std::uint32_t>(indices_.size()), 1U, 0U, 0U, 0U);
           command_buffer.endRendering();
 
           transition_image_layout(swap_chain_images_[ image_index ],
@@ -1950,6 +1952,8 @@ private:
   vk::raii::Sampler texture_sampler_ { nullptr };
   // TODO: https://developer.nvidia.com/vulkan-memory-management suggests to use
   // one vk::raii::Buffer to have more buffers inside, and use offsets
+  std::vector<vertex> vertices_;
+  std::vector<std::uint32_t> indices_;
   vk::raii::Buffer vertex_buffer_ { nullptr };
   vk::raii::DeviceMemory vertex_buffer_memory_ { nullptr };
   vk::raii::Buffer index_buffer_ { nullptr };
