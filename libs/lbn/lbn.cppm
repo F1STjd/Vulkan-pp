@@ -25,7 +25,11 @@ constexpr std::uint32_t window_width { 800 };
 constexpr std::uint32_t window_height { 600 };
 
 #ifdef NDEBUG
-constexpr std::array validation_layers { "VK_LAYER_KHRONOS_validation" };
+constexpr std::array validation_layers {
+  "VK_LAYER_KHRONOS_validation",
+  // This one is not checked in the code :(, but should be
+  "VK_LAYER_LUNARG_monitor",
+};
 constexpr bool enable_validation_layers { false };
 #else
 constexpr std::array<const char*, 0> validation_layers {};
