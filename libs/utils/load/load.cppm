@@ -12,7 +12,7 @@ import vulkan;
 import load.channels;
 import vertex;
 
-export namespace load
+namespace load
 {
 export constexpr const char* model_path { MODEL_DIRECTORY "viking_room.obj" };
 export constexpr const char* texture_path { TEXTURE_DIRECTORY
