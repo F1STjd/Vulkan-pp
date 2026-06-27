@@ -227,7 +227,7 @@ private:
             return std::expected<void, std::string> {
               std::unexpect,
               std::format(
-                "Required layer nor supported: {}", *unsupported_layer_it),
+                "Required layer not supported: {}", *unsupported_layer_it),
             };
           }
           return {};
