@@ -61,49 +61,28 @@ private:
   auto
   init_vulkan() -> std::expected<void, std::string>
   {
-    return create_instance() //
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return setup_debug_messenger(); })
-      .and_then([ this ] -> std::expected<void, std::string> //
-        { return create_surface(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return pick_physical_device(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_logical_device(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_swap_chain(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_image_views(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_descriptor_set_layout(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_graphics_pipeline(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_command_pool(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_depth_resources(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_texture_image(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_texture_image_view(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_texture_sampler(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return load::model_obj(vertices_, indices_); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_vertex_buffer(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_index_buffer(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_uniform_buffers(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_descriptor_pool(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_descriptor_sets(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_command_buffers(); })
-      .and_then([ this ] -> std::expected<void, std::string>
-        { return create_sync_objects(); });
+    return create_instance()
+      .and_then(std::bind_front(&app::setup_debug_messenger, this))
+      .and_then(std::bind_front(&app::create_surface, this))
+      .and_then(std::bind_front(&app::pick_physical_device, this))
+      .and_then(std::bind_front(&app::create_logical_device, this))
+      .and_then(std::bind_front(&app::create_swap_chain, this))
+      .and_then(std::bind_front(&app::create_image_views, this))
+      .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
+      .and_then(std::bind_front(&app::create_graphics_pipeline, this))
+      .and_then(std::bind_front(&app::create_command_pool, this))
+      .and_then(std::bind_front(&app::create_depth_resources, this))
+      .and_then(std::bind_front(&app::create_texture_image, this))
+      .and_then(std::bind_front(&app::create_texture_image_view, this))
+      .and_then(std::bind_front(&app::create_texture_sampler, this))
+      .and_then([ this ] { return load::model_obj(vertices_, indices_); })
+      .and_then(std::bind_front(&app::create_vertex_buffer, this))
+      .and_then(std::bind_front(&app::create_index_buffer, this))
+      .and_then(std::bind_front(&app::create_uniform_buffers, this))
+      .and_then(std::bind_front(&app::create_descriptor_pool, this))
+      .and_then(std::bind_front(&app::create_descriptor_sets, this))
+      .and_then(std::bind_front(&app::create_command_buffers, this))
+      .and_then(std::bind_front(&app::create_sync_objects, this));
   }
 
   auto
