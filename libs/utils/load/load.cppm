@@ -39,7 +39,7 @@ shader_file(const std::filesystem::path& filename)
 
 export [[nodiscard]] constexpr auto
 texture_file(const std::filesystem::path& filename, std::int32_t& texture_width,
-  std::int32_t& texture_height)
+  std::int32_t& texture_height, std::uint32_t& mip_levels)
   -> std::expected<std::span<stbi_uc>, std::string>
 {
   std::int32_t texture_channels; // NOLINT
@@ -55,6 +55,8 @@ texture_file(const std::filesystem::path& filename, std::int32_t& texture_width,
       std::format("Failed to load texture file: {}", filename),
     };
   }
+  mip_levels = static_cast<std::uint32_t>(
+    std::floor(std::log2(std::max(texture_width, texture_height))) + 1U);
   return std::span { pixels, image_size };
 }
 
