@@ -3,7 +3,19 @@ include(CheckCXXCompilerFlag)
 option(ENABLE_WEFFCPP "Enable -Weffc++ (known false positives)" OFF)
 option(ENABLE_GCC_ANALYZER "Enable -fanalyzer (slow)" OFF)
 option(WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
+option(BASIC_WARNINGS
+  "Use only -Wall -Wextra -Wpedantic for faster compiles (fast iteration)" OFF)
 
+if(BASIC_WARNINGS)
+  # Minimal set: fast to compile, used by the quick `scripts/build.ps1` flow.
+  set(_warn_candidates
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Wno-free-nonheap-object) # GCC false positive on std::expected chains
+
+else()
+# Full set: the strict, slower "feature finished" warnings.
 set(_warn_candidates
   -Wpedantic
   -pedantic-errors
@@ -59,6 +71,7 @@ set(_warn_candidates
   -Woverloaded-virtual
   -Wplacement-new=2
   -Wundef)
+endif()
 
 if(ENABLE_WEFFCPP)
   list(APPEND _warn_candidates -Weffc++)

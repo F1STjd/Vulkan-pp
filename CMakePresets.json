@@ -37,6 +37,15 @@
       }
     },
     {
+      "name": "gcc-release-fast",
+      "displayName": "GCC Release (optimized, basic warnings, fast iteration)",
+      "inherits": "gcc-release",
+      "binaryDir": "${sourceDir}/build/gcc-release-fast",
+      "cacheVariables": {
+        "BASIC_WARNINGS": "ON"
+      }
+    },
+    {
       "name": "clang-debug",
       "displayName": "Clang Debug (clangd / IDE)",
       "inherits": "gcc-debug",
@@ -61,6 +70,11 @@
     {
       "name": "gcc-debug",
       "configurePreset": "gcc-debug"
+    },
+    {
+      "name": "gcc-release-fast",
+      "configurePreset": "gcc-release-fast",
+      "nativeToolOptions": ["--quiet"]
     },
     {
       "name": "gcc-release",
