@@ -59,6 +59,53 @@
       "dependsOn": ["Configure: debug (parallel)", "Build: debug (parallel)"],
       "group": "build",
       "problemMatcher": []
+    },
+    {
+      "label": "Lint: clang-tidy (current file)",
+      "type": "shell",
+      "command": "D:/msys2/mingw64/bin/clang-tidy.exe",
+      "args": [
+        "-p",
+        "${workspaceFolder}/build/clang-debug",
+        "--quiet",
+        "${file}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "Lint: clang-tidy (whole project)",
+      "type": "shell",
+      "command": "run-clang-tidy",
+      "args": [
+        "-p",
+        "${workspaceFolder}/build/clang-debug",
+        "-quiet",
+        "-j",
+        "3"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "Diagnostics: toggle squiggles",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/.vscode/toggle-clangd-diagnostics.ps1"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
     }
   ]
 }

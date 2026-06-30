@@ -20,6 +20,10 @@ CompileFlags:
 
 Diagnostics:
   UnusedIncludes: None
+  # ON/OFF switch for ALL squiggles. Uncomment the next line (or use the
+  # "Diagnostics: toggle squiggles" task) to hide every diagnostic. clangd
+  # hot-reloads this file on save, so no restart is needed.
+  # Suppress: "*"
 
 ---
 If:
