@@ -2002,6 +2002,41 @@ private:
     return {};
   }
 
+  auto
+  get_max_usable_msaa_count() -> vk::SampleCountFlagBits
+  {
+    const auto properties = physical_device_.getProperties();
+    const auto counts = properties.limits.framebufferColorSampleCounts &
+      properties.limits.framebufferDepthSampleCounts;
+
+    if (counts & vk::SampleCountFlagBits::e64)
+    {
+      return vk::SampleCountFlagBits::e64;
+    }
+    if (counts & vk::SampleCountFlagBits::e32)
+    {
+      return vk::SampleCountFlagBits::e32;
+    }
+    if (counts & vk::SampleCountFlagBits::e16)
+    {
+      return vk::SampleCountFlagBits::e16;
+    }
+    if (counts & vk::SampleCountFlagBits::e8)
+    {
+      return vk::SampleCountFlagBits::e8;
+    }
+    if (counts & vk::SampleCountFlagBits::e4)
+    {
+      return vk::SampleCountFlagBits::e4;
+    }
+    if (counts & vk::SampleCountFlagBits::e2)
+    {
+      return vk::SampleCountFlagBits::e2;
+    }
+
+    return vk::SampleCountFlagBits::e1;
+  }
+
   // It is possible to create a new swap chain while drawing commands on an
   // image from the old swap chain are still in-flight. You need to pass the
   // previous swap chain to the oldSwapchain field in the
