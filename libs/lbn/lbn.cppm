@@ -71,6 +71,7 @@ private:
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
       .and_then(std::bind_front(&app::create_command_pool, this))
+      .and_then(std::bind_front(&app::create_color_resources, this))
       .and_then(std::bind_front(&app::create_depth_resources, this))
       .and_then(std::bind_front(&app::create_texture_image, this))
       .and_then(std::bind_front(&app::create_texture_image_view, this))
@@ -306,6 +307,7 @@ private:
             };
           }
           physical_device_ = *suitable_device_it;
+          msaa_samples_ = get_max_usable_msaa_count();
           return {};
         });
   }
@@ -698,9 +700,9 @@ private:
               .depthBiasEnable = vk::False,
               .lineWidth = 1.0F,
             };
-          static constexpr vk::PipelineMultisampleStateCreateInfo
+          const vk::PipelineMultisampleStateCreateInfo
             multisampling_create_info {
-              .rasterizationSamples = vk::SampleCountFlagBits::e1,
+              .rasterizationSamples = msaa_samples_,
               .sampleShadingEnable = vk::False,
             };
 
@@ -820,8 +822,9 @@ private:
   // abstraction, for creating allocated objects
   auto
   create_image(std::uint32_t width, std::uint32_t height,
-    std::uint32_t mip_levels, vk::Format format, vk::ImageTiling tiling,
-    vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties)
+    std::uint32_t mip_levels, vk::SampleCountFlagBits samples,
+    vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+    vk::MemoryPropertyFlags properties)
     -> std::expected<image_memory_pair, std::string>
   {
     const vk::ImageCreateInfo image_create_info {
@@ -834,7 +837,7 @@ private:
       },
       .mipLevels = mip_levels,
       .arrayLayers = 1,
-      .samples = vk::SampleCountFlagBits::e1,
+      .samples = samples,
       .tiling = tiling,
       .usage = usage,
       .sharingMode = vk::SharingMode::eExclusive,
@@ -909,6 +912,30 @@ private:
     };
   }
 
+  // TODO: Konrad - Almost the same function and implementation like in depth
+  // resources -> abstraction
+  auto
+  create_color_resources() -> std::expected<void, std::string>
+  {
+    return create_image(swap_chain_extent_.width, swap_chain_extent_.height, 1U,
+      msaa_samples_, swap_chain_surface_format_.format,
+      vk::ImageTiling::eOptimal,
+      vk::ImageUsageFlagBits::eTransientAttachment |
+        vk::ImageUsageFlagBits::eColorAttachment,
+      vk::MemoryPropertyFlagBits::eDeviceLocal)
+      .and_then(
+        [ this ](image_memory_pair&& pair)
+          -> std::expected<vk::raii::ImageView, std::string>
+        {
+          std::tie(color_image_, color_image_memory_) = std::move(pair);
+          return create_image_view(color_image_,
+            swap_chain_surface_format_.format, vk::ImageAspectFlagBits::eColor,
+            1U);
+        })
+      .transform([ this ](vk::raii::ImageView&& image_view) -> void
+        { color_image_view_ = std::move(image_view); });
+  }
+
   auto
   find_depth_format() -> std::expected<vk::Format, std::string>
   {
@@ -932,7 +959,7 @@ private:
         {
           depth_format_ = format;
           return create_image(swap_chain_extent_.width,
-            swap_chain_extent_.height, 1U, depth_format_,
+            swap_chain_extent_.height, 1U, msaa_samples_, depth_format_,
             vk::ImageTiling::eOptimal,
             vk::ImageUsageFlagBits::eDepthStencilAttachment,
             vk::MemoryPropertyFlagBits::eDeviceLocal);
@@ -989,7 +1016,8 @@ private:
           stbi_image_free(image.data());
           return create_image(static_cast<std::uint32_t>(texture_width),
             static_cast<std::uint32_t>(texture_height), mip_levels_,
-            vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal,
+            vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Srgb,
+            vk::ImageTiling::eOptimal,
             vk::ImageUsageFlags {
               vk::ImageUsageFlagBits::eTransferSrc |
                 vk::ImageUsageFlagBits::eTransferDst |
@@ -1428,6 +1456,13 @@ private:
             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             vk::ImageAspectFlagBits::eColor);
 
+          transition_image_layout(*color_image_, vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eColorAttachmentOptimal, {},
+            vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::ImageAspectFlagBits::eColor);
+
           transition_image_layout(*depth_image_, vk::ImageLayout::eUndefined,
             vk::ImageLayout::eDepthAttachmentOptimal,
             vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -1444,9 +1479,12 @@ private:
             0.0F,
             1.0F,
           } };
-          vk::RenderingAttachmentInfo rendering_attachment_info {
-            .imageView = swap_chain_image_views_[ image_index ],
+          vk::RenderingAttachmentInfo color_attachment_info {
+            .imageView = color_image_view_,
             .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .resolveMode = vk::ResolveModeFlagBits::eAverage,
+            .resolveImageView = swap_chain_image_views_[ image_index ],
+            .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
             .loadOp = vk::AttachmentLoadOp::eClear,
             .storeOp = vk::AttachmentStoreOp::eStore,
             .clearValue = clear_color,
@@ -1472,7 +1510,7 @@ private:
               },
             .layerCount = 1U,
             .colorAttachmentCount = 1U,
-            .pColorAttachments = &rendering_attachment_info,
+            .pColorAttachments = &color_attachment_info,
             .pDepthAttachment = &depth_attachment_info,
           };
           command_buffer.beginRendering(rendering_info);
@@ -1984,6 +2022,8 @@ private:
       .and_then([ this ]() -> std::expected<void, std::string>
         { return create_image_views(); })
       .and_then([ this ]() -> std::expected<void, std::string>
+        { return create_color_resources(); })
+      .and_then([ this ]() -> std::expected<void, std::string>
         { return create_depth_resources(); });
   }
 
@@ -2027,15 +2067,23 @@ private:
   std::vector<vk::raii::Fence> in_flight_fences_;
   std::uint32_t graphics_qf_index_ { ~0U };
   std::uint32_t frame_index_ {};
+
+  vk::raii::Image color_image_ { nullptr };
+  vk::raii::DeviceMemory color_image_memory_ { nullptr };
+  vk::raii::ImageView color_image_view_ { nullptr };
+
   vk::raii::Image depth_image_ { nullptr };
   vk::raii::DeviceMemory depth_image_memory_ { nullptr };
   vk::raii::ImageView depth_image_view_ { nullptr };
   vk::Format depth_format_;
+
   std::uint32_t mip_levels_ {};
+
   vk::raii::Image texture_image_ { nullptr };
   vk::raii::DeviceMemory texture_image_memory_ { nullptr };
   vk::raii::ImageView texture_image_view_ { nullptr };
   vk::raii::Sampler texture_sampler_ { nullptr };
+
   // TODO: https://developer.nvidia.com/vulkan-memory-management suggests to use
   // one vk::raii::Buffer to have more buffers inside, and use offsets
   std::vector<vertex> vertices_;
@@ -2050,6 +2098,7 @@ private:
   vk::raii::DescriptorSetLayout descriptor_set_layout_ { nullptr };
   vk::raii::DescriptorPool descriptor_pool_ { nullptr };
   std::vector<vk::raii::DescriptorSet> descriptor_sets_;
+  vk::SampleCountFlagBits msaa_samples_ { vk::SampleCountFlagBits::e1 };
 
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {
