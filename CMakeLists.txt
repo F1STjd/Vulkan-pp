@@ -34,9 +34,10 @@ add_slang_shader_target(slang_shaders SOURCES ${SHADER_SLANG_SOURCES})
 set(TEXTURE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/textures")
 set(MODEL_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/models")
 
-add_subdirectory(libs/utils)
-add_subdirectory(libs/lbn)
-add_subdirectory(src)
+# New tree (the vkpp library + f1st app). vkpp must come before app.
+# the renderer that lived in lbn now lives in app/app.cppm (module f1st.app).
+add_subdirectory(libs/vkpp)
+add_subdirectory(app)
 
 # Root compile_commands.json is only useful for Clang IDE builds.
 # GCC builds produce .gcm files that clangd cannot consume.
