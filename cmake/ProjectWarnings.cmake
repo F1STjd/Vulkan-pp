@@ -41,7 +41,16 @@ set(_warn_candidates
   -Wsuggest-override
   -Wsuggest-final-types
   -Wsuggest-final-methods
+  -Wsuggest-attribute=pure
+  -Wsuggest-attribute=const
+  -Wsuggest-attribute=malloc
+  -Wsuggest-attribute=returns_nonnull
+  -Wsuggest-attribute=format
+  -Wsuggest-attribute=cold
   -Wnoexcept
+  -Wnoexcept-type
+  -Wmissing-format-attribute
+  -Wmissing-attributes
   -Wctor-dtor-privacy
   -Wstrict-null-sentinel
   -Wredundant-tags
