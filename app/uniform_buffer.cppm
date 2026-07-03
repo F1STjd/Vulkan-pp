@@ -1,10 +1,8 @@
-module;
-
-export module uniform_buffer;
+export module f1st.uniform_buffer;
 
 import glm;
 
-namespace lbn
+namespace f1st
 {
 
 // TODO: Konrad - Be explicit about alignment, create more alignment helpers
@@ -22,4 +20,5 @@ export struct uniform_buffer_object
   alignas(alignment::mat4) glm::mat4 view;
   alignas(alignment::mat4) glm::mat4 projection;
 };
-} // namespace lbn
+
+} // namespace f1st

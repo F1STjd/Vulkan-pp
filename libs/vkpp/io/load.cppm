@@ -5,29 +5,32 @@ module;
 
 #include <tiny_obj_loader.h>
 
-export module load;
+export module vkpp.io;
 
 import std;
 import vulkan;
-import load.channels;
-import vertex;
+import vkpp.io.channels;
+import vkpp.vertex;
+import vkpp.error;
 
-namespace load
+namespace vkpp
 {
+
 export constexpr const char* model_path { MODEL_DIRECTORY "viking_room.obj" };
 export constexpr const char* texture_path { TEXTURE_DIRECTORY
   "viking_room.png" };
 
 export [[nodiscard]] constexpr auto
-shader_file(const std::filesystem::path& filename)
-  -> std::expected<std::vector<char>, std::string>
+load_shader_file(const std::filesystem::path& filename)
+  -> std::expected<std::vector<char>, vkpp::vk_error>
 {
   std::ifstream input_file { filename, std::ios::ate | std::ios::binary };
   if (!input_file.is_open())
   {
-    return std::expected<std::vector<char>, std::string> {
+    return std::expected<std::vector<char>, vkpp::vk_error> {
       std::unexpect,
-      "Failed to open shader file",
+      vkpp::vk_error {},
+      // "Failed to open shader file",
     };
   }
 
@@ -38,9 +41,10 @@ shader_file(const std::filesystem::path& filename)
 }
 
 export [[nodiscard]] constexpr auto
-texture_file(const std::filesystem::path& filename, std::int32_t& texture_width,
-  std::int32_t& texture_height, std::uint32_t& mip_levels)
-  -> std::expected<std::span<stbi_uc>, std::string>
+load_texture_file(const std::filesystem::path& filename,
+  std::int32_t& texture_width, std::int32_t& texture_height,
+  std::uint32_t& mip_levels)
+  -> std::expected<std::span<stbi_uc>, vkpp::vk_error>
 {
   std::int32_t texture_channels; // NOLINT
   auto* pixels = stbi_load(filename.string().c_str(), &texture_width,
@@ -50,9 +54,10 @@ texture_file(const std::filesystem::path& filename, std::int32_t& texture_width,
 
   if (pixels == nullptr)
   {
-    return std::expected<std::span<stbi_uc>, std::string> {
+    return std::expected<std::span<stbi_uc>, vkpp::vk_error> {
       std::unexpect,
-      std::format("Failed to load texture file: {}", filename),
+      vkpp::vk_error {},
+      // std::format("Failed to load texture file: {}", filename),
     };
   }
   mip_levels = static_cast<std::uint32_t>(
@@ -65,8 +70,8 @@ using obj_attribute_view = std::mdspan<const float,
   std::extents<std::size_t, std::dynamic_extent, Components>>;
 
 export [[nodiscard]] constexpr auto
-model_obj(std::vector<lbn::vertex>& vertices,
-  std::vector<std::uint32_t>& indices) -> std::expected<void, std::string>
+load_model_obj(std::vector<vkpp::vertex>& vertices,
+  std::vector<std::uint32_t>& indices) -> std::expected<void, vkpp::vk_error>
 {
   tinyobj::attrib_t attributes;
   std::vector<tinyobj::shape_t> shapes;
@@ -77,9 +82,10 @@ model_obj(std::vector<lbn::vertex>& vertices,
   if (!tinyobj::LoadObj(
         &attributes, &shapes, &materials, &warnings, &errors, model_path))
   {
-    return std::expected<void, std::string> {
+    return std::expected<void, vkpp::vk_error> {
       std::unexpect,
-      std::format("warnings: {}\nerrors: {}", warnings, errors),
+      vkpp::vk_error {},
+      // std::format("warnings: {}\nerrors: {}", warnings, errors),
     };
   }
 
@@ -92,7 +98,7 @@ model_obj(std::vector<lbn::vertex>& vertices,
     attributes.texcoords.size() / 2UZ,
   };
 
-  std::unordered_map<lbn::vertex, std::uint32_t> unique_vertices {};
+  std::unordered_map<vkpp::vertex, std::uint32_t> unique_vertices {};
 
   for (const auto& shape : shapes)
   {
@@ -103,7 +109,7 @@ model_obj(std::vector<lbn::vertex>& vertices,
       const auto uv = std::submdspan(
         texture_coordinates, index.texcoord_index, std::full_extent);
 
-      lbn::vertex vertex {};
+      vkpp::vertex vertex {};
       vertex.position = {
         xyz[ 0UZ ],
         xyz[ 1UZ ],
@@ -125,4 +131,4 @@ model_obj(std::vector<lbn::vertex>& vertices,
   return {};
 }
 
-} // namespace load
+}; // namespace vkpp

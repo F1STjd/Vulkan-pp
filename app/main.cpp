@@ -1,9 +1,9 @@
+import f1st.app;
 import std;
-import lbn;
 
 auto
 main() -> int
 {
-  lbn::app app{};
+  f1st::app app {};
   app.run();
 }

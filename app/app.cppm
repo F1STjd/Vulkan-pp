@@ -1,7 +1,7 @@
 module;
 
 #include "contracts_config.hpp"
-#include "vk_error_config.hpp"
+#include "error/vk_error_config.hpp"
 
 #include <SFML/Window.hpp>
 #include <SFML/Window/VideoMode.hpp>
@@ -9,17 +9,17 @@ module;
 
 #include <stb_image.h>
 
-export module lbn;
+export module f1st.app;
 
 import std;
 import vulkan;
 import glm;
-import load;
-import utils;
-import uniform_buffer;
-import vertex;
+import vkpp.io;
+import vkpp.error;
+import f1st.uniform_buffer;
+import vkpp.vertex;
 
-namespace lbn
+namespace f1st
 {
 constexpr std::uint32_t window_width { 800 };
 constexpr std::uint32_t window_height { 600 };
@@ -50,16 +50,17 @@ public:
   void
   run()
   {
-    const auto result = init_vulkan().and_then(
-      [ this ]() -> std::expected<void, std::string> { return main_loop(); });
+    const auto result =
+      init_vulkan().and_then([ this ]() -> std::expected<void, vkpp::vk_error>
+        { return main_loop(); });
 
-    if (!result) { std::println(stderr, "{}", result.error()); }
+    if (!result) { std::println(stderr, "{}", result.error().message()); }
     cleanup_swap_chain();
   }
 
 private:
   auto
-  init_vulkan() -> std::expected<void, std::string>
+  init_vulkan() -> std::expected<void, vkpp::vk_error>
   {
     return create_instance()
       .and_then(std::bind_front(&app::setup_debug_messenger, this))
@@ -76,7 +77,7 @@ private:
       .and_then(std::bind_front(&app::create_texture_image, this))
       .and_then(std::bind_front(&app::create_texture_image_view, this))
       .and_then(std::bind_front(&app::create_texture_sampler, this))
-      .and_then([ this ] { return load::model_obj(vertices_, indices_); })
+      .and_then([ this ] { return vkpp::load_model_obj(vertices_, indices_); })
       .and_then(std::bind_front(&app::create_vertex_buffer, this))
       .and_then(std::bind_front(&app::create_index_buffer, this))
       .and_then(std::bind_front(&app::create_uniform_buffers, this))
@@ -87,7 +88,7 @@ private:
   }
 
   auto
-  main_loop() -> std::expected<void, std::string>
+  main_loop() -> std::expected<void, vkpp::vk_error>
   {
     const auto on_close = [ this ](const sf::Event::Closed&) -> void
     { window_.close(); };
@@ -100,7 +101,7 @@ private:
       window_.handleEvents(on_close, on_resize);
       if (auto result = draw_frame(); !result)
       {
-        return std::expected<void, std::string> {
+        return std::expected<void, vkpp::vk_error> {
           std::unexpect,
           std::move(result).error(),
         };
@@ -111,7 +112,7 @@ private:
 
 private:
   auto
-  create_instance() -> std::expected<void, std::string>
+  create_instance() -> std::expected<void, vkpp::vk_error>
   {
     static constexpr vk::ApplicationInfo app_info {
       .pApplicationName = "App name",
@@ -134,10 +135,10 @@ private:
 
     return check_validation_layer_support(validation_layers)
       .and_then(
-        [ this, &instance_extensions ]() -> std::expected<void, std::string>
+        [ this, &instance_extensions ]() -> std::expected<void, vkpp::vk_error>
         { return check_window_vulkan_extensions_support(instance_extensions); })
       .and_then(
-        [ & ]() -> std::expected<vk::raii::Instance, std::string>
+        [ & ]() -> std::expected<vk::raii::Instance, vkpp::vk_error>
         {
           return UTILS_VK(context_.createInstance(create_info),
             ^^vk::raii::Context::createInstance);
@@ -149,14 +150,14 @@ private:
   auto
   check_window_vulkan_extensions_support(
     std::span<const char* const> instance_extensions)
-    -> std::expected<void, std::string>
+    -> std::expected<void, vkpp::vk_error>
   {
     return UTILS_VK(context_.enumerateInstanceExtensionProperties(),
       ^^vk::raii::Context::enumerateInstanceExtensionProperties)
       .and_then(
         [ &instance_extensions ](
           std::span<const vk::ExtensionProperties> vulkan_extensions)
-          -> std::expected<void, std::string>
+          -> std::expected<void, vkpp::vk_error>
         {
           auto unsupported_extension_it =
             std::ranges::find_if(instance_extensions,
@@ -172,10 +173,11 @@ private:
 
           if (unsupported_extension_it != instance_extensions.end())
           {
-            return std::expected<void, std::string> {
+            return std::expected<void, vkpp::vk_error> {
               std::unexpect,
-              std::format(
-                "Missing window extension: {}", *unsupported_extension_it),
+              vkpp::vk_error {},
+              // std::format("Missing window extension: {}",
+              // *unsupported_extension_it),
             };
           }
           return {};
@@ -184,7 +186,7 @@ private:
 
   auto
   check_validation_layer_support(std::span<const char* const> required_layers)
-    -> std::expected<void, std::string>
+    -> std::expected<void, vkpp::vk_error>
   {
     // this pipeline triggers: -Wfree-nonheap-object - report sometime
     return UTILS_VK(context_.enumerateInstanceLayerProperties(),
@@ -192,7 +194,7 @@ private:
       .and_then(
         [ &required_layers ](
           std::span<const vk::LayerProperties> layer_extensions)
-          -> std::expected<void, std::string>
+          -> std::expected<void, vkpp::vk_error>
         {
           auto unsupported_layer_it = std::ranges::find_if(required_layers,
             [ &layer_extensions ](const auto& required_layer)
@@ -206,10 +208,11 @@ private:
             });
           if (unsupported_layer_it != required_layers.end())
           {
-            return std::expected<void, std::string> {
+            return std::expected<void, vkpp::vk_error> {
               std::unexpect,
-              std::format(
-                "Required layer not supported: {}", *unsupported_layer_it),
+              vkpp::vk_error {},
+              // std::format("Required layer not supported: {}",
+              // *unsupported_layer_it),
             };
           }
           return {};
@@ -243,7 +246,7 @@ private:
   }
 
   auto
-  setup_debug_messenger() -> std::expected<void, std::string>
+  setup_debug_messenger() -> std::expected<void, vkpp::vk_error>
   {
     if constexpr (!enable_validation_layers) { return {}; }
 
@@ -273,14 +276,15 @@ private:
   }
 
   auto
-  create_surface() -> std::expected<void, std::string>
+  create_surface() -> std::expected<void, vkpp::vk_error>
   {
     VkSurfaceKHR _surface {};
     if (!window_.createVulkanSurface(*instance_, _surface))
     {
-      return std::expected<void, std::string> {
+      return std::expected<void, vkpp::vk_error> {
         std::unexpect,
-        "Faild to create window surface",
+        vkpp::vk_error {},
+        // "Faild to create window surface",
       };
     }
     surface_ = vk::raii::SurfaceKHR(instance_, _surface);
@@ -288,22 +292,23 @@ private:
   }
 
   auto
-  pick_physical_device() -> std::expected<void, std::string>
+  pick_physical_device() -> std::expected<void, vkpp::vk_error>
   {
     return UTILS_VK(instance_.enumeratePhysicalDevices(),
       ^^vk::raii::Instance::enumeratePhysicalDevices)
       .and_then(
         [ this ](std::span<const vk::raii::PhysicalDevice> physical_devices)
-          -> std::expected<void, std::string>
+          -> std::expected<void, vkpp::vk_error>
         {
           const auto suitable_device_it = std::ranges::find_if(physical_devices,
             [ this ](const vk::raii::PhysicalDevice& device)
             { return is_device_suitable(device); });
           if (suitable_device_it == physical_devices.end())
           {
-            return std::expected<void, std::string> {
+            return std::expected<void, vkpp::vk_error> {
               std::unexpect,
-              "No suitable GPU found",
+              vkpp::vk_error {},
+              //"No suitable GPU found",
             };
           }
           physical_device_ = *suitable_device_it;
@@ -366,7 +371,7 @@ private:
   }
 
   auto
-  create_logical_device() -> std::expected<void, std::string>
+  create_logical_device() -> std::expected<void, vkpp::vk_error>
   {
     const auto qf_properties = physical_device_.getQueueFamilyProperties();
     const auto qf_count = static_cast<std::uint32_t>(qf_properties.size());
@@ -379,9 +384,10 @@ private:
       });
     if (graphics_qf_index_it == std::ranges::end(qf_indices))
     {
-      return std::expected<void, std::string> {
+      return std::expected<void, vkpp::vk_error> {
         std::unexpect,
-        "No queue family with graphics and surface present support found",
+        vkpp::vk_error {},
+        // "No queue family with graphics and surface present support found",
       };
     }
     graphics_qf_index_ = *graphics_qf_index_it;
@@ -394,20 +400,20 @@ private:
     };
 
     vk::StructureChain feature_chain {
-      vk::PhysicalDeviceFeatures2 {
-        .features = {
-          .sampleRateShading = vk::True,
-          .samplerAnisotropy = vk::True,
+        vk::PhysicalDeviceFeatures2 {
+          .features = {
+            .sampleRateShading = vk::True,
+            .samplerAnisotropy = vk::True,
+          },
         },
-      },
-      vk::PhysicalDeviceVulkan13Features {
-        .synchronization2 = vk::True,
-        .dynamicRendering = vk::True,
-      },
-      vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT {
-        .extendedDynamicState = vk::True,
-      },
-    };
+        vk::PhysicalDeviceVulkan13Features {
+          .synchronization2 = vk::True,
+          .dynamicRendering = vk::True,
+        },
+        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT {
+          .extendedDynamicState = vk::True,
+        },
+      };
 
     vk::DeviceCreateInfo device_create_info {
       .pNext = &feature_chain.get<vk::PhysicalDeviceFeatures2>(),
@@ -478,14 +484,14 @@ private:
   }
 
   auto
-  create_swap_chain() -> std::expected<void, std::string>
+  create_swap_chain() -> std::expected<void, vkpp::vk_error>
   {
     auto surface_capabilities =
       UTILS_VK(physical_device_.getSurfaceCapabilitiesKHR(*surface_),
         ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR);
     if (!surface_capabilities)
     {
-      return std::expected<void, std::string> {
+      return std::expected<void, vkpp::vk_error> {
         std::unexpect,
         std::move(surface_capabilities).error(),
       };
@@ -499,7 +505,7 @@ private:
         ^^vk::raii::PhysicalDevice::getSurfaceFormatsKHR);
     if (!available_formats)
     {
-      return std::expected<void, std::string> {
+      return std::expected<void, vkpp::vk_error> {
         std::unexpect,
         std::move(available_formats).error(),
       };
@@ -511,7 +517,7 @@ private:
         ^^vk::raii::PhysicalDevice::getSurfacePresentModesKHR);
     if (!available_present_modes)
     {
-      return std::expected<void, std::string> {
+      return std::expected<void, vkpp::vk_error> {
         std::unexpect,
         std::move(available_present_modes).error(),
       };
@@ -564,28 +570,28 @@ private:
   auto
   create_image_view(const vk::Image& image, vk::Format format,
     vk::ImageAspectFlags aspect_flags, std::uint32_t mip_levels)
-    -> std::expected<vk::raii::ImageView, std::string>
+    -> std::expected<vk::raii::ImageView, vkpp::vk_error>
   {
     vk::ImageViewCreateInfo image_view_info {
-      .image = image,
-      .viewType = vk::ImageViewType::e2D,
-      .format = format,
-      .subresourceRange = {
-        .aspectMask = aspect_flags,
-        .baseMipLevel = 0U,
-        .levelCount = mip_levels,
-        .baseArrayLayer = 0U,
-        .layerCount = 1U,
-      },
-    };
+        .image = image,
+        .viewType = vk::ImageViewType::e2D,
+        .format = format,
+        .subresourceRange = {
+          .aspectMask = aspect_flags,
+          .baseMipLevel = 0U,
+          .levelCount = mip_levels,
+          .baseArrayLayer = 0U,
+          .layerCount = 1U,
+        },
+      };
 
     return UTILS_VK(device_.createImageView(image_view_info),
       ^^vk::raii::Device::createImageView);
   }
 
   auto
-  create_image_views() -> std::expected<void,
-    std::string> /* PRE(swap_chain_image_views_.empty()) */
+  create_image_views() -> std::expected<void, vkpp::vk_error>
+  /* PRE(swap_chain_image_views_.empty()) */
   {
     swap_chain_image_views_.clear();
     swap_chain_image_views_.reserve(swap_chain_images_.size());
@@ -595,7 +601,7 @@ private:
         swap_chain_surface_format_.format, vk::ImageAspectFlagBits::eColor, 1U);
       if (!image_view)
       {
-        return std::expected<void, std::string> {
+        return std::expected<void, vkpp::vk_error> {
           std::unexpect,
           std::move(image_view).error(),
         };
@@ -606,7 +612,7 @@ private:
   }
 
   auto
-  create_descriptor_set_layout() -> std::expected<void, std::string>
+  create_descriptor_set_layout() -> std::expected<void, vkpp::vk_error>
   {
     std::array bindings {
       vk::DescriptorSetLayoutBinding {
@@ -634,21 +640,21 @@ private:
   }
 
   auto
-  create_graphics_pipeline() -> std::expected<void, std::string>
+  create_graphics_pipeline() -> std::expected<void, vkpp::vk_error>
   {
     return find_depth_format()
       .and_then(
         [ this ](
-          vk::Format format) -> std::expected<std::vector<char>, std::string>
+          vk::Format format) -> std::expected<std::vector<char>, vkpp::vk_error>
         {
           depth_format_ = format;
-          return load::shader_file(SHADER_DIRECTORY "slang.spv");
+          return vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
         })
       .and_then([ this ](std::span<const char> code)
         { return create_shader_module(code); })
       .and_then(
         [ this ](const vk::raii::ShaderModule& shader_module)
-          -> std::expected<vk::raii::Pipeline, std::string>
+          -> std::expected<vk::raii::Pipeline, vkpp::vk_error>
         {
           const vk::PipelineShaderStageCreateInfo
             vertex_shader_stage_create_info {
@@ -670,9 +676,9 @@ private:
           };
 
           static constexpr auto binding_description =
-            vertex::get_binding_description();
+            vkpp::vertex::get_binding_description();
           static constexpr auto attribute_descriptions =
-            vertex::get_attribute_descriptions();
+            vkpp::vertex::get_attribute_descriptions();
           static constexpr vk::PipelineVertexInputStateCreateInfo
             vertex_input_create_info {
               .vertexBindingDescriptionCount = 1U,
@@ -754,7 +760,7 @@ private:
               ^^vk::raii::Device::createPipelineLayout);
           if (!maybe_layout)
           {
-            return std::expected<vk::raii::Pipeline, std::string> {
+            return std::expected<vk::raii::Pipeline, vkpp::vk_error> {
               std::unexpect,
               std::move(maybe_layout).error(),
             };
@@ -793,7 +799,7 @@ private:
 
   [[nodiscard]] auto
   create_shader_module(std::span<const char> code)
-    -> std::expected<vk::raii::ShaderModule, std::string>
+    -> std::expected<vk::raii::ShaderModule, vkpp::vk_error>
   {
     vk::ShaderModuleCreateInfo shader_module_create_info {
       .codeSize = code.size_bytes(),
@@ -805,7 +811,7 @@ private:
   }
 
   auto
-  create_command_pool() -> std::expected<void, std::string>
+  create_command_pool() -> std::expected<void, vkpp::vk_error>
   {
     vk::CommandPoolCreateInfo command_pool_create_info {
       .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
@@ -827,36 +833,36 @@ private:
     std::uint32_t mip_levels, vk::SampleCountFlagBits samples,
     vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
     vk::MemoryPropertyFlags properties)
-    -> std::expected<image_memory_pair, std::string>
+    -> std::expected<image_memory_pair, vkpp::vk_error>
   {
     const vk::ImageCreateInfo image_create_info {
-      .imageType = vk::ImageType::e2D,
-      .format = format,
-      .extent = {
-        .width = width,
-        .height = height,
-        .depth = 1U,
-      },
-      .mipLevels = mip_levels,
-      .arrayLayers = 1,
-      .samples = samples,
-      .tiling = tiling,
-      .usage = usage,
-      .sharingMode = vk::SharingMode::eExclusive,
-    };
+        .imageType = vk::ImageType::e2D,
+        .format = format,
+        .extent = {
+          .width = width,
+          .height = height,
+          .depth = 1U,
+        },
+        .mipLevels = mip_levels,
+        .arrayLayers = 1,
+        .samples = samples,
+        .tiling = tiling,
+        .usage = usage,
+        .sharingMode = vk::SharingMode::eExclusive,
+      };
 
     return UTILS_VK(
       device_.createImage(image_create_info), ^^vk::raii::Device::createImage)
       .and_then(
         [ & ](vk::raii::Image&& image)
-          -> std::expected<image_memory_pair, std::string>
+          -> std::expected<image_memory_pair, vkpp::vk_error>
         {
           const auto memory_requirements = image.getMemoryRequirements();
           const auto memory_type =
             find_memory_type(memory_requirements.memoryTypeBits, properties);
           if (!memory_type)
           {
-            return std::expected<image_memory_pair, std::string> {
+            return std::expected<image_memory_pair, vkpp::vk_error> {
               std::unexpect,
               std::move(memory_type).error(),
             };
@@ -870,7 +876,7 @@ private:
             ^^vk::raii::Device::allocateMemory);
           if (!memory)
           {
-            return std::expected<image_memory_pair, std::string> {
+            return std::expected<image_memory_pair, vkpp::vk_error> {
               std::unexpect,
               std::move(memory).error(),
             };
@@ -880,7 +886,7 @@ private:
             image.bindMemory(**memory, 0ULL), ^^vk::raii::Image::bindMemory);
           if (!bind_memory_result)
           {
-            return std::expected<image_memory_pair, std::string> {
+            return std::expected<image_memory_pair, vkpp::vk_error> {
               std::unexpect,
               std::move(bind_memory_result).error(),
             };
@@ -893,7 +899,7 @@ private:
   auto
   find_supported_format(std::span<const vk::Format> candidates,
     vk::ImageTiling tiling, vk::FormatFeatureFlags features)
-    -> std::expected<vk::Format, std::string>
+    -> std::expected<vk::Format, vkpp::vk_error>
   {
     for (const auto format : candidates)
     {
@@ -908,16 +914,17 @@ private:
       }
     }
 
-    return std::expected<vk::Format, std::string> {
+    return std::expected<vk::Format, vkpp::vk_error> {
       std::unexpect,
-      "Failed to find supported format",
+      vkpp::vk_error {},
+      // "Failed to find supported format",
     };
   }
 
   // TODO: Konrad - Almost the same function and implementation like in depth
   // resources -> abstraction
   auto
-  create_color_resources() -> std::expected<void, std::string>
+  create_color_resources() -> std::expected<void, vkpp::vk_error>
   {
     return create_image(swap_chain_extent_.width, swap_chain_extent_.height, 1U,
       msaa_samples_, swap_chain_surface_format_.format,
@@ -927,7 +934,7 @@ private:
       vk::MemoryPropertyFlagBits::eDeviceLocal)
       .and_then(
         [ this ](image_memory_pair&& pair)
-          -> std::expected<vk::raii::ImageView, std::string>
+          -> std::expected<vk::raii::ImageView, vkpp::vk_error>
         {
           std::tie(color_image_, color_image_memory_) = std::move(pair);
           return create_image_view(color_image_,
@@ -939,7 +946,7 @@ private:
   }
 
   auto
-  find_depth_format() -> std::expected<vk::Format, std::string>
+  find_depth_format() -> std::expected<vk::Format, vkpp::vk_error>
   {
     static constexpr std::array candidates {
       vk::Format::eD32Sfloat,
@@ -952,12 +959,12 @@ private:
   }
 
   auto
-  create_depth_resources() -> std::expected<void, std::string>
+  create_depth_resources() -> std::expected<void, vkpp::vk_error>
   {
     return find_depth_format()
       .and_then(
         [ this ](
-          vk::Format format) -> std::expected<image_memory_pair, std::string>
+          vk::Format format) -> std::expected<image_memory_pair, vkpp::vk_error>
         {
           depth_format_ = format;
           return create_image(swap_chain_extent_.width,
@@ -968,7 +975,7 @@ private:
         })
       .and_then(
         [ this ](image_memory_pair&& pair)
-          -> std::expected<vk::raii::ImageView, std::string>
+          -> std::expected<vk::raii::ImageView, vkpp::vk_error>
         {
           std::tie(depth_image_, depth_image_memory_) = std::move(pair);
           return create_image_view(
@@ -979,16 +986,16 @@ private:
   }
 
   auto
-  create_texture_image() -> std::expected<void, std::string>
+  create_texture_image() -> std::expected<void, vkpp::vk_error>
   {
     std::int32_t texture_width;  // NOLINT
     std::int32_t texture_height; // NOLINT
 
-    const auto maybe_image = load::texture_file(
-      load::texture_path, texture_width, texture_height, mip_levels_);
+    const auto maybe_image = vkpp::load_texture_file(
+      vkpp::texture_path, texture_width, texture_height, mip_levels_);
     if (!maybe_image)
     {
-      return std::expected<void, std::string> {
+      return std::expected<void, vkpp::vk_error> {
         std::unexpect,
         std::move(maybe_image).error(),
       };
@@ -1003,15 +1010,15 @@ private:
       vk::MemoryPropertyFlagBits::eHostVisible |
         vk::MemoryPropertyFlagBits::eHostCoherent)
       .and_then(
-        [ & ](buffer_memory_pair&& pair) -> std::expected<void*, std::string>
+        [ & ](buffer_memory_pair&& pair) -> std::expected<void*, vkpp::vk_error>
         {
           std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
           return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, image.size()),
             ^^vk::raii::DeviceMemory::mapMemory);
         })
       .and_then(
-        [ &, this ](
-          void* data_staging) -> std::expected<image_memory_pair, std::string>
+        [ &, this ](void* data_staging)
+          -> std::expected<image_memory_pair, vkpp::vk_error>
         {
           std::memcpy(data_staging, image.data(), image.size());
           staging_buffer_memory.unmapMemory();
@@ -1029,13 +1036,13 @@ private:
         })
       .and_then(
         [ this, &command_buffer ](
-          image_memory_pair&& pair) -> std::expected<void, std::string>
+          image_memory_pair&& pair) -> std::expected<void, vkpp::vk_error>
         {
           std::tie(texture_image_, texture_image_memory_) = std::move(pair);
           return begin_single_time_command(command_buffer);
         })
       .and_then(
-        [ &, this ]() -> std::expected<void, std::string>
+        [ &, this ]() -> std::expected<void, vkpp::vk_error>
         {
           transition_image_layout(command_buffer, texture_image_,
             vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
@@ -1047,12 +1054,12 @@ private:
             vk::Format::eR8G8B8A8Srgb, texture_width, texture_height,
             mip_levels_);
         })
-      .and_then([ this, &command_buffer ] -> std::expected<void, std::string>
+      .and_then([ this, &command_buffer ] -> std::expected<void, vkpp::vk_error>
         { return end_single_time_command(command_buffer); });
   }
 
   auto
-  create_texture_image_view() -> std::expected<void, std::string>
+  create_texture_image_view() -> std::expected<void, vkpp::vk_error>
   {
     return create_image_view(*texture_image_, vk::Format::eR8G8B8A8Srgb,
       vk::ImageAspectFlagBits::eColor, mip_levels_)
@@ -1061,7 +1068,7 @@ private:
   }
 
   auto
-  create_texture_sampler() -> std::expected<void, std::string>
+  create_texture_sampler() -> std::expected<void, vkpp::vk_error>
   {
     const auto properties = physical_device_.getProperties();
     vk::SamplerCreateInfo sampler_create_info {
@@ -1094,7 +1101,7 @@ private:
   auto
   create_buffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
     vk::MemoryPropertyFlags properties)
-    -> std::expected<buffer_memory_pair, std::string>
+    -> std::expected<buffer_memory_pair, vkpp::vk_error>
   {
     vk::BufferCreateInfo buffer_create_info {
       .size = size,
@@ -1106,14 +1113,14 @@ private:
       ^^vk::raii::Device::createBuffer)
       .and_then(
         [ this, properties ](vk::raii::Buffer&& buffer)
-          -> std::expected<buffer_memory_pair, std::string>
+          -> std::expected<buffer_memory_pair, vkpp::vk_error>
         {
           const auto memory_requirements = buffer.getMemoryRequirements();
           const auto memory_type =
             find_memory_type(memory_requirements.memoryTypeBits, properties);
           if (!memory_type)
           {
-            return std::expected<buffer_memory_pair, std::string> {
+            return std::expected<buffer_memory_pair, vkpp::vk_error> {
               std::unexpect,
               std::move(memory_type).error(),
             };
@@ -1127,7 +1134,7 @@ private:
             ^^vk::raii::Device::allocateMemory);
           if (!memory)
           {
-            return std::expected<buffer_memory_pair, std::string> {
+            return std::expected<buffer_memory_pair, vkpp::vk_error> {
               std::unexpect,
               std::move(memory).error(),
             };
@@ -1137,7 +1144,7 @@ private:
             buffer.bindMemory(**memory, 0ULL), ^^vk::raii::Buffer::bindMemory);
           if (!bind_memory_result)
           {
-            return std::expected<buffer_memory_pair, std::string> {
+            return std::expected<buffer_memory_pair, vkpp::vk_error> {
               std::unexpect,
               std::move(bind_memory_result).error(),
             };
@@ -1151,13 +1158,13 @@ private:
   // vk::CommandPoolCreateFlagBits::eTransient
   auto
   copy_buffer(vk::raii::Buffer& source, vk::raii::Buffer& destination,
-    vk::DeviceSize size) -> std::expected<void, std::string>
+    vk::DeviceSize size) -> std::expected<void, vkpp::vk_error>
   {
     vk::raii::CommandBuffer command_copy_buffer { nullptr };
 
     return begin_single_time_command(command_copy_buffer)
       .and_then(
-        [ & ]() -> std::expected<void, std::string>
+        [ & ]() -> std::expected<void, vkpp::vk_error>
         {
           command_copy_buffer.copyBuffer(*source, *destination,
             vk::BufferCopy {
@@ -1170,7 +1177,7 @@ private:
   }
 
   auto
-  create_vertex_buffer() -> std::expected<void, std::string>
+  create_vertex_buffer() -> std::expected<void, vkpp::vk_error>
   {
     auto buffer_size = std::span { vertices_ }.size_bytes();
     vk::raii::Buffer staging_buffer { nullptr };
@@ -1181,15 +1188,15 @@ private:
         vk::MemoryPropertyFlagBits::eHostCoherent)
       .and_then(
         [ &, buffer_size ](
-          buffer_memory_pair&& pair) -> std::expected<void*, std::string>
+          buffer_memory_pair&& pair) -> std::expected<void*, vkpp::vk_error>
         {
           std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
           return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, buffer_size),
             ^^vk::raii::DeviceMemory::mapMemory);
         })
       .and_then(
-        [ &, this, buffer_size ](
-          void* data_staging) -> std::expected<buffer_memory_pair, std::string>
+        [ &, this, buffer_size ](void* data_staging)
+          -> std::expected<buffer_memory_pair, vkpp::vk_error>
         {
           std::memcpy(data_staging, vertices_.data(), buffer_size);
           staging_buffer_memory.unmapMemory();
@@ -1200,7 +1207,7 @@ private:
         })
       .and_then(
         [ &, this, buffer_size ](
-          buffer_memory_pair&& pair) -> std::expected<void, std::string>
+          buffer_memory_pair&& pair) -> std::expected<void, vkpp::vk_error>
         {
           std::tie(vertex_buffer_, vertex_buffer_memory_) = std::move(pair);
           return copy_buffer(staging_buffer, vertex_buffer_, buffer_size);
@@ -1210,7 +1217,7 @@ private:
   // TODO: only data and buffers change - maybe some abstraction:
   // create_buffer(...)
   auto
-  create_index_buffer() -> std::expected<void, std::string>
+  create_index_buffer() -> std::expected<void, vkpp::vk_error>
   {
     auto buffer_size = std::span { indices_ }.size_bytes();
     vk::raii::Buffer staging_buffer { nullptr };
@@ -1221,15 +1228,15 @@ private:
         vk::MemoryPropertyFlagBits::eHostCoherent)
       .and_then(
         [ &, buffer_size ](
-          buffer_memory_pair&& pair) -> std::expected<void*, std::string>
+          buffer_memory_pair&& pair) -> std::expected<void*, vkpp::vk_error>
         {
           std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
           return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, buffer_size),
             ^^vk::raii::DeviceMemory::mapMemory);
         })
       .and_then(
-        [ &, this, buffer_size ](
-          void* data_staging) -> std::expected<buffer_memory_pair, std::string>
+        [ &, this, buffer_size ](void* data_staging)
+          -> std::expected<buffer_memory_pair, vkpp::vk_error>
         {
           std::memcpy(data_staging, indices_.data(), buffer_size);
           staging_buffer_memory.unmapMemory();
@@ -1240,7 +1247,7 @@ private:
         })
       .and_then(
         [ &, this, buffer_size ](
-          buffer_memory_pair&& pair) -> std::expected<void, std::string>
+          buffer_memory_pair&& pair) -> std::expected<void, vkpp::vk_error>
         {
           std::tie(index_buffer_, index_buffer_memory_) = std::move(pair);
           return copy_buffer(staging_buffer, index_buffer_, buffer_size);
@@ -1248,7 +1255,7 @@ private:
   }
 
   auto
-  create_uniform_buffers() -> std::expected<void, std::string>
+  create_uniform_buffers() -> std::expected<void, vkpp::vk_error>
   {
     uniform_buffers_.reserve(max_frames_in_flight);
     uniform_buffers_memory_.reserve(max_frames_in_flight);
@@ -1266,7 +1273,7 @@ private:
             vk::MemoryPropertyFlagBits::eHostCoherent)
           .and_then(
             [ & ](
-              buffer_memory_pair&& pair) -> std::expected<void*, std::string>
+              buffer_memory_pair&& pair) -> std::expected<void*, vkpp::vk_error>
             {
               uniform_buffers_.emplace_back(std::move(pair).first);
               uniform_buffers_memory_.emplace_back(std::move(pair).second);
@@ -1278,7 +1285,7 @@ private:
             { uniform_buffers_mapped_.emplace_back(mapped_memory); });
       if (!result)
       {
-        return std::expected<void, std::string> {
+        return std::expected<void, vkpp::vk_error> {
           std::unexpect,
           std::move(result).error(),
         };
@@ -1318,7 +1325,7 @@ private:
   }
 
   auto
-  create_descriptor_pool() -> std::expected<void, std::string>
+  create_descriptor_pool() -> std::expected<void, vkpp::vk_error>
   {
     std::array pool_sizes {
       vk::DescriptorPoolSize {
@@ -1344,7 +1351,7 @@ private:
   }
 
   auto
-  create_descriptor_sets() -> std::expected<void, std::string>
+  create_descriptor_sets() -> std::expected<void, vkpp::vk_error>
   {
     std::vector layouts(max_frames_in_flight, *descriptor_set_layout_);
     vk::DescriptorSetAllocateInfo descriptor_set_allocate_info {
@@ -1400,7 +1407,7 @@ private:
   auto
   find_memory_type(
     std::uint32_t type_filter, vk::MemoryPropertyFlags properties)
-    -> std::expected<std::uint32_t, std::string>
+    -> std::expected<std::uint32_t, vkpp::vk_error>
   {
     const auto available_properties = physical_device_.getMemoryProperties();
     const auto memory_types =
@@ -1415,9 +1422,10 @@ private:
       });
     if (memory_type_it == memory_types.end())
     {
-      return std::expected<std::uint32_t, std::string> {
+      return std::expected<std::uint32_t, vkpp::vk_error> {
         std::unexpect,
-        "Failed to find suitable memory type",
+        vkpp::vk_error {},
+        // "Failed to find suitable memory type",
       };
     }
 
@@ -1425,7 +1433,7 @@ private:
   }
 
   auto
-  create_command_buffers() -> std::expected<void, std::string>
+  create_command_buffers() -> std::expected<void, vkpp::vk_error>
   {
     vk::CommandBufferAllocateInfo command_buffer_acclocate_info {
       .commandPool = command_pool_,
@@ -1443,7 +1451,7 @@ private:
 
   auto
   record_command_buffer(std::uint32_t image_index)
-    -> std::expected<void, std::string>
+    -> std::expected<void, vkpp::vk_error>
   {
     const auto& command_buffer = command_buffers_[ frame_index_ ];
     return UTILS_VK(command_buffer.begin({}), ^^vk::raii::CommandBuffer::begin)
@@ -1550,7 +1558,7 @@ private:
             vk::ImageAspectFlagBits::eColor);
         })
       .and_then(
-        [ &command_buffer ]() -> std::expected<void, std::string>
+        [ &command_buffer ]() -> std::expected<void, vkpp::vk_error>
         {
           return UTILS_VK(command_buffer.end(), ^^vk::raii::CommandBuffer::end);
         });
@@ -1565,23 +1573,23 @@ private:
     vk::ImageAspectFlags image_aspect_flags)
   {
     vk::ImageMemoryBarrier2 memory_barrier {
-      .srcStageMask = source_stage_mask,
-      .srcAccessMask = source_access_mask,
-      .dstStageMask = destination_stage_mask,
-      .dstAccessMask = destination_access_mask,
-      .oldLayout = old_layout,
-      .newLayout = new_layout,
-      .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-      .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-      .image = image,
-      .subresourceRange = {
-        .aspectMask = image_aspect_flags,
-        .baseMipLevel = 0U,
-        .levelCount = 1U,
-        .baseArrayLayer = 0U,
-        .layerCount = 1U,
-      },
-    };
+        .srcStageMask = source_stage_mask,
+        .srcAccessMask = source_access_mask,
+        .dstStageMask = destination_stage_mask,
+        .dstAccessMask = destination_access_mask,
+        .oldLayout = old_layout,
+        .newLayout = new_layout,
+        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .image = image,
+        .subresourceRange = {
+          .aspectMask = image_aspect_flags,
+          .baseMipLevel = 0U,
+          .levelCount = 1U,
+          .baseArrayLayer = 0U,
+          .layerCount = 1U,
+        },
+      };
     vk::DependencyInfo dependency_info {
       .dependencyFlags = {},
       .imageMemoryBarrierCount = 1U,
@@ -1596,15 +1604,15 @@ private:
     vk::ImageLayout new_layout, std::uint32_t mip_levels)
   {
     vk::ImageMemoryBarrier barrier {
-      .oldLayout = old_layout,
-      .newLayout = new_layout,
-      .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-      .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-      .image = image,
-      .subresourceRange = { .aspectMask = vk::ImageAspectFlagBits::eColor,
-        .levelCount = mip_levels,
-        .layerCount = 1U, },
-    };
+        .oldLayout = old_layout,
+        .newLayout = new_layout,
+        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+        .image = image,
+        .subresourceRange = { .aspectMask = vk::ImageAspectFlagBits::eColor,
+          .levelCount = mip_levels,
+          .layerCount = 1U, },
+      };
 
     vk::PipelineStageFlags source_stage;
     vk::PipelineStageFlags destination_stage;
@@ -1634,15 +1642,16 @@ private:
   generate_mipmaps(vk::raii::CommandBuffer& command_buffer,
     vk::raii::Image& image, vk::Format format, std::int32_t texture_width,
     std::int32_t texture_height, std::uint32_t mip_levels)
-    -> std::expected<void, std::string>
+    -> std::expected<void, vkpp::vk_error>
   {
     auto format_properties = physical_device_.getFormatProperties(format);
     if (!(format_properties.optimalTilingFeatures &
           vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
     {
-      return std::expected<void, std::string> {
+      return std::expected<void, vkpp::vk_error> {
         std::unexpect,
-        "Texture image format does not support linear blitting",
+        vkpp::vk_error {},
+        // "Texture image format does not support linear blitting",
       };
     }
     vk::ImageMemoryBarrier barrier {
@@ -1688,21 +1697,21 @@ private:
         },
       };
       vk::ImageBlit blit {
-              .srcSubresource = {
-                .aspectMask=vk::ImageAspectFlagBits::eColor,
-                .mipLevel=mip_level - 1U,
-                .baseArrayLayer=0,
-                .layerCount=1,
-              },
-              .srcOffsets = src_offsets,
-              .dstSubresource = {
-                .aspectMask=vk::ImageAspectFlagBits::eColor,
-                .mipLevel=mip_level,
-                .baseArrayLayer=0,
-                .layerCount=1,
-              },
-              .dstOffsets = dst_offsets,
-            };
+                .srcSubresource = {
+                  .aspectMask=vk::ImageAspectFlagBits::eColor,
+                  .mipLevel=mip_level - 1U,
+                  .baseArrayLayer=0,
+                  .layerCount=1,
+                },
+                .srcOffsets = src_offsets,
+                .dstSubresource = {
+                  .aspectMask=vk::ImageAspectFlagBits::eColor,
+                  .mipLevel=mip_level,
+                  .baseArrayLayer=0,
+                  .layerCount=1,
+                },
+                .dstOffsets = dst_offsets,
+              };
 
       command_buffer.blitImage(image, vk::ImageLayout::eTransferSrcOptimal,
         image, vk::ImageLayout::eTransferDstOptimal, { blit },
@@ -1737,26 +1746,26 @@ private:
     std::uint32_t height)
   {
     vk::BufferImageCopy region {
-      .bufferOffset = 0UZ,
-      .bufferRowLength = 0U,
-      .bufferImageHeight = 0U,
-      .imageSubresource = {
-        .aspectMask = vk::ImageAspectFlagBits::eColor,
-        .mipLevel = 0U,
-        .baseArrayLayer = 0U,
-        .layerCount = 1U,
-      },
-      .imageOffset = {
-        .x = 0,
-        .y = 0,
-        .z = 0,
-      },
-      .imageExtent = {
-        .width=width,
-        .height=height,
-        .depth=1U,
-      },
-    };
+        .bufferOffset = 0UZ,
+        .bufferRowLength = 0U,
+        .bufferImageHeight = 0U,
+        .imageSubresource = {
+          .aspectMask = vk::ImageAspectFlagBits::eColor,
+          .mipLevel = 0U,
+          .baseArrayLayer = 0U,
+          .layerCount = 1U,
+        },
+        .imageOffset = {
+          .x = 0,
+          .y = 0,
+          .z = 0,
+        },
+        .imageExtent = {
+          .width=width,
+          .height=height,
+          .depth=1U,
+        },
+      };
 
     command_buffer.copyBufferToImage(
       buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
@@ -1764,7 +1773,7 @@ private:
 
   auto
   begin_single_time_command(vk::raii::CommandBuffer& command_buffer)
-    -> std::expected<void, std::string>
+    -> std::expected<void, vkpp::vk_error>
   {
     vk::CommandBufferAllocateInfo allocate_info {
       .commandPool = command_pool_,
@@ -1777,7 +1786,7 @@ private:
       .and_then(
         [ &command_buffer ](
           std::vector<vk::raii::CommandBuffer> command_buffers)
-          -> std::expected<void, std::string>
+          -> std::expected<void, vkpp::vk_error>
         {
           command_buffer = std::move(command_buffers.front());
           return UTILS_VK(
@@ -1790,11 +1799,11 @@ private:
 
   auto
   end_single_time_command(vk::raii::CommandBuffer& command_buffer)
-    -> std::expected<void, std::string>
+    -> std::expected<void, vkpp::vk_error>
   {
     return UTILS_VK(command_buffer.end(), ^^vk::raii::CommandBuffer::end)
       .and_then(
-        [ this, &command_buffer ]() -> std::expected<void, std::string>
+        [ this, &command_buffer ]() -> std::expected<void, vkpp::vk_error>
         {
           return UTILS_VK( //
             graphics_queue_.submit(
@@ -1806,7 +1815,7 @@ private:
             ^^vk::raii::Queue::submit);
         })
       .and_then(
-        [ this ]() -> std::expected<void, std::string>
+        [ this ]() -> std::expected<void, vkpp::vk_error>
         {
           return UTILS_VK(
             graphics_queue_.waitIdle(), ^^vk::raii::Queue::waitIdle);
@@ -1826,7 +1835,7 @@ private:
   }
 
   auto
-  suspend_rendering() -> std::expected<void, std::string>
+  suspend_rendering() -> std::expected<void, vkpp::vk_error>
   {
     if (frame_rendering_state_ == frame_rendering_state::suspended &&
       swap_chain_ == nullptr)
@@ -1844,10 +1853,10 @@ private:
   }
 
   auto
-  draw_frame_resume() -> std::expected<void, std::string>
+  draw_frame_resume() -> std::expected<void, vkpp::vk_error>
   {
     return recreate_swap_chain().and_then(
-      [ this ]() -> std::expected<void, std::string>
+      [ this ]() -> std::expected<void, vkpp::vk_error>
       {
         frame_rendering_state_ = frame_rendering_state::active;
         return draw_frame_active();
@@ -1855,14 +1864,17 @@ private:
   }
 
   auto
-  draw_frame_active() -> std::expected<void, std::string>
+  draw_frame_active() -> std::expected<void, vkpp::vk_error>
   {
     if (auto result = device_.waitForFences(*in_flight_fences_[ frame_index_ ],
           vk::True, std::numeric_limits<std::uint64_t>::max());
       result != vk::Result::eSuccess)
     {
-      return std::expected<void, std::string> { std::unexpect,
-        std::format("Failed to wait for fence: {}", vk::to_string(result)) };
+      return std::expected<void, vkpp::vk_error> {
+        std::unexpect,
+        vkpp::vk_error {},
+        // std::format("Failed to wait for fence: {}", vk::to_string(result)),
+      };
     }
     auto [ result, image_index ] =
       swap_chain_.acquireNextImage(std::numeric_limits<std::uint64_t>::max(),
@@ -1874,10 +1886,11 @@ private:
     }
     if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
     {
-      return std::expected<void, std::string> {
+      return std::expected<void, vkpp::vk_error> {
         std::unexpect,
-        std::format("Failed to acquire next image from the swap chain: {}",
-          vk::to_string(result)),
+        vkpp::vk_error {},
+        // std::format("Failed to acquire next image from the swap chain: {}",
+        // vk::to_string(result)),
       };
     }
 
@@ -1885,15 +1898,15 @@ private:
     return UTILS_VK(device_.resetFences(*in_flight_fences_[ frame_index_ ]),
       ^^vk::raii::Device::resetFences)
       .and_then(
-        [ this ]() -> std::expected<void, std::string>
+        [ this ]() -> std::expected<void, vkpp::vk_error>
         {
           return UTILS_VK(command_buffers_[ frame_index_ ].reset(),
             ^^vk::raii::CommandBuffer::reset);
         })
-      .and_then([ this, &image_index ]() -> std::expected<void, std::string>
+      .and_then([ this, &image_index ]() -> std::expected<void, vkpp::vk_error>
         { return record_command_buffer(image_index); })
       .and_then(
-        [ this, image_index ]() -> std::expected<void, std::string>
+        [ this, image_index ]() -> std::expected<void, vkpp::vk_error>
         {
           vk::PipelineStageFlags wait_destination_stage_mask {
             vk::PipelineStageFlagBits::eColorAttachmentOutput
@@ -1912,7 +1925,7 @@ private:
             ^^vk::raii::Queue::submit);
         })
       .and_then(
-        [ this, &image_index, &result ]() -> std::expected<void, std::string>
+        [ this, &image_index, &result ]() -> std::expected<void, vkpp::vk_error>
         {
           const vk::PresentInfoKHR present_info {
             .waitSemaphoreCount = 1,
@@ -1937,16 +1950,17 @@ private:
             return is_swapchain_extent_valid() ? recreate_swap_chain()
                                                : suspend_rendering();
           }
-          return std::expected<void, std::string> {
+          return std::expected<void, vkpp::vk_error> {
             std::unexpect,
-            std::format(
-              "vk::Qeueue::presentKHR() returned: {}", vk::to_string(result)),
+            vkpp::vk_error {},
+            // std::format("vk::Qeueue::presentKHR() returned: {}",
+            // vk::to_string(result)),
           };
         });
   }
 
   auto
-  draw_frame() -> std::expected<void, std::string>
+  draw_frame() -> std::expected<void, vkpp::vk_error>
   {
     if (!is_swapchain_extent_valid()) { return suspend_rendering(); }
 
@@ -1959,7 +1973,7 @@ private:
   }
 
   auto
-  create_sync_objects() -> std::expected<void, std::string>
+  create_sync_objects() -> std::expected<void, vkpp::vk_error>
   {
     for (auto _ : std::views::iota(0UZ, swap_chain_images_.size()))
     {
@@ -1967,7 +1981,7 @@ private:
         device_.createSemaphore({}), ^^vk::raii::Device::createSemaphore);
       if (!maybe_render_semaphore)
       {
-        return std::expected<void, std::string> {
+        return std::expected<void, vkpp::vk_error> {
           std::unexpect,
           std::move(maybe_render_semaphore).error(),
         };
@@ -1981,7 +1995,7 @@ private:
         device_.createSemaphore({}), ^^vk::raii::Device::createSemaphore);
       if (!maybe_present_semaphore)
       {
-        return std::expected<void, std::string> {
+        return std::expected<void, vkpp::vk_error> {
           std::unexpect,
           std::move(maybe_present_semaphore).error(),
         };
@@ -1994,7 +2008,7 @@ private:
         ^^vk::raii::Device::createFence);
       if (!maybe_draw_fence)
       {
-        return std::expected<void, std::string> {
+        return std::expected<void, vkpp::vk_error> {
           std::unexpect,
           std::move(maybe_draw_fence).error(),
         };
@@ -2045,22 +2059,22 @@ private:
   // vk::SwapchainCreateInfoKHR struct and destroy the old swap chain as soon as
   // you’ve finished using it.
   auto
-  recreate_swap_chain() -> std::expected<void, std::string>
+  recreate_swap_chain() -> std::expected<void, vkpp::vk_error>
   {
     if (!is_swapchain_extent_valid()) { return suspend_rendering(); }
 
     return UTILS_VK(device_.waitIdle(), ^^vk::raii::Device::waitIdle)
       .and_then(
-        [ this ]() -> std::expected<void, std::string>
+        [ this ]() -> std::expected<void, vkpp::vk_error>
         {
           cleanup_swap_chain();
           return create_swap_chain();
         })
-      .and_then([ this ]() -> std::expected<void, std::string>
+      .and_then([ this ]() -> std::expected<void, vkpp::vk_error>
         { return create_image_views(); })
-      .and_then([ this ]() -> std::expected<void, std::string>
+      .and_then([ this ]() -> std::expected<void, vkpp::vk_error>
         { return create_color_resources(); })
-      .and_then([ this ]() -> std::expected<void, std::string>
+      .and_then([ this ]() -> std::expected<void, vkpp::vk_error>
         { return create_depth_resources(); });
   }
 
@@ -2123,7 +2137,7 @@ private:
 
   // TODO: https://developer.nvidia.com/vulkan-memory-management suggests to use
   // one vk::raii::Buffer to have more buffers inside, and use offsets
-  std::vector<vertex> vertices_;
+  std::vector<vkpp::vertex> vertices_;
   std::vector<std::uint32_t> indices_;
   vk::raii::Buffer vertex_buffer_ { nullptr };
   vk::raii::DeviceMemory vertex_buffer_memory_ { nullptr };
@@ -2142,4 +2156,4 @@ private:
     frame_rendering_state::active
   };
 };
-} // namespace lbn
+}; // namespace f1st
