@@ -22,15 +22,16 @@ export constexpr const char* texture_path { TEXTURE_DIRECTORY
 
 export [[nodiscard]] constexpr auto
 load_shader_file(const std::filesystem::path& filename)
-  -> std::expected<std::vector<char>, vkpp::vk_error>
+  -> std::expected<std::vector<char>, vkpp::error_t>
 {
   std::ifstream input_file { filename, std::ios::ate | std::ios::binary };
   if (!input_file.is_open())
   {
-    return std::expected<std::vector<char>, vkpp::vk_error> {
-      std::unexpect,
-      vkpp::vk_error {},
-      // "Failed to open shader file",
+    return std::unexpected {
+      vkpp::app_error {
+        .kind = vkpp::app_error_kind::file_open,
+        .detail = "Failed to open shader file",
+      },
     };
   }
 
@@ -43,8 +44,7 @@ load_shader_file(const std::filesystem::path& filename)
 export [[nodiscard]] constexpr auto
 load_texture_file(const std::filesystem::path& filename,
   std::int32_t& texture_width, std::int32_t& texture_height,
-  std::uint32_t& mip_levels)
-  -> std::expected<std::span<stbi_uc>, vkpp::vk_error>
+  std::uint32_t& mip_levels) -> std::expected<std::span<stbi_uc>, vkpp::error_t>
 {
   std::int32_t texture_channels; // NOLINT
   auto* pixels = stbi_load(filename.string().c_str(), &texture_width,
@@ -54,10 +54,11 @@ load_texture_file(const std::filesystem::path& filename,
 
   if (pixels == nullptr)
   {
-    return std::expected<std::span<stbi_uc>, vkpp::vk_error> {
-      std::unexpect,
-      vkpp::vk_error {},
-      // std::format("Failed to load texture file: {}", filename),
+    return std::unexpected {
+      vkpp::app_error {
+        .kind = vkpp::app_error_kind::file_open,
+        .detail = "Failed to load texture file",
+      },
     };
   }
   mip_levels = static_cast<std::uint32_t>(
@@ -71,7 +72,7 @@ using obj_attribute_view = std::mdspan<const float,
 
 export [[nodiscard]] constexpr auto
 load_model_obj(std::vector<vkpp::vertex>& vertices,
-  std::vector<std::uint32_t>& indices) -> std::expected<void, vkpp::vk_error>
+  std::vector<std::uint32_t>& indices) -> std::expected<void, vkpp::error_t>
 {
   tinyobj::attrib_t attributes;
   std::vector<tinyobj::shape_t> shapes;
@@ -82,10 +83,16 @@ load_model_obj(std::vector<vkpp::vertex>& vertices,
   if (!tinyobj::LoadObj(
         &attributes, &shapes, &materials, &warnings, &errors, model_path))
   {
-    return std::expected<void, vkpp::vk_error> {
-      std::unexpect,
-      vkpp::vk_error {},
-      // std::format("warnings: {}\nerrors: {}", warnings, errors),
+    // Todo: Konrad - Decide if warnings and errors, from the tinyobj::LoadObj,
+    // are relevant for this situation. They are, but obj will be replaced with
+    // gltf, later. For context:
+    // .detail = std::format("warnings: {}\nerrors: {}", warnings, errors)
+    // is UB
+    return std::unexpected {
+      vkpp::app_error {
+        .kind = vkpp::app_error_kind::model_parse,
+        .detail = "Failed to load obj model",
+      },
     };
   }
 
@@ -130,5 +137,4 @@ load_model_obj(std::vector<vkpp::vertex>& vertices,
 
   return {};
 }
-
-}; // namespace vkpp
+} // namespace vkpp
