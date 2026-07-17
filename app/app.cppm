@@ -100,13 +100,7 @@ private:
     while (window_.isOpen())
     {
       window_.handleEvents(on_close, on_resize);
-      if (auto result = draw_frame(); !result)
-      {
-        return std::expected<void, vkpp::error_t> {
-          std::unexpect,
-          std::move(result).error(),
-        };
-      }
+      if (auto result = draw_frame(); !result) { return result; }
     }
     return UTILS_VK(device_.waitIdle(), ^^vk::raii::Device::waitIdle);
   }
@@ -609,10 +603,7 @@ private:
         swap_chain_surface_format_.format, vk::ImageAspectFlagBits::eColor, 1U);
       if (!image_view)
       {
-        return std::expected<void, vkpp::error_t> {
-          std::unexpect,
-          std::move(image_view).error(),
-        };
+        return std::unexpected { std::move(image_view).error() };
       }
       swap_chain_image_views_.push_back(std::move(*image_view));
     }
@@ -1064,7 +1055,13 @@ private:
             mip_levels_);
         })
       .and_then([ this, &command_buffer ] -> std::expected<void, vkpp::error_t>
-        { return end_single_time_command(command_buffer); });
+        { return end_single_time_command(command_buffer); })
+      .or_else(
+        [ & ](vkpp::error_t error) -> std::expected<void, vkpp::error_t>
+        {
+          if (image_p != nullptr) { stbi_image_free(image_p); }
+          return std::unexpected { error };
+        });
   }
 
   auto
@@ -1292,13 +1289,7 @@ private:
             })
           .transform([ this ](void* mapped_memory) -> void
             { uniform_buffers_mapped_.emplace_back(mapped_memory); });
-      if (!result)
-      {
-        return std::expected<void, vkpp::error_t> {
-          std::unexpect,
-          std::move(result).error(),
-        };
-      }
+      if (!result) { return result; }
     }
     return {};
   }
