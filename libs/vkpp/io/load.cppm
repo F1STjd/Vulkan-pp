@@ -16,6 +16,8 @@ import vkpp.error;
 namespace vkpp
 {
 
+using namespace std::string_view_literals;
+
 export constexpr const char* model_path { MODEL_DIRECTORY "viking_room.obj" };
 export constexpr const char* texture_path { TEXTURE_DIRECTORY
   "viking_room.png" };
@@ -30,7 +32,7 @@ load_shader_file(const std::filesystem::path& filename)
     return std::unexpected {
       vkpp::app_error {
         .kind = vkpp::app_error_kind::file_open,
-        .detail = "Failed to open shader file",
+        .detail = "Failed to open shader file"sv,
       },
     };
   }
@@ -57,7 +59,7 @@ load_texture_file(const std::filesystem::path& filename,
     return std::unexpected {
       vkpp::app_error {
         .kind = vkpp::app_error_kind::file_open,
-        .detail = "Failed to load texture file",
+        .detail = "Failed to load texture file"sv,
       },
     };
   }
@@ -83,15 +85,10 @@ load_model_obj(std::vector<vkpp::vertex>& vertices,
   if (!tinyobj::LoadObj(
         &attributes, &shapes, &materials, &warnings, &errors, model_path))
   {
-    // Todo: Konrad - Decide if warnings and errors, from the tinyobj::LoadObj,
-    // are relevant for this situation. They are, but obj will be replaced with
-    // gltf, later. For context:
-    // .detail = std::format("warnings: {}\nerrors: {}", warnings, errors)
-    // is UB
     return std::unexpected {
       vkpp::app_error {
         .kind = vkpp::app_error_kind::model_parse,
-        .detail = "Failed to load obj model",
+        .detail = std::format("warnings: {}\nerrors: {}", warnings, errors),
       },
     };
   }
