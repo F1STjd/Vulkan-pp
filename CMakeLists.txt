@@ -25,6 +25,7 @@ endif()
 include(TutorialDependencies)
 include(TinyObjLoader)
 include(VulkanCxxModule)
+include(VmaCxxModule)
 include(GlmCxxModule)
 include(SlangShaders)
 
