@@ -62,8 +62,8 @@ export struct app_error
 
 export struct vk_error
 {
-  std::string_view function {};
-  std::string_view type {};
+  std::string_view function;
+  std::string_view type;
   vk::Result result {};
 
   [[nodiscard]]
