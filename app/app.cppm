@@ -14,10 +14,14 @@ export module f1st.app;
 import std;
 import vulkan;
 import glm;
+import f1st.uniform_buffer;
 import vkpp.io;
 import vkpp.error;
-import f1st.uniform_buffer;
 import vkpp.vertex;
+import vkpp.memory;
+import vkpp.memory.vma;
+import vkpp.image;
+import vkpp.buffer;
 
 namespace f1st
 {
@@ -68,6 +72,7 @@ private:
       .and_then(std::bind_front(&app::create_surface, this))
       .and_then(std::bind_front(&app::pick_physical_device, this))
       .and_then(std::bind_front(&app::create_logical_device, this))
+      .and_then(std::bind_front(&app::create_allocator, this))
       .and_then(std::bind_front(&app::create_swap_chain, this))
       .and_then(std::bind_front(&app::create_image_views, this))
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
@@ -437,6 +442,15 @@ private:
           device_ = std::move(device);
           graphics_queue_ = device_.getQueue(graphics_qf_index_, 0);
         });
+  }
+
+  auto
+  create_allocator() -> std::expected<void, vkpp::error_t>
+  {
+    return vkpp::vma_policy::create(
+      *instance_, *physical_device_, *device_, vk::ApiVersion14)
+      .transform([ this ](vkpp::vma_policy&& allocator)
+        { allocator_ = std::move(allocator); });
   }
 
   auto
@@ -991,38 +1005,40 @@ private:
     std::int32_t texture_width;  // NOLINT
     std::int32_t texture_height; // NOLINT
 
-    const auto maybe_image = vkpp::load_texture_file(
-      vkpp::texture_path, texture_width, texture_height, mip_levels_);
-    if (!maybe_image)
-    {
-      return std::expected<void, vkpp::error_t> {
-        std::unexpect,
-        std::move(maybe_image).error(),
-      };
-    }
-    const auto& image = *maybe_image;
+    std::uint8_t* image_p {};
+    std::size_t image_size {};
 
     vk::raii::Buffer staging_buffer { nullptr };
     vk::raii::DeviceMemory staging_buffer_memory { nullptr };
     vk::raii::CommandBuffer command_buffer { nullptr };
 
-    return create_buffer(image.size(), vk::BufferUsageFlagBits::eTransferSrc,
-      vk::MemoryPropertyFlagBits::eHostVisible |
-        vk::MemoryPropertyFlagBits::eHostCoherent)
+    return vkpp::load_texture_file(
+      vkpp::texture_path, texture_width, texture_height, mip_levels_)
+      .and_then(
+        [ &, this ](const auto& image)
+        {
+          image_p = image.data();
+          image_size = image.size();
+          return create_buffer(image.size(),
+            vk::BufferUsageFlagBits::eTransferSrc,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+              vk::MemoryPropertyFlagBits::eHostCoherent);
+        })
       .and_then(
         [ & ](buffer_memory_pair&& pair) -> std::expected<void*, vkpp::error_t>
         {
           std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
-          return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, image.size()),
+          return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, image_size),
             ^^vk::raii::DeviceMemory::mapMemory);
         })
       .and_then(
         [ &, this ](
           void* data_staging) -> std::expected<image_memory_pair, vkpp::error_t>
         {
-          std::memcpy(data_staging, image.data(), image.size());
+          std::memcpy(data_staging, image_p, image_size);
           staging_buffer_memory.unmapMemory();
-          stbi_image_free(image.data());
+          stbi_image_free(image_p);
+          image_p = nullptr;
           return create_image(static_cast<std::uint32_t>(texture_width),
             static_cast<std::uint32_t>(texture_height), mip_levels_,
             vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Srgb,
@@ -1467,14 +1483,16 @@ private:
             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             vk::ImageAspectFlagBits::eColor);
 
-          transition_image_layout(*color_image_, vk::ImageLayout::eUndefined,
+          transition_image_layout(color_resource_.image(),
+            vk::ImageLayout::eUndefined,
             vk::ImageLayout::eColorAttachmentOptimal, {},
             vk::AccessFlagBits2::eColorAttachmentWrite,
             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             vk::ImageAspectFlagBits::eColor);
 
-          transition_image_layout(*depth_image_, vk::ImageLayout::eUndefined,
+          transition_image_layout(depth_resource_.image(),
+            vk::ImageLayout::eUndefined,
             vk::ImageLayout::eDepthAttachmentOptimal,
             vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
             vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -1491,7 +1509,7 @@ private:
             1.0F,
           } };
           vk::RenderingAttachmentInfo color_attachment_info {
-            .imageView = color_image_view_,
+            .imageView = *color_resource_.view(),
             .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
             .resolveMode = vk::ResolveModeFlagBits::eAverage,
             .resolveImageView = swap_chain_image_views_[ image_index ],
@@ -1506,7 +1524,7 @@ private:
             .stencil = 0,
           } };
           vk::RenderingAttachmentInfo depth_attachment_info {
-            .imageView = depth_image_view_,
+            .imageView = *depth_resource_.view(),
             .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
             .loadOp = vk::AttachmentLoadOp::eClear,
             .storeOp = vk::AttachmentStoreOp::eDontCare,
@@ -2111,6 +2129,7 @@ private:
   vk::raii::SurfaceKHR surface_ { nullptr };
   vk::raii::PhysicalDevice physical_device_ { nullptr };
   vk::raii::Device device_ { nullptr };
+  vkpp::vma_policy allocator_ {};
   vk::raii::Queue graphics_queue_ { nullptr };
   vk::raii::SwapchainKHR swap_chain_ { nullptr };
   std::vector<vk::Image> swap_chain_images_;
@@ -2127,13 +2146,9 @@ private:
   std::uint32_t graphics_qf_index_ { ~0U };
   std::uint32_t frame_index_ {};
 
-  vk::raii::Image color_image_ { nullptr };
-  vk::raii::DeviceMemory color_image_memory_ { nullptr };
-  vk::raii::ImageView color_image_view_ { nullptr };
+  vkpp::image_resource<vkpp::vma_policy> color_resource_ {};
 
-  vk::raii::Image depth_image_ { nullptr };
-  vk::raii::DeviceMemory depth_image_memory_ { nullptr };
-  vk::raii::ImageView depth_image_view_ { nullptr };
+  vkpp::image_resource<vkpp::vma_policy> depth_resource_ {};
   vk::Format depth_format_;
 
   std::uint32_t mip_levels_ {};
