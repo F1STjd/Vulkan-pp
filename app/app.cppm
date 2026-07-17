@@ -21,6 +21,8 @@ import vkpp.vertex;
 
 namespace f1st
 {
+using namespace std::string_view_literals;
+
 constexpr std::uint32_t window_width { 800 };
 constexpr std::uint32_t window_height { 600 };
 
@@ -172,14 +174,11 @@ private:
 
           if (unsupported_extension_it != instance_extensions.end())
           {
-            // Todo: Konrad - Here also (like in obj loading) we can't assign
-            // the temporary name of the missing extension, because it is UB. If
-            // this is important, then vkpp::app_error should have a
-            // std::variant<std::string, std::string_view> inside.
             return std::unexpected {
               vkpp::app_error {
                 .kind = vkpp::app_error_kind::missing_instance_extension,
-                .detail = "Missing window/instance extension",
+                .detail = std::format("Missing window/instance extension: {}",
+                  *unsupported_extension_it),
               },
             };
           }
@@ -211,13 +210,12 @@ private:
             });
           if (unsupported_layer_it != required_layers.end())
           {
-            // Todo: Konrad - As above function says. For context:
-            //  std::format("Required layer not supported: {}",
-            //  *unsupported_layer_it),
             return std::unexpected {
               vkpp::app_error {
                 .kind = vkpp::app_error_kind::missing_validation_layer,
-                .detail = "Required validation layer is not supported",
+                .detail =
+                  std::format("Required validation layer is not supported: {}",
+                    *unsupported_layer_it),
               },
             };
           }
@@ -290,7 +288,7 @@ private:
       return std::unexpected {
         vkpp::app_error {
           .kind = vkpp::app_error_kind::surface_creation,
-          .detail = "Faild to create window surface",
+          .detail = "Faild to create window surface"sv,
         },
       };
     }
@@ -315,7 +313,7 @@ private:
             return std::unexpected {
               vkpp::app_error {
                 .kind = vkpp::app_error_kind::no_suitable_gpu,
-                .detail = "No suitable GPU found",
+                .detail = "No suitable GPU found"sv,
               },
             };
           }
@@ -396,7 +394,7 @@ private:
         vkpp::app_error {
           .kind = vkpp::app_error_kind::no_graphics_present_queue,
           .detail =
-            "No queue family with graphics and surface present support found",
+            "No queue family with graphics and surface present support found"sv,
         },
       };
     }
@@ -1436,7 +1434,7 @@ private:
       return std::unexpected {
         vkpp::app_error {
           .kind = vkpp::app_error_kind::no_memory_type,
-          .detail = "Failed to find suitable memory type",
+          .detail = "Failed to find suitable memory type"sv,
         },
       };
     }
@@ -1664,7 +1662,7 @@ private:
       return std::unexpected {
         vkpp::app_error {
           .kind = vkpp::app_error_kind::no_supported_format,
-          .detail = "Texture image format does not support linear blitting",
+          .detail = "Texture image format does not support linear blitting"sv,
         },
       };
     }
