@@ -46,14 +46,16 @@ to_string(app_error_kind kind) -> std::string_view
 export struct app_error
 {
   app_error_kind kind {};
-  std::string_view detail;
+  std::variant<std::string, std::string_view> detail;
 
   constexpr auto
   message() const -> std::string
   {
     return std::format(
       "Error of type: {}, was returned.\nDetailed message: {}.",
-      to_string(kind), detail);
+      to_string(kind),
+      std::visit(
+        [](const auto& d) constexpr -> std::string_view { return d; }, detail));
   }
 };
 
