@@ -48,6 +48,7 @@ export struct app_error
   app_error_kind kind {};
   std::variant<std::string, std::string_view> detail;
 
+  [[nodiscard]]
   constexpr auto
   message() const -> std::string
   {
@@ -65,6 +66,7 @@ export struct vk_error
   std::string_view type {};
   vk::Result result {};
 
+  [[nodiscard]]
   constexpr auto
   message() const -> std::string
   {
