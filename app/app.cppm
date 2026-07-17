@@ -466,6 +466,7 @@ private:
     return format_it != formats.end() ? *format_it : formats[ 0 ];
   }
 
+  [[gnu::pure]]
   auto
   choose_swap_present_mode(std::span<const vk::PresentModeKHR> present_modes)
     -> vk::PresentModeKHR
@@ -570,6 +571,7 @@ private:
         { swap_chain_images_ = std::move(images); });
   }
 
+  [[gnu::pure]]
   auto
   choose_swap_min_image_count(
     const vk::SurfaceCapabilitiesKHR& surface_capabilities) -> std::uint32_t
@@ -1297,7 +1299,7 @@ private:
             [ & ](
               buffer_memory_pair&& pair) -> std::expected<void*, vkpp::error_t>
             {
-              uniform_buffers_.emplace_back(std::move(pair).first);
+              uniform_buffers_.emplace_back(std::move(pair.first));
               uniform_buffers_memory_.emplace_back(std::move(pair).second);
               return UTILS_VK(
                 uniform_buffers_memory_.back().mapMemory(0ULL, buffer_size),
