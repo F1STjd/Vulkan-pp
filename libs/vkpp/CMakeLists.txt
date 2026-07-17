@@ -13,7 +13,7 @@ add_library(vkpp STATIC)
 target_include_directories(vkpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # tinyobjloader implementation is a plain TU (no `import std;`); see the file.
-target_sources(vkpp PRIVATE io/tiny_obj_loader_impl.cpp)
+target_sources(vkpp PRIVATE io/tiny_obj_loader_impl.cpp memory/vma_impl.cpp)
 
 target_sources(vkpp
   PUBLIC FILE_SET CXX_MODULES
@@ -25,26 +25,31 @@ target_sources(vkpp
       io/load.cppm              # module vkpp.io
       mesh/vertex.cppm          # module vkpp.vertex
 
-      # --- Phase 0.4 Allocator policy ---
-      # NOTE: allocator/raw_allocator/vma_allocator currently all declare
-      # `export module vkpp.memory;` -> that is a duplicate-module-name clash.
-      # Before uncommenting, give them distinct names or make raw/vma partitions
-      # of vkpp.memory (e.g. `vkpp.memory:raw`, `vkpp.memory:vma`). Partitions
-      # still belong in this same CXX_MODULES file set.
-      # memory/allocator.cppm
-      # memory/raw_allocator.cppm
-      # memory/vma_allocator.cppm
+      # --- Phase 0.4 Allocator policy (see plan 0.4.0-0.4.4 for full specs) ---
+      # Three SIBLING modules (vkpp.memory, vkpp.memory.raw, vkpp.memory.vma),
+      # NOT partitions: partitions cannot import their own primary interface,
+      # but raw/vma need the concept from vkpp.memory. Same precedent as
+      # vkpp.io / vkpp.io.channels.
+      # vma_allocator includes the VMA *C* header (<vk_mem_alloc.h>) in its
+      # global module fragment and hand-rolls RAII; add `memory/vma_impl.cpp`
+      # (the single VMA_IMPLEMENTATION TU) to the PRIVATE sources above and
+      # `Vulkan::vma` to target_link_libraries below when implementing it.
+      # `import vk_mem_alloc;` is blocked here by VMA-Hpp's RAII layer vs
+      # VULKAN_HPP_USE_STD_EXPECTED - see cmake/VmaCxxModule.cmake.
+      memory/allocator.cppm
+      memory/raw_allocator.cppm
+      memory/vma_allocator.cppm
 
       # --- Phase 0.5 / 0.6 Composition primitives + factory ---
-      # resources/image.cppm    # module vkpp.image
-      # resources/buffer.cppm   # module vkpp.buffer
+      resources/image.cppm    # module vkpp.image
+      resources/buffer.cppm   # module vkpp.buffer
 
       # --- Phase 1 Class decomposition ---
-      # core/instance_context.cppm   # module vkpp.instance
-      # core/device_context.cppm     # module vkpp.device
-      # present/swapchain.cppm       # module vkpp.swapchain
-      # present/frame.cppm           # module vkpp.frame
-      # command/command.cppm         # module vkpp.command
+      core/instance_context.cppm   # module vkpp.instance
+      core/device_context.cppm     # module vkpp.device
+      present/swapchain.cppm       # module vkpp.swapchain
+      present/frame.cppm           # module vkpp.frame
+      command/command.cppm         # module vkpp.command
 
       # --- Phase 2 Textures ---
       # resources/texture.cppm  # module vkpp.texture
@@ -64,7 +69,7 @@ set_target_properties(vkpp PROPERTIES CXX_MODULE_STD ON)
 # passing a vk::SurfaceKHR handle into vkpp (preferred) or vkpp gains SFML here.
 target_link_libraries(vkpp
   PUBLIC glm::glm glm::cppm Tutorial::stb Vulkan::cppm
-  PRIVATE Tutorial::tinyobjloader)
+  PRIVATE Tutorial::tinyobjloader Vulkan::vma)
 
 # io/load.cppm builds model/texture paths from these (same as the old `utils`).
 file(TO_CMAKE_PATH "${MODEL_OUTPUT_DIRECTORY}" _model_directory)
