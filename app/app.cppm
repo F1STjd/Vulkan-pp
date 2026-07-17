@@ -503,63 +503,52 @@ private:
   auto
   create_swap_chain() -> std::expected<void, vkpp::error_t>
   {
-    auto surface_capabilities =
-      UTILS_VK(physical_device_.getSurfaceCapabilitiesKHR(*surface_),
-        ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR);
-    if (!surface_capabilities)
-    {
-      return std::expected<void, vkpp::error_t> {
-        std::unexpect,
-        std::move(surface_capabilities).error(),
-      };
-    }
-    swap_chain_extent_ = choose_swap_extent(*surface_capabilities);
-    const auto min_image_count =
-      choose_swap_min_image_count(*surface_capabilities);
+    std::uint32_t min_image_count;                     // NOLINT
+    vk::SurfaceTransformFlagBitsKHR current_transform; // NOLINT
+    return UTILS_VK(physical_device_.getSurfaceCapabilitiesKHR(*surface_),
+      ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR)
+      .and_then(
+        [ &, this ](const auto& surface_capabilities)
+        {
+          swap_chain_extent_ = choose_swap_extent(surface_capabilities);
+          min_image_count = choose_swap_min_image_count(surface_capabilities);
+          current_transform = surface_capabilities.currentTransform;
 
-    auto available_formats =
-      UTILS_VK(physical_device_.getSurfaceFormatsKHR(*surface_),
-        ^^vk::raii::PhysicalDevice::getSurfaceFormatsKHR);
-    if (!available_formats)
-    {
-      return std::expected<void, vkpp::error_t> {
-        std::unexpect,
-        std::move(available_formats).error(),
-      };
-    }
-    swap_chain_surface_format_ = choose_swap_surface_format(*available_formats);
+          return UTILS_VK(physical_device_.getSurfaceFormatsKHR(*surface_),
+            ^^vk::raii::PhysicalDevice::getSurfaceFormatsKHR);
+        })
+      .and_then(
+        [ &, this ](const auto& available_formats)
+        {
+          swap_chain_surface_format_ =
+            choose_swap_surface_format(available_formats);
+          return UTILS_VK(physical_device_.getSurfacePresentModesKHR(*surface_),
+            ^^vk::raii::PhysicalDevice::getSurfacePresentModesKHR);
+        })
+      .and_then(
+        [ & ](const auto& present_modes)
+        {
+          const auto present_mode = choose_swap_present_mode(present_modes);
 
-    auto available_present_modes =
-      UTILS_VK(physical_device_.getSurfacePresentModesKHR(*surface_),
-        ^^vk::raii::PhysicalDevice::getSurfacePresentModesKHR);
-    if (!available_present_modes)
-    {
-      return std::expected<void, vkpp::error_t> {
-        std::unexpect,
-        std::move(available_present_modes).error(),
-      };
-    }
-    const auto present_mode =
-      choose_swap_present_mode(*available_present_modes);
+          vk::SwapchainCreateInfoKHR swap_chain_create_info {
+            .surface = *surface_,
+            .minImageCount = min_image_count,
+            .imageFormat = swap_chain_surface_format_.format,
+            .imageColorSpace = swap_chain_surface_format_.colorSpace,
+            .imageExtent = swap_chain_extent_,
+            .imageArrayLayers = 1U,
+            .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
+            .imageSharingMode = vk::SharingMode::eExclusive,
+            .preTransform = current_transform,
+            .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+            .presentMode = present_mode,
+            .clipped = vk::True,
+            .oldSwapchain = nullptr,
+          };
 
-    vk::SwapchainCreateInfoKHR swap_chain_create_info {
-      .surface = *surface_,
-      .minImageCount = min_image_count,
-      .imageFormat = swap_chain_surface_format_.format,
-      .imageColorSpace = swap_chain_surface_format_.colorSpace,
-      .imageExtent = swap_chain_extent_,
-      .imageArrayLayers = 1U,
-      .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
-      .imageSharingMode = vk::SharingMode::eExclusive,
-      .preTransform = surface_capabilities->currentTransform,
-      .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-      .presentMode = present_mode,
-      .clipped = vk::True,
-      .oldSwapchain = nullptr,
-    };
-
-    return UTILS_VK(device_.createSwapchainKHR(swap_chain_create_info),
-      ^^vk::raii::Device::createSwapchainKHR)
+          return UTILS_VK(device_.createSwapchainKHR(swap_chain_create_info),
+            ^^vk::raii::Device::createSwapchainKHR);
+        })
       .and_then(
         [ this ](vk::raii::SwapchainKHR&& swap_chain)
         {
@@ -657,7 +646,20 @@ private:
   auto
   create_graphics_pipeline() -> std::expected<void, vkpp::error_t>
   {
-    return find_depth_format()
+    static const vk::PipelineLayoutCreateInfo pipeline_layout_create_info {
+      .setLayoutCount = 1,
+      .pSetLayouts = &*descriptor_set_layout_,
+      .pushConstantRangeCount = 0,
+    };
+
+    return UTILS_VK(device_.createPipelineLayout(pipeline_layout_create_info),
+      ^^vk::raii::Device::createPipelineLayout)
+      .and_then(
+        [ this ](vk::raii::PipelineLayout&& layout)
+        {
+          pipeline_layout_ = std::move(layout);
+          return find_depth_format();
+        })
       .and_then(
         [ this ](
           vk::Format format) -> std::expected<std::vector<char>, vkpp::error_t>
@@ -763,25 +765,6 @@ private:
             .pDynamicStates = dynamic_states.data(),
           };
 
-          static const vk::PipelineLayoutCreateInfo
-            pipeline_layout_create_info {
-              .setLayoutCount = 1,
-              .pSetLayouts = &*descriptor_set_layout_,
-              .pushConstantRangeCount = 0,
-            };
-
-          auto maybe_layout =
-            UTILS_VK(device_.createPipelineLayout(pipeline_layout_create_info),
-              ^^vk::raii::Device::createPipelineLayout);
-          if (!maybe_layout)
-          {
-            return std::expected<vk::raii::Pipeline, vkpp::error_t> {
-              std::unexpect,
-              std::move(maybe_layout).error(),
-            };
-          }
-          pipeline_layout_ = std::move(*maybe_layout);
-
           vk::StructureChain pipeline_create_info_chain {
             vk::GraphicsPipelineCreateInfo {
               .stageCount = 2U,
@@ -866,48 +849,43 @@ private:
         .sharingMode = vk::SharingMode::eExclusive,
       };
 
+    vk::raii::Image temp_image { nullptr };
+    vk::raii::DeviceMemory temp_memory { nullptr };
+    vk::DeviceSize memory_requirements_size; // NOLINT
+
     return UTILS_VK(
       device_.createImage(image_create_info), ^^vk::raii::Device::createImage)
       .and_then(
-        [ & ](vk::raii::Image&& image)
-          -> std::expected<image_memory_pair, vkpp::error_t>
+        [ &, this ](vk::raii::Image&& image)
         {
-          const auto memory_requirements = image.getMemoryRequirements();
-          const auto memory_type =
-            find_memory_type(memory_requirements.memoryTypeBits, properties);
-          if (!memory_type)
-          {
-            return std::expected<image_memory_pair, vkpp::error_t> {
-              std::unexpect,
-              std::move(memory_type).error(),
-            };
-          }
+          temp_image = std::move(image);
+          const auto memory_requirements = temp_image.getMemoryRequirements();
+          memory_requirements_size = memory_requirements.size;
+          return find_memory_type(
+            memory_requirements.memoryTypeBits, properties);
+        })
+      .and_then(
+        [ &, this ](auto memory_type)
+        {
           vk::MemoryAllocateInfo memory_allocate_info {
-            .allocationSize = memory_requirements.size,
-            .memoryTypeIndex = *memory_type,
+            .allocationSize = memory_requirements_size,
+            .memoryTypeIndex = memory_type,
           };
 
-          auto memory = UTILS_VK(device_.allocateMemory(memory_allocate_info),
+          return UTILS_VK(device_.allocateMemory(memory_allocate_info),
             ^^vk::raii::Device::allocateMemory);
-          if (!memory)
-          {
-            return std::expected<image_memory_pair, vkpp::error_t> {
-              std::unexpect,
-              std::move(memory).error(),
-            };
-          }
-
-          const auto bind_memory_result = UTILS_VK(
-            image.bindMemory(**memory, 0ULL), ^^vk::raii::Image::bindMemory);
-          if (!bind_memory_result)
-          {
-            return std::expected<image_memory_pair, vkpp::error_t> {
-              std::unexpect,
-              std::move(bind_memory_result).error(),
-            };
-          }
-
-          return std::pair { std::move(image), std::move(*memory) };
+        })
+      .and_then(
+        [ & ](vk::raii::DeviceMemory&& memory)
+        {
+          temp_memory = std::move(memory);
+          return UTILS_VK(temp_image.bindMemory(*temp_memory, 0ULL),
+            ^^vk::raii::Image::bindMemory);
+        })
+      .transform(
+        [ & ]() -> image_memory_pair
+        {
+          return std::pair { std::move(temp_image), std::move(temp_memory) };
         });
   }
 
@@ -932,33 +910,24 @@ private:
     return std::unexpected {
       vkpp::app_error {
         .kind = vkpp::app_error_kind::no_supported_format,
-        .detail = "Failed to find supported format",
+        .detail = "Failed to find supported format"sv,
       },
     };
   }
 
-  // TODO: Konrad - Almost the same function and implementation like in depth
-  // resources -> abstraction
   auto
   create_color_resources() -> std::expected<void, vkpp::error_t>
   {
-    return create_image(swap_chain_extent_.width, swap_chain_extent_.height, 1U,
-      msaa_samples_, swap_chain_surface_format_.format,
-      vk::ImageTiling::eOptimal,
-      vk::ImageUsageFlagBits::eTransientAttachment |
-        vk::ImageUsageFlagBits::eColorAttachment,
-      vk::MemoryPropertyFlagBits::eDeviceLocal)
-      .and_then(
-        [ this ](image_memory_pair&& pair)
-          -> std::expected<vk::raii::ImageView, vkpp::error_t>
-        {
-          std::tie(color_image_, color_image_memory_) = std::move(pair);
-          return create_image_view(color_image_,
-            swap_chain_surface_format_.format, vk::ImageAspectFlagBits::eColor,
-            1U);
-        })
-      .transform([ this ](vk::raii::ImageView&& image_view) -> void
-        { color_image_view_ = std::move(image_view); });
+    const vkpp::image_runtime_args args {
+      .extent = swap_chain_extent_,
+      .format = swap_chain_surface_format_.format,
+      .samples = msaa_samples_,
+    };
+
+    return vkpp::make_image_resource<vkpp::image_kind::color>(
+      allocator_, device_, args)
+      .transform(
+        [ this ](auto&& resource) { color_resource_ = std::move(resource); });
   }
 
   auto
@@ -979,26 +948,19 @@ private:
   {
     return find_depth_format()
       .and_then(
-        [ this ](
-          vk::Format format) -> std::expected<image_memory_pair, vkpp::error_t>
+        [ this ](vk::Format format)
         {
-          depth_format_ = format;
-          return create_image(swap_chain_extent_.width,
-            swap_chain_extent_.height, 1U, msaa_samples_, depth_format_,
-            vk::ImageTiling::eOptimal,
-            vk::ImageUsageFlagBits::eDepthStencilAttachment,
-            vk::MemoryPropertyFlagBits::eDeviceLocal);
+          const vkpp::image_runtime_args args {
+            .extent = swap_chain_extent_,
+            .format = format,
+            .samples = msaa_samples_,
+          };
+
+          return vkpp::make_image_resource<vkpp::image_kind::depth>(
+            allocator_, device_, args);
         })
-      .and_then(
-        [ this ](image_memory_pair&& pair)
-          -> std::expected<vk::raii::ImageView, vkpp::error_t>
-        {
-          std::tie(depth_image_, depth_image_memory_) = std::move(pair);
-          return create_image_view(
-            depth_image_, depth_format_, vk::ImageAspectFlagBits::eDepth, 1U);
-        })
-      .transform([ this ](vk::raii::ImageView&& image_view) -> void
-        { depth_image_view_ = std::move(image_view); });
+      .transform([ this ](auto&& resource) -> void
+        { depth_resource_ = std::move(resource); });
   }
 
   auto
@@ -1133,48 +1095,43 @@ private:
       .sharingMode = vk::SharingMode::eExclusive,
     };
 
+    vk::raii::Buffer temp_buffer { nullptr };
+    vk::raii::DeviceMemory temp_memory { nullptr };
+    vk::DeviceSize memory_requirements_size; // NOLINT
+
     return UTILS_VK(device_.createBuffer(buffer_create_info),
       ^^vk::raii::Device::createBuffer)
       .and_then(
-        [ this, properties ](vk::raii::Buffer&& buffer)
-          -> std::expected<buffer_memory_pair, vkpp::error_t>
+        [ &, this, properties ](vk::raii::Buffer&& buffer)
         {
-          const auto memory_requirements = buffer.getMemoryRequirements();
-          const auto memory_type =
-            find_memory_type(memory_requirements.memoryTypeBits, properties);
-          if (!memory_type)
-          {
-            return std::expected<buffer_memory_pair, vkpp::error_t> {
-              std::unexpect,
-              std::move(memory_type).error(),
-            };
-          }
+          temp_buffer = std::move(buffer);
+          const auto memory_requirements = temp_buffer.getMemoryRequirements();
+          memory_requirements_size = memory_requirements.size;
+          return find_memory_type(
+            memory_requirements.memoryTypeBits, properties);
+        })
+      .and_then(
+        [ &, this ](std::uint32_t memory_type)
+        {
           vk::MemoryAllocateInfo memory_allocate_info {
-            .allocationSize = memory_requirements.size,
-            .memoryTypeIndex = *memory_type,
+            .allocationSize = memory_requirements_size,
+            .memoryTypeIndex = memory_type,
           };
 
-          auto memory = UTILS_VK(device_.allocateMemory(memory_allocate_info),
+          return UTILS_VK(device_.allocateMemory(memory_allocate_info),
             ^^vk::raii::Device::allocateMemory);
-          if (!memory)
-          {
-            return std::expected<buffer_memory_pair, vkpp::error_t> {
-              std::unexpect,
-              std::move(memory).error(),
-            };
-          }
-
-          const auto bind_memory_result = UTILS_VK(
-            buffer.bindMemory(**memory, 0ULL), ^^vk::raii::Buffer::bindMemory);
-          if (!bind_memory_result)
-          {
-            return std::expected<buffer_memory_pair, vkpp::error_t> {
-              std::unexpect,
-              std::move(bind_memory_result).error(),
-            };
-          }
-
-          return std::pair { std::move(buffer), std::move(*memory) };
+        })
+      .and_then(
+        [ & ](vk::raii::DeviceMemory&& memory)
+        {
+          temp_memory = std::move(memory);
+          return UTILS_VK(temp_buffer.bindMemory(*temp_memory, 0ULL),
+            ^^vk::raii::Buffer::bindMemory);
+        })
+      .transform(
+        [ & ]
+        {
+          return std::pair { std::move(temp_buffer), std::move(temp_memory) };
         });
   }
 
@@ -2005,43 +1962,39 @@ private:
   {
     for (auto _ : std::views::iota(0UZ, swap_chain_images_.size()))
     {
-      auto maybe_render_semaphore = UTILS_VK(
-        device_.createSemaphore({}), ^^vk::raii::Device::createSemaphore);
-      if (!maybe_render_semaphore)
+      if (auto error = UTILS_VK(
+            device_.createSemaphore({}), ^^vk::raii::Device::createSemaphore)
+            .transform([ & ](vk::raii::Semaphore&& semaphore) -> void
+              { render_finished_semaphores_.push_back(std::move(semaphore)); });
+        !error)
       {
-        return std::expected<void, vkpp::error_t> {
-          std::unexpect,
-          std::move(maybe_render_semaphore).error(),
-        };
+        return error;
       }
-      render_finished_semaphores_.push_back(std::move(*maybe_render_semaphore));
     }
 
     for (auto _ : std::views::iota(0U, max_frames_in_flight))
     {
-      auto maybe_present_semaphore = UTILS_VK(
-        device_.createSemaphore({}), ^^vk::raii::Device::createSemaphore);
-      if (!maybe_present_semaphore)
+      if (auto error = //
+        UTILS_VK(
+          device_.createSemaphore({}), ^^vk::raii::Device::createSemaphore)
+          .transform([ & ](vk::raii::Semaphore&& semaphore) -> void
+            { present_complete_semaphores_.push_back(std::move(semaphore)); });
+        !error)
       {
-        return std::expected<void, vkpp::error_t> {
-          std::unexpect,
-          std::move(maybe_present_semaphore).error(),
-        };
+        return error;
       }
-      present_complete_semaphores_.push_back(
-        std::move(*maybe_present_semaphore));
 
-      auto maybe_draw_fence = UTILS_VK(
-        device_.createFence({ .flags = vk::FenceCreateFlagBits::eSignaled }),
-        ^^vk::raii::Device::createFence);
-      if (!maybe_draw_fence)
+      if (auto error = UTILS_VK( //
+            device_.createFence({
+              .flags = vk::FenceCreateFlagBits::eSignaled,
+            }),
+            ^^vk::raii::Device::createFence)
+            .transform([ & ](vk::raii::Fence&& fence) -> void
+              { in_flight_fences_.push_back(std::move(fence)); });
+        !error)
       {
-        return std::expected<void, vkpp::error_t> {
-          std::unexpect,
-          std::move(maybe_draw_fence).error(),
-        };
+        return error;
       }
-      in_flight_fences_.push_back(std::move(*maybe_draw_fence));
     }
     return {};
   }
