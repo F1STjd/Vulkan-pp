@@ -6,7 +6,7 @@ import vulkan;
 namespace vkpp
 {
 
-export enum class app_error_kind {
+export enum class app_error_kind : std::uint8_t {
   file_open,
   image_decode,
   model_parse,
