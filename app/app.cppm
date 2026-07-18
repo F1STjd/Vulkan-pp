@@ -22,6 +22,7 @@ import vkpp.memory;
 import vkpp.memory.vma;
 import vkpp.image;
 import vkpp.buffer;
+import vkpp.instance;
 
 namespace f1st
 {
@@ -67,8 +68,7 @@ private:
   auto
   init_vulkan() -> std::expected<void, vkpp::error_t>
   {
-    return create_instance()
-      .and_then(std::bind_front(&app::setup_debug_messenger, this))
+    return create_instance_context()
       .and_then(std::bind_front(&app::create_surface, this))
       .and_then(std::bind_front(&app::pick_physical_device, this))
       .and_then(std::bind_front(&app::create_logical_device, this))
@@ -112,177 +112,32 @@ private:
 
 private:
   auto
-  create_instance() -> std::expected<void, vkpp::error_t>
+  create_instance_context() -> std::expected<void, vkpp::error_t>
   {
     static constexpr vk::ApplicationInfo app_info {
-      .pApplicationName = "App name",
+      .pApplicationName = "f1st",
       .applicationVersion = vk::makeVersion(1, 0, 0),
       .pEngineName = "No Engine",
       .engineVersion = vk::makeVersion(1, 0, 0),
       .apiVersion = vk::ApiVersion14,
     };
-
-    const auto instance_extensions = get_required_instance_extensions();
-
-    const vk::InstanceCreateInfo create_info {
-      .pApplicationInfo = &app_info,
-      .enabledLayerCount = static_cast<std::uint32_t>(validation_layers.size()),
-      .ppEnabledLayerNames = validation_layers.data(),
-      .enabledExtensionCount =
-        static_cast<std::uint32_t>(instance_extensions.size()),
-      .ppEnabledExtensionNames = instance_extensions.data(),
-    };
-
-    return check_validation_layer_support(validation_layers)
-      .and_then(
-        [ this, &instance_extensions ]() -> std::expected<void, vkpp::error_t>
-        { return check_window_vulkan_extensions_support(instance_extensions); })
-      .and_then(
-        [ & ]() -> std::expected<vk::raii::Instance, vkpp::error_t>
-        {
-          return UTILS_VK(context_.createInstance(create_info),
-            ^^vk::raii::Context::createInstance);
-        })
-      .transform([ & ](vk::raii::Instance&& instance) -> void
-        { instance_ = std::move(instance); });
-  }
-
-  auto
-  check_window_vulkan_extensions_support(
-    std::span<const char* const> instance_extensions)
-    -> std::expected<void, vkpp::error_t>
-  {
-    return UTILS_VK(context_.enumerateInstanceExtensionProperties(),
-      ^^vk::raii::Context::enumerateInstanceExtensionProperties)
-      .and_then(
-        [ &instance_extensions ](
-          std::span<const vk::ExtensionProperties> vulkan_extensions)
-          -> std::expected<void, vkpp::error_t>
-        {
-          auto unsupported_extension_it =
-            std::ranges::find_if(instance_extensions,
-              [ &vulkan_extensions ](const auto& instance_extension)
-              {
-                return std::ranges::none_of(vulkan_extensions,
-                  [ instance_extension ](const auto& vulkan_extension)
-                  {
-                    return std::strcmp(vulkan_extension.extensionName,
-                             instance_extension) == 0;
-                  });
-              });
-
-          if (unsupported_extension_it != instance_extensions.end())
-          {
-            return std::unexpected {
-              vkpp::app_error {
-                .kind = vkpp::app_error_kind::missing_instance_extension,
-                .detail = std::format("Missing window/instance extension: {}",
-                  *unsupported_extension_it),
-              },
-            };
-          }
-          return {};
-        });
-  }
-
-  auto
-  check_validation_layer_support(std::span<const char* const> required_layers)
-    -> std::expected<void, vkpp::error_t>
-  {
-    // this pipeline triggers: -Wfree-nonheap-object - report sometime
-    return UTILS_VK(context_.enumerateInstanceLayerProperties(),
-      ^^vk::raii::Context::enumerateInstanceLayerProperties)
-      .and_then(
-        [ &required_layers ](
-          std::span<const vk::LayerProperties> layer_extensions)
-          -> std::expected<void, vkpp::error_t>
-        {
-          auto unsupported_layer_it = std::ranges::find_if(required_layers,
-            [ &layer_extensions ](const auto& required_layer)
-            {
-              return std::ranges::none_of(layer_extensions,
-                [ &required_layer ](const auto& layer_extension)
-                {
-                  return std::strcmp(
-                           layer_extension.layerName, required_layer) == 0;
-                });
-            });
-          if (unsupported_layer_it != required_layers.end())
-          {
-            return std::unexpected {
-              vkpp::app_error {
-                .kind = vkpp::app_error_kind::missing_validation_layer,
-                .detail =
-                  std::format("Required validation layer is not supported: {}",
-                    *unsupported_layer_it),
-              },
-            };
-          }
-          return {};
-        });
-  }
-
-  auto
-  get_required_instance_extensions() -> std::vector<const char*>
-  {
-    const auto& ext_temp = sf::Vulkan::getGraphicsRequiredInstanceExtensions();
-    std::vector<const char*> instance_extensions(
-      ext_temp.begin(), ext_temp.end());
-    if constexpr (enable_validation_layers)
-    {
-      instance_extensions.push_back(vk::EXTDebugUtilsExtensionName);
-    }
-    return instance_extensions;
-  }
-
-  static VKAPI_ATTR auto VKAPI_CALL
-  debug_callback(
-    [[maybe_unused]] vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
-    vk::DebugUtilsMessageTypeFlagsEXT type,
-    const vk::DebugUtilsMessengerCallbackDataEXT* callback_data,
-    [[maybe_unused]] void* user_data) -> vk::Bool32
-  {
-    std::println(std::cerr, "Validation layer:\nType: {}\nMessage: {}",
-      vk::to_string(type), callback_data->pMessage);
-
-    return vk::False;
-  }
-
-  auto
-  setup_debug_messenger() -> std::expected<void, vkpp::error_t>
-  {
-    if constexpr (!enable_validation_layers) { return {}; }
-
-    static constexpr vk::DebugUtilsMessageSeverityFlagsEXT
-      message_severity_flags {
-        vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-        vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
-      };
-
-    static constexpr vk::DebugUtilsMessageTypeFlagsEXT message_type_flags {
-      vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-      vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-      vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
-    };
-
-    static constexpr vk::DebugUtilsMessengerCreateInfoEXT create_info {
-      .messageSeverity = message_severity_flags,
-      .messageType = message_type_flags,
-      .pfnUserCallback = &debug_callback
-    };
-
-    return UTILS_VK(instance_.createDebugUtilsMessengerEXT(create_info),
-      ^^vk::raii::Instance::createDebugUtilsMessengerEXT)
-      .transform(
-        [ this ](vk::raii::DebugUtilsMessengerEXT&& debug_messenger) -> void
-        { debug_messenger_ = std::move(debug_messenger); });
+    const auto extensions = required_instance_extensions();
+    return vkpp::instance_context::create(
+      {
+        .app_info = app_info,
+        .extensions = extensions,
+        .layers = validation_layers,
+        .enable_validation = enable_validation_layers,
+      })
+      .transform([ this ](vkpp::instance_context&& context)
+        { instance_context_ = std::move(context); });
   }
 
   auto
   create_surface() -> std::expected<void, vkpp::error_t>
   {
     VkSurfaceKHR _surface {};
-    if (!window_.createVulkanSurface(*instance_, _surface))
+    if (!window_.createVulkanSurface(*instance_context_.instance(), _surface))
     {
       return std::unexpected {
         vkpp::app_error {
@@ -291,14 +146,15 @@ private:
         },
       };
     }
-    surface_ = vk::raii::SurfaceKHR(instance_, _surface);
+    instance_context_.adopt_surface(
+      vk::raii::SurfaceKHR(instance_context_.instance(), _surface));
     return {};
   }
 
   auto
   pick_physical_device() -> std::expected<void, vkpp::error_t>
   {
-    return UTILS_VK(instance_.enumeratePhysicalDevices(),
+    return UTILS_VK(instance_context_.instance().enumeratePhysicalDevices(),
       ^^vk::raii::Instance::enumeratePhysicalDevices)
       .and_then(
         [ this ](std::span<const vk::raii::PhysicalDevice> physical_devices)
@@ -385,7 +241,7 @@ private:
       [ this, &qf_properties ](std::uint32_t i)
       {
         return (qf_properties[ i ].queueFlags & vk::QueueFlagBits::eGraphics) &&
-          physical_device_.getSurfaceSupportKHR(i, surface_);
+          physical_device_.getSurfaceSupportKHR(i, instance_context_.surface());
       });
     if (graphics_qf_index_it == std::ranges::end(qf_indices))
     {
@@ -447,8 +303,8 @@ private:
   auto
   create_allocator() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::vma_policy::create(
-      *instance_, *physical_device_, *device_, vk::ApiVersion14)
+    return vkpp::vma_policy::create(*instance_context_.instance(),
+      *physical_device_, *device_, vk::ApiVersion14)
       .transform([ this ](vkpp::vma_policy&& allocator)
         { allocator_ = std::move(allocator); });
   }
@@ -505,7 +361,8 @@ private:
   {
     std::uint32_t min_image_count;                     // NOLINT
     vk::SurfaceTransformFlagBitsKHR current_transform; // NOLINT
-    return UTILS_VK(physical_device_.getSurfaceCapabilitiesKHR(*surface_),
+    return UTILS_VK(
+      physical_device_.getSurfaceCapabilitiesKHR(*instance_context_.surface()),
       ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR)
       .and_then(
         [ &, this ](const auto& surface_capabilities)
@@ -514,7 +371,8 @@ private:
           min_image_count = choose_swap_min_image_count(surface_capabilities);
           current_transform = surface_capabilities.currentTransform;
 
-          return UTILS_VK(physical_device_.getSurfaceFormatsKHR(*surface_),
+          return UTILS_VK(
+            physical_device_.getSurfaceFormatsKHR(*instance_context_.surface()),
             ^^vk::raii::PhysicalDevice::getSurfaceFormatsKHR);
         })
       .and_then(
@@ -522,7 +380,8 @@ private:
         {
           swap_chain_surface_format_ =
             choose_swap_surface_format(available_formats);
-          return UTILS_VK(physical_device_.getSurfacePresentModesKHR(*surface_),
+          return UTILS_VK(physical_device_.getSurfacePresentModesKHR(
+                            *instance_context_.surface()),
             ^^vk::raii::PhysicalDevice::getSurfacePresentModesKHR);
         })
       .and_then(
@@ -531,7 +390,7 @@ private:
           const auto present_mode = choose_swap_present_mode(present_modes);
 
           vk::SwapchainCreateInfoKHR swap_chain_create_info {
-            .surface = *surface_,
+            .surface = *instance_context_.surface(),
             .minImageCount = min_image_count,
             .imageFormat = swap_chain_surface_format_.format,
             .imageColorSpace = swap_chain_surface_format_.colorSpace,
@@ -1806,9 +1665,9 @@ private:
   [[nodiscard]] auto
   is_swapchain_extent_valid() -> bool
   {
-    const auto surface_capabilities =
-      UTILS_VK(physical_device_.getSurfaceCapabilitiesKHR(*surface_),
-        ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR);
+    const auto surface_capabilities = UTILS_VK(
+      physical_device_.getSurfaceCapabilitiesKHR(*instance_context_.surface()),
+      ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR);
     if (!surface_capabilities) { return false; }
 
     const auto extent = choose_swap_extent(*surface_capabilities);
@@ -2078,10 +1937,7 @@ private:
     sf::VideoMode { { window_width, window_height } },
     "Window_title",
   };
-  vk::raii::Context context_;
-  vk::raii::Instance instance_ { nullptr };
-  vk::raii::DebugUtilsMessengerEXT debug_messenger_ { nullptr };
-  vk::raii::SurfaceKHR surface_ { nullptr };
+  vkpp::instance_context instance_context_ {};
   vk::raii::PhysicalDevice physical_device_ { nullptr };
   vk::raii::Device device_ { nullptr };
   vkpp::vma_policy allocator_ {};
