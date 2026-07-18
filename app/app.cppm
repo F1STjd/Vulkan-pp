@@ -45,6 +45,18 @@ constexpr std::array<const char*, 0> validation_layers {};
 constexpr bool enable_validation_layers { false };
 #endif
 
+[[nodiscard]] auto
+required_instance_extensions() -> std::vector<const char*>
+{
+  const auto& sfml = sf::Vulkan::getGraphicsRequiredInstanceExtensions();
+  std::vector<const char*> extensions { std::from_range, sfml };
+  if constexpr (enable_validation_layers)
+  {
+    extensions.push_back(vk::EXTDebugUtilsExtensionName);
+  }
+  return extensions;
+}
+
 constexpr std::array required_device_extensions {
   vk::KHRSwapchainExtensionName
 };
