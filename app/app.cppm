@@ -31,16 +31,18 @@ using namespace std::string_view_literals;
 constexpr std::uint32_t window_width { 800 };
 constexpr std::uint32_t window_height { 600 };
 
+// During the development i want validation layers (for corectness) in the
+// release build
 #ifdef NDEBUG
 constexpr std::array validation_layers {
   "VK_LAYER_KHRONOS_validation",
   // This one is not checked in the code :(, but should be
   "VK_LAYER_LUNARG_monitor",
 };
-constexpr bool enable_validation_layers { false };
+constexpr bool enable_validation_layers { true };
 #else
 constexpr std::array<const char*, 0> validation_layers {};
-constexpr bool enable_validation_layers { true };
+constexpr bool enable_validation_layers { false };
 #endif
 
 constexpr std::array required_device_extensions {
