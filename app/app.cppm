@@ -697,7 +697,7 @@ private:
           return vkpp::make_image_resource<vkpp::image_kind::depth>(
             device_.allocator(), device_.device(), args);
         })
-      .transform([ this ](auto&& resource) -> void
+      .transform([ this ](vkpp::image_resource<>&& resource) -> void
         { depth_resource_ = std::move(resource); });
   }
 
