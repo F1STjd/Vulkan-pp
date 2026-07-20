@@ -143,14 +143,14 @@ private:
         .enable_validation = enable_validation_layers,
       })
       .transform([ this ](vkpp::instance_context&& context)
-        { instance_context_ = std::move(context); });
+        { instance_ = std::move(context); });
   }
 
   auto
   create_surface() -> std::expected<void, vkpp::error_t>
   {
     VkSurfaceKHR _surface {};
-    if (!window_.createVulkanSurface(*instance_context_.instance(), _surface))
+    if (!window_.createVulkanSurface(*instance_.instance(), _surface))
     {
       return std::unexpected {
         vkpp::app_error {
@@ -159,8 +159,8 @@ private:
         },
       };
     }
-    instance_context_.adopt_surface(
-      vk::raii::SurfaceKHR(instance_context_.instance(), _surface));
+    instance_.adopt_surface(
+      vk::raii::SurfaceKHR(instance_.instance(), _surface));
     return {};
   }
 
@@ -263,7 +263,7 @@ private:
           const auto present_mode = choose_swap_present_mode(present_modes);
 
           vk::SwapchainCreateInfoKHR swap_chain_create_info {
-            .surface = *instance_context_.surface(),
+            .surface = *instance_.surface(),
             .minImageCount = min_image_count,
             .imageFormat = swap_chain_surface_format_.format,
             .imageColorSpace = swap_chain_surface_format_.colorSpace,
