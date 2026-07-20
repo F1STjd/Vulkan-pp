@@ -23,6 +23,7 @@ import vkpp.memory.vma;
 import vkpp.image;
 import vkpp.buffer;
 import vkpp.instance;
+import vkpp.device;
 
 namespace f1st
 {
@@ -84,9 +85,7 @@ private:
   {
     return create_instance_context()
       .and_then(std::bind_front(&app::create_surface, this))
-      .and_then(std::bind_front(&app::pick_physical_device, this))
-      .and_then(std::bind_front(&app::create_logical_device, this))
-      .and_then(std::bind_front(&app::create_allocator, this))
+      .and_then(std::bind_front(&app::create_device_context, this))
       .and_then(std::bind_front(&app::create_swap_chain, this))
       .and_then(std::bind_front(&app::create_image_views, this))
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
@@ -121,7 +120,7 @@ private:
       window_.handleEvents(on_close, on_resize);
       if (auto result = draw_frame(); !result) { return result; }
     }
-    return UTILS_VK(device_.waitIdle(), ^^vk::raii::Device::waitIdle);
+    return UTILS_VK(device_.device().waitIdle(), ^^vk::raii::Device::waitIdle);
   }
 
 private:
@@ -166,161 +165,21 @@ private:
   }
 
   auto
-  pick_physical_device() -> std::expected<void, vkpp::error_t>
+  create_device_context() -> std::expected<void, vkpp::error_t>
   {
-    return UTILS_VK(instance_context_.instance().enumeratePhysicalDevices(),
-      ^^vk::raii::Instance::enumeratePhysicalDevices)
-      .and_then(
-        [ this ](std::span<const vk::raii::PhysicalDevice> physical_devices)
-          -> std::expected<void, vkpp::error_t>
-        {
-          const auto suitable_device_it = std::ranges::find_if(physical_devices,
-            [ this ](const vk::raii::PhysicalDevice& device)
-            { return is_device_suitable(device); });
-          if (suitable_device_it == physical_devices.end())
-          {
-            return std::unexpected {
-              vkpp::app_error {
-                .kind = vkpp::app_error_kind::no_suitable_gpu,
-                .detail = "No suitable GPU found"sv,
-              },
-            };
-          }
-          physical_device_ = *suitable_device_it;
-          msaa_samples_ = get_max_usable_msaa_count();
-          return {};
-        });
-  }
-
-  auto
-  is_device_suitable(const vk::raii::PhysicalDevice& physical_device) -> bool
-  {
-    bool supports_vulkan_13 =
-      physical_device.getProperties().apiVersion >= vk::ApiVersion13;
-
-    const auto queue_family_properties =
-      physical_device.getQueueFamilyProperties();
-    bool supports_graphics = std::ranges::any_of(queue_family_properties,
-      [](const auto& qf_property)
+    return vkpp::device_context::create(instance_,
       {
-        return (static_cast<bool>(
-          qf_property.queueFlags & vk::QueueFlagBits::eGraphics));
-      });
-
-    auto supports_required_device_extensions =
-      physical_device.enumerateDeviceExtensionProperties()
-        .transform(
-          [ & ](std::span<const vk::ExtensionProperties>
-              available_device_extensions)
-          {
-            return std::ranges::all_of(required_device_extensions,
-              [ &available_device_extensions ](
-                const auto& required_device_extension)
-              {
-                return std::ranges::any_of(available_device_extensions,
-                  [ required_device_extension ](
-                    const auto& available_device_extension)
-                  {
-                    return strcmp(available_device_extension.extensionName,
-                             required_device_extension) == 0;
-                  });
-              });
-          })
-        .value_or(false);
-
-    auto features = physical_device.getFeatures2<vk::PhysicalDeviceFeatures2,
-      vk::PhysicalDeviceVulkan13Features,
-      vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-    bool supports_required_features =
-      features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy ==
-        vk::True &&
-      features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering ==
-        vk::True &&
-      features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 ==
-        vk::True &&
-      features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
-          .extendedDynamicState == vk::True;
-
-    return supports_vulkan_13 && supports_graphics &&
-      supports_required_device_extensions && supports_required_features;
-  }
-
-  auto
-  create_logical_device() -> std::expected<void, vkpp::error_t>
-  {
-    const auto qf_properties = physical_device_.getQueueFamilyProperties();
-    const auto qf_count = static_cast<std::uint32_t>(qf_properties.size());
-    const auto qf_indices = std::views::iota(0U, qf_count);
-    const auto graphics_qf_index_it = std::ranges::find_if(qf_indices,
-      [ this, &qf_properties ](std::uint32_t i)
-      {
-        return (qf_properties[ i ].queueFlags & vk::QueueFlagBits::eGraphics) &&
-          physical_device_.getSurfaceSupportKHR(i, instance_context_.surface());
-      });
-    if (graphics_qf_index_it == std::ranges::end(qf_indices))
-    {
-      return std::unexpected {
-        vkpp::app_error {
-          .kind = vkpp::app_error_kind::no_graphics_present_queue,
-          .detail =
-            "No queue family with graphics and surface present support found"sv,
-        },
-      };
-    }
-    graphics_qf_index_ = *graphics_qf_index_it;
-
-    static constexpr float graphics_queue_priority { 0.5F };
-    vk::DeviceQueueCreateInfo device_queue_create_info {
-      .queueFamilyIndex = graphics_qf_index_,
-      .queueCount = 1,
-      .pQueuePriorities = &graphics_queue_priority,
-    };
-
-    vk::StructureChain feature_chain {
-        vk::PhysicalDeviceFeatures2 {
-          .features = {
-            .sampleRateShading = vk::True,
-            .samplerAnisotropy = vk::True,
-          },
-        },
-        vk::PhysicalDeviceVulkan13Features {
-          .synchronization2 = vk::True,
-          .dynamicRendering = vk::True,
-        },
-        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT {
-          .extendedDynamicState = vk::True,
-        },
-      };
-
-    vk::DeviceCreateInfo device_create_info {
-      .pNext = &feature_chain.get<vk::PhysicalDeviceFeatures2>(),
-      .queueCreateInfoCount = 1,
-      .pQueueCreateInfos = &device_queue_create_info,
-      .enabledExtensionCount =
-        static_cast<std::uint32_t>(required_device_extensions.size()),
-      .ppEnabledExtensionNames = required_device_extensions.data(),
-    };
-
-    // TODO: Konrad - Create additional (transfer) queue for any transfering
-    // operations. Help:
-    // https://docs.vulkan.org/tutorial/latest/04_Vertex_buffers/02_Staging_buffer.html#_transfer_queue
-    return UTILS_VK(physical_device_.createDevice(device_create_info),
-      ^^vk::raii::PhysicalDevice::createDevice)
-      .transform(
-        [ this ](vk::raii::Device&& device) -> void
-        {
-          device_ = std::move(device);
-          graphics_queue_ = device_.getQueue(graphics_qf_index_, 0);
-        });
-  }
-
-  auto
-  create_allocator() -> std::expected<void, vkpp::error_t>
-  {
-    return vkpp::vma_policy::create(*instance_context_.instance(),
-      *physical_device_, *device_, vk::ApiVersion14)
-      .transform([ this ](vkpp::vma_policy&& allocator)
-        { allocator_ = std::move(allocator); });
+        .extensions = required_device_extensions,
+        .min_api_version = vk::ApiVersion13,
+        .sampler_anisotropy = true,
+        .dynamic_rendering = true,
+        .synchronization2 = true,
+        .extended_dynamic_state = true,
+        .sample_rate_shading = true,
+        .require_present = true,
+      })
+      .transform([ this ](vkpp::device_context&& device)
+        { device_ = std::move(device); });
   }
 
   auto
@@ -376,7 +235,7 @@ private:
     std::uint32_t min_image_count;                     // NOLINT
     vk::SurfaceTransformFlagBitsKHR current_transform; // NOLINT
     return UTILS_VK(
-      physical_device_.getSurfaceCapabilitiesKHR(*instance_context_.surface()),
+      device_.physical_device().getSurfaceCapabilitiesKHR(*instance_.surface()),
       ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR)
       .and_then(
         [ &, this ](const auto& surface_capabilities)
@@ -385,8 +244,8 @@ private:
           min_image_count = choose_swap_min_image_count(surface_capabilities);
           current_transform = surface_capabilities.currentTransform;
 
-          return UTILS_VK(
-            physical_device_.getSurfaceFormatsKHR(*instance_context_.surface()),
+          return UTILS_VK(device_.physical_device().getSurfaceFormatsKHR(
+                            *instance_.surface()),
             ^^vk::raii::PhysicalDevice::getSurfaceFormatsKHR);
         })
       .and_then(
@@ -394,8 +253,8 @@ private:
         {
           swap_chain_surface_format_ =
             choose_swap_surface_format(available_formats);
-          return UTILS_VK(physical_device_.getSurfacePresentModesKHR(
-                            *instance_context_.surface()),
+          return UTILS_VK(device_.physical_device().getSurfacePresentModesKHR(
+                            *instance_.surface()),
             ^^vk::raii::PhysicalDevice::getSurfacePresentModesKHR);
         })
       .and_then(
@@ -419,7 +278,8 @@ private:
             .oldSwapchain = nullptr,
           };
 
-          return UTILS_VK(device_.createSwapchainKHR(swap_chain_create_info),
+          return UTILS_VK(
+            device_.device().createSwapchainKHR(swap_chain_create_info),
             ^^vk::raii::Device::createSwapchainKHR);
         })
       .and_then(
@@ -465,7 +325,7 @@ private:
         },
       };
 
-    return UTILS_VK(device_.createImageView(image_view_info),
+    return UTILS_VK(device_.device().createImageView(image_view_info),
       ^^vk::raii::Device::createImageView);
   }
 
@@ -510,7 +370,8 @@ private:
       .pBindings = bindings.data(),
     };
 
-    return UTILS_VK(device_.createDescriptorSetLayout(ubo_layout_create_info),
+    return UTILS_VK(
+      device_.device().createDescriptorSetLayout(ubo_layout_create_info),
       ^^vk::raii::Device::createDescriptorSetLayout)
       .transform([ this ](vk::raii::DescriptorSetLayout&& layout) -> void
         { descriptor_set_layout_ = std::move(layout); });
@@ -525,7 +386,8 @@ private:
       .pushConstantRangeCount = 0,
     };
 
-    return UTILS_VK(device_.createPipelineLayout(pipeline_layout_create_info),
+    return UTILS_VK(
+      device_.device().createPipelineLayout(pipeline_layout_create_info),
       ^^vk::raii::Device::createPipelineLayout)
       .and_then(
         [ this ](vk::raii::PipelineLayout&& layout)
@@ -599,7 +461,7 @@ private:
             };
           const vk::PipelineMultisampleStateCreateInfo
             multisampling_create_info {
-              .rasterizationSamples = msaa_samples_,
+              .rasterizationSamples = device_.msaa_samples(),
               .sampleShadingEnable = vk::True,
               .minSampleShading = 0.2F,
             };
@@ -660,7 +522,7 @@ private:
             },
           };
           return UTILS_VK(
-            device_.createGraphicsPipeline(nullptr,
+            device_.device().createGraphicsPipeline(nullptr,
               pipeline_create_info_chain.get<vk::GraphicsPipelineCreateInfo>()),
             ^^vk::raii::Device::createGraphicsPipeline);
         })
@@ -677,7 +539,8 @@ private:
       .pCode = std::start_lifetime_as<std::uint32_t>(code.data()),
     };
 
-    return UTILS_VK(device_.createShaderModule(shader_module_create_info),
+    return UTILS_VK(
+      device_.device().createShaderModule(shader_module_create_info),
       ^^vk::raii::Device::createShaderModule);
   }
 
@@ -686,10 +549,11 @@ private:
   {
     vk::CommandPoolCreateInfo command_pool_create_info {
       .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-      .queueFamilyIndex = graphics_qf_index_,
+      .queueFamilyIndex = device_.graphics_qf_index(),
     };
 
-    return UTILS_VK(device_.createCommandPool(command_pool_create_info),
+    return UTILS_VK(
+      device_.device().createCommandPool(command_pool_create_info),
       ^^vk::raii::Device::createCommandPool)
       .transform([ this ](vk::raii::CommandPool&& command_pool) -> void
         { command_pool_ = std::move(command_pool); });
@@ -726,8 +590,8 @@ private:
     vk::raii::DeviceMemory temp_memory { nullptr };
     vk::DeviceSize memory_requirements_size; // NOLINT
 
-    return UTILS_VK(
-      device_.createImage(image_create_info), ^^vk::raii::Device::createImage)
+    return UTILS_VK(device_.device().createImage(image_create_info),
+      ^^vk::raii::Device::createImage)
       .and_then(
         [ &, this ](vk::raii::Image&& image)
         {
@@ -745,7 +609,7 @@ private:
             .memoryTypeIndex = memory_type,
           };
 
-          return UTILS_VK(device_.allocateMemory(memory_allocate_info),
+          return UTILS_VK(device_.device().allocateMemory(memory_allocate_info),
             ^^vk::raii::Device::allocateMemory);
         })
       .and_then(
@@ -769,7 +633,8 @@ private:
   {
     for (const auto format : candidates)
     {
-      const auto properties = physical_device_.getFormatProperties(format);
+      const auto properties =
+        device_.physical_device().getFormatProperties(format);
 
       if (((tiling == vk::ImageTiling::eLinear) &&
             ((properties.linearTilingFeatures & features) == features)) ||
@@ -794,11 +659,11 @@ private:
     const vkpp::image_runtime_args args {
       .extent = swap_chain_extent_,
       .format = swap_chain_surface_format_.format,
-      .samples = msaa_samples_,
+      .samples = device_.msaa_samples(),
     };
 
     return vkpp::make_image_resource<vkpp::image_kind::color>(
-      allocator_, device_, args)
+      device_.allocator(), device_.device(), args)
       .transform(
         [ this ](auto&& resource) { color_resource_ = std::move(resource); });
   }
@@ -826,11 +691,11 @@ private:
           const vkpp::image_runtime_args args {
             .extent = swap_chain_extent_,
             .format = format,
-            .samples = msaa_samples_,
+            .samples = device_.msaa_samples(),
           };
 
           return vkpp::make_image_resource<vkpp::image_kind::depth>(
-            allocator_, device_, args);
+            device_.allocator(), device_.device(), args);
         })
       .transform([ this ](auto&& resource) -> void
         { depth_resource_ = std::move(resource); });
@@ -929,7 +794,7 @@ private:
   auto
   create_texture_sampler() -> std::expected<void, vkpp::error_t>
   {
-    const auto properties = physical_device_.getProperties();
+    const auto properties = device_.physical_device().getProperties();
     vk::SamplerCreateInfo sampler_create_info {
       .magFilter = vk::Filter::eLinear,
       .minFilter = vk::Filter::eLinear,
@@ -948,7 +813,7 @@ private:
       .unnormalizedCoordinates = vk::False,
     };
 
-    return UTILS_VK(device_.createSampler(sampler_create_info),
+    return UTILS_VK(device_.device().createSampler(sampler_create_info),
       ^^vk::raii::Device::createSampler)
       .transform([ this ](vk::raii::Sampler&& sampler) -> void
         { texture_sampler_ = std::move(sampler); });
@@ -972,7 +837,7 @@ private:
     vk::raii::DeviceMemory temp_memory { nullptr };
     vk::DeviceSize memory_requirements_size; // NOLINT
 
-    return UTILS_VK(device_.createBuffer(buffer_create_info),
+    return UTILS_VK(device_.device().createBuffer(buffer_create_info),
       ^^vk::raii::Device::createBuffer)
       .and_then(
         [ &, this, properties ](vk::raii::Buffer&& buffer)
@@ -991,7 +856,7 @@ private:
             .memoryTypeIndex = memory_type,
           };
 
-          return UTILS_VK(device_.allocateMemory(memory_allocate_info),
+          return UTILS_VK(device_.device().allocateMemory(memory_allocate_info),
             ^^vk::raii::Device::allocateMemory);
         })
       .and_then(
@@ -1192,7 +1057,8 @@ private:
       .pPoolSizes = pool_sizes.data(),
     };
 
-    return UTILS_VK(device_.createDescriptorPool(descriptor_pool_create_info),
+    return UTILS_VK(
+      device_.device().createDescriptorPool(descriptor_pool_create_info),
       ^^vk::raii::Device::createDescriptorPool)
       .transform([ this ](vk::raii::DescriptorPool&& pool) -> void
         { descriptor_pool_ = std::move(pool); });
@@ -1209,7 +1075,7 @@ private:
     };
 
     return UTILS_VK(
-      device_.allocateDescriptorSets(descriptor_set_allocate_info),
+      device_.device().allocateDescriptorSets(descriptor_set_allocate_info),
       ^^vk::raii::Device::allocateDescriptorSets)
       .transform(
         [ this ](std::vector<vk::raii::DescriptorSet>&& sets) -> void
@@ -1247,7 +1113,7 @@ private:
               },
             };
 
-            device_.updateDescriptorSets(descriptor_set_writes, {});
+            device_.device().updateDescriptorSets(descriptor_set_writes, {});
           }
         });
   }
@@ -1257,7 +1123,8 @@ private:
     std::uint32_t type_filter, vk::MemoryPropertyFlags properties)
     -> std::expected<std::uint32_t, vkpp::error_t>
   {
-    const auto available_properties = physical_device_.getMemoryProperties();
+    const auto available_properties =
+      device_.physical_device().getMemoryProperties();
     const auto memory_types =
       std::views::iota(0U, available_properties.memoryTypeCount);
     auto memory_type_it = std::ranges::find_if(memory_types,
@@ -1291,7 +1158,7 @@ private:
     };
 
     return UTILS_VK(
-      device_.allocateCommandBuffers(command_buffer_acclocate_info),
+      device_.device().allocateCommandBuffers(command_buffer_acclocate_info),
       ^^vk::raii::Device::allocateCommandBuffers)
       .transform(
         [ this ](std::vector<vk::raii::CommandBuffer>&& command_buffers) -> void
@@ -1495,7 +1362,8 @@ private:
     std::int32_t texture_height, std::uint32_t mip_levels)
     -> std::expected<void, vkpp::error_t>
   {
-    auto format_properties = physical_device_.getFormatProperties(format);
+    auto format_properties =
+      device_.physical_device().getFormatProperties(format);
     if (!(format_properties.optimalTilingFeatures &
           vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
     {
@@ -1635,7 +1503,7 @@ private:
       .commandBufferCount = 1,
     };
 
-    return UTILS_VK(device_.allocateCommandBuffers(allocate_info),
+    return UTILS_VK(device_.device().allocateCommandBuffers(allocate_info),
       ^^vk::raii::Device::allocateCommandBuffers)
       .and_then(
         [ &command_buffer ](
@@ -1660,7 +1528,7 @@ private:
         [ this, &command_buffer ]() -> std::expected<void, vkpp::error_t>
         {
           return UTILS_VK( //
-            graphics_queue_.submit(
+            device_.graphics_queue().submit(
               vk::SubmitInfo {
                 .commandBufferCount = 1U,
                 .pCommandBuffers = &*command_buffer,
@@ -1672,7 +1540,7 @@ private:
         [ this ]() -> std::expected<void, vkpp::error_t>
         {
           return UTILS_VK(
-            graphics_queue_.waitIdle(), ^^vk::raii::Queue::waitIdle);
+            device_.graphics_queue().waitIdle(), ^^vk::raii::Queue::waitIdle);
         });
   }
 
@@ -1680,7 +1548,7 @@ private:
   is_swapchain_extent_valid() -> bool
   {
     const auto surface_capabilities = UTILS_VK(
-      physical_device_.getSurfaceCapabilitiesKHR(*instance_context_.surface()),
+      device_.physical_device().getSurfaceCapabilitiesKHR(*instance_.surface()),
       ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR);
     if (!surface_capabilities) { return false; }
 
@@ -1702,7 +1570,7 @@ private:
 
     if (swap_chain_ == nullptr) { return {}; }
 
-    return UTILS_VK(device_.waitIdle(), ^^vk::raii::Device::waitIdle)
+    return UTILS_VK(device_.device().waitIdle(), ^^vk::raii::Device::waitIdle)
       .transform([ this ]() -> void { cleanup_swap_chain(); });
   }
 
@@ -1720,8 +1588,9 @@ private:
   auto
   draw_frame_active() -> std::expected<void, vkpp::error_t>
   {
-    if (auto result = device_.waitForFences(*in_flight_fences_[ frame_index_ ],
-          vk::True, std::numeric_limits<std::uint64_t>::max());
+    if (auto result =
+          device_.device().waitForFences(*in_flight_fences_[ frame_index_ ],
+            vk::True, std::numeric_limits<std::uint64_t>::max());
       result != vk::Result::eSuccess)
     {
       return std::unexpected {
@@ -1752,7 +1621,8 @@ private:
     }
 
     update_uniform_buffer(frame_index_);
-    return UTILS_VK(device_.resetFences(*in_flight_fences_[ frame_index_ ]),
+    return UTILS_VK(
+      device_.device().resetFences(*in_flight_fences_[ frame_index_ ]),
       ^^vk::raii::Device::resetFences)
       .and_then(
         [ this ]() -> std::expected<void, vkpp::error_t>
@@ -1777,7 +1647,7 @@ private:
             .signalSemaphoreCount = 1,
             .pSignalSemaphores = &*render_finished_semaphores_[ image_index ],
           };
-          return UTILS_VK(graphics_queue_.submit(
+          return UTILS_VK(device_.graphics_queue().submit(
                             submit_info, *in_flight_fences_[ frame_index_ ]),
             ^^vk::raii::Queue::submit);
         })
@@ -1793,7 +1663,7 @@ private:
             .pResults = nullptr,
           };
 
-          result = graphics_queue_.presentKHR(present_info);
+          result = device_.graphics_queue().presentKHR(present_info);
 
           if (result == vk::Result::eSuccess)
           {
@@ -1835,8 +1705,8 @@ private:
   {
     for (auto _ : std::views::iota(0UZ, swap_chain_images_.size()))
     {
-      if (auto error = UTILS_VK(
-            device_.createSemaphore({}), ^^vk::raii::Device::createSemaphore)
+      if (auto error = UTILS_VK(device_.device().createSemaphore({}),
+            ^^vk::raii::Device::createSemaphore)
             .transform([ & ](vk::raii::Semaphore&& semaphore) -> void
               { render_finished_semaphores_.push_back(std::move(semaphore)); });
         !error)
@@ -1848,8 +1718,8 @@ private:
     for (auto _ : std::views::iota(0U, max_frames_in_flight))
     {
       if (auto error = //
-        UTILS_VK(
-          device_.createSemaphore({}), ^^vk::raii::Device::createSemaphore)
+        UTILS_VK(device_.device().createSemaphore({}),
+          ^^vk::raii::Device::createSemaphore)
           .transform([ & ](vk::raii::Semaphore&& semaphore) -> void
             { present_complete_semaphores_.push_back(std::move(semaphore)); });
         !error)
@@ -1858,7 +1728,7 @@ private:
       }
 
       if (auto error = UTILS_VK( //
-            device_.createFence({
+            device_.device().createFence({
               .flags = vk::FenceCreateFlagBits::eSignaled,
             }),
             ^^vk::raii::Device::createFence)
@@ -1872,41 +1742,6 @@ private:
     return {};
   }
 
-  auto
-  get_max_usable_msaa_count() -> vk::SampleCountFlagBits
-  {
-    const auto properties = physical_device_.getProperties();
-    const auto counts = properties.limits.framebufferColorSampleCounts &
-      properties.limits.framebufferDepthSampleCounts;
-
-    if (counts & vk::SampleCountFlagBits::e64)
-    {
-      return vk::SampleCountFlagBits::e64;
-    }
-    if (counts & vk::SampleCountFlagBits::e32)
-    {
-      return vk::SampleCountFlagBits::e32;
-    }
-    if (counts & vk::SampleCountFlagBits::e16)
-    {
-      return vk::SampleCountFlagBits::e16;
-    }
-    if (counts & vk::SampleCountFlagBits::e8)
-    {
-      return vk::SampleCountFlagBits::e8;
-    }
-    if (counts & vk::SampleCountFlagBits::e4)
-    {
-      return vk::SampleCountFlagBits::e4;
-    }
-    if (counts & vk::SampleCountFlagBits::e2)
-    {
-      return vk::SampleCountFlagBits::e2;
-    }
-
-    return vk::SampleCountFlagBits::e1;
-  }
-
   // It is possible to create a new swap chain while drawing commands on an
   // image from the old swap chain are still in-flight. You need to pass the
   // previous swap chain to the oldSwapchain field in the
@@ -1917,7 +1752,7 @@ private:
   {
     if (!is_swapchain_extent_valid()) { return suspend_rendering(); }
 
-    return UTILS_VK(device_.waitIdle(), ^^vk::raii::Device::waitIdle)
+    return UTILS_VK(device_.device().waitIdle(), ^^vk::raii::Device::waitIdle)
       .and_then(
         [ this ]() -> std::expected<void, vkpp::error_t>
         {
@@ -1951,11 +1786,9 @@ private:
     sf::VideoMode { { window_width, window_height } },
     "Window_title",
   };
-  vkpp::instance_context instance_context_ {};
-  vk::raii::PhysicalDevice physical_device_ { nullptr };
-  vk::raii::Device device_ { nullptr };
-  vkpp::vma_policy allocator_ {};
-  vk::raii::Queue graphics_queue_ { nullptr };
+  vkpp::instance_context instance_ {};
+  vkpp::device_context device_ {};
+
   vk::raii::SwapchainKHR swap_chain_ { nullptr };
   std::vector<vk::Image> swap_chain_images_;
   vk::SurfaceFormatKHR swap_chain_surface_format_;
@@ -1968,7 +1801,6 @@ private:
   std::vector<vk::raii::Semaphore> present_complete_semaphores_;
   std::vector<vk::raii::Semaphore> render_finished_semaphores_;
   std::vector<vk::raii::Fence> in_flight_fences_;
-  std::uint32_t graphics_qf_index_ { ~0U };
   std::uint32_t frame_index_ {};
 
   vkpp::image_resource<vkpp::vma_policy> color_resource_ {};
@@ -1997,7 +1829,6 @@ private:
   vk::raii::DescriptorSetLayout descriptor_set_layout_ { nullptr };
   vk::raii::DescriptorPool descriptor_pool_ { nullptr };
   std::vector<vk::raii::DescriptorSet> descriptor_sets_;
-  vk::SampleCountFlagBits msaa_samples_ { vk::SampleCountFlagBits::e1 };
 
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {
