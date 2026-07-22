@@ -1545,7 +1545,7 @@ private:
           return std::unexpected {
             vkpp::vk_error {
               .function = "presentKHR",
-              .type = "vk::raii::Qeueue",
+              .type = "vk::raii::Queue",
               .result = result,
             },
           };
