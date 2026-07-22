@@ -184,21 +184,8 @@ make_image_resource(Alloc& allocator, const vk::raii::Device& device,
       [ & ](typename Alloc::image_handle&& handle)
         -> std::expected<image_resource<Alloc>, error_t>
       {
-        const vk::ImageViewCreateInfo view_info {
-          .image = handle.get(),
-          .viewType = spec.view_type,
-          .format = args.format,
-          .subresourceRange = {
-            .aspectMask = spec.aspect,
-            .baseMipLevel = 0U,
-            .levelCount = args.mip_levels,
-            .baseArrayLayer = 0U,
-            .layerCount = spec.array_layers,
-          },
-        };
-
-        return UTILS_VK(device.createImageView(view_info),
-          ^^vk::raii::Device::createImageView)
+        return make_image_view<Kind>(
+          device, handle.get(), args.format, args.mip_levels)
           .transform(
             [ & ](vk::raii::ImageView&& view)
             {
