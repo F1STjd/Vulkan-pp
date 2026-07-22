@@ -175,11 +175,13 @@ private:
       {
         .extensions = required_device_extensions,
         .min_api_version = vk::ApiVersion13,
-        .sampler_anisotropy = true,
-        .dynamic_rendering = true,
-        .synchronization2 = true,
-        .extended_dynamic_state = true,
-        .sample_rate_shading = true,
+        .features = {
+          .sampler_anisotropy = true,
+          .sample_rate_shading = true,
+          .dynamic_rendering = true,
+          .synchronization2 = true,
+          .extended_dynamic_state = true,
+        },
         .require_present = true,
       })
       .transform([ this ](vkpp::device_context&& device)
