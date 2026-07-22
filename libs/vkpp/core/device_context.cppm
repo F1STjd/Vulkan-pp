@@ -15,18 +15,20 @@ namespace vkpp
 {
 using namespace std::string_view_literals;
 
+export struct device_feature_requests
+{
+  bool sampler_anisotropy { false };
+  bool sample_rate_shading { false };
+  bool dynamic_rendering { false };
+  bool synchronization2 { false };
+  bool extended_dynamic_state { false };
+};
+
 export struct device_requirements
 {
   std::span<const char* const> extensions {};
   std::uint32_t min_api_version { vk::ApiVersion13 };
-
-  // TODOD: Konrad - maybe pass these flags/extensions as some struct
-  bool sampler_anisotropy { true };
-  bool dynamic_rendering { true };
-  bool synchronization2 { true };
-  bool extended_dynamic_state { true };
-  bool sample_rate_shading { true };
-
+  device_feature_requests features {};
   bool require_present { true };
 };
 
