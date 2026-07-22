@@ -96,6 +96,15 @@ struct image_traits<image_kind::depth>
   };
 };
 
+template<>
+struct image_traits<image_kind::resolve>
+{
+  static constexpr image_type_spec spec {
+    .usage = vk::ImageUsageFlagBits::eColorAttachment,
+    .aspect = vk::ImageAspectFlagBits::eColor,
+  };
+};
+
 export consteval auto
 validate(const image_type_spec& spec) -> bool
 {
@@ -119,6 +128,30 @@ validate(const image_type_spec& spec) -> bool
     return false;
   }
   return true;
+}
+
+export template<image_kind Kind>
+  requires(validate(image_traits<Kind>::spec))
+auto
+make_image_view(const vk::raii::Device& device, vk::Image image,
+  vk::Format format, std::uint32_t mip_levels = 1U)
+  -> std::expected<vk::raii::ImageView, error_t>
+{
+  constexpr image_type_spec spec = image_traits<Kind>::spec;
+  const vk::ImageViewCreateInfo view_info {
+    .image = image,
+    .viewType = spec.view_type,
+    .format = format,
+    .subresourceRange = {
+      .aspectMask = spec.aspect,
+      .baseMipLevel = 0U,
+      .levelCount = mip_levels,
+      .baseArrayLayer = 0U,
+      .layerCount = spec.array_layers,
+    },
+  };
+  return UTILS_VK(
+    device.createImageView(view_info), ^^vk::raii::Device::createImageView);
 }
 
 export template<image_kind Kind, device_allocator Alloc = vma_policy>
@@ -178,4 +211,5 @@ make_image_resource(Alloc& allocator, const vk::raii::Device& device,
             });
       });
 }
+
 }; // namespace vkpp
