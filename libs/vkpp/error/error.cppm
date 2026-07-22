@@ -17,13 +17,19 @@ export enum class app_error_kind : std::uint8_t {
   no_graphics_present_queue,
   no_supported_format,
   no_memory_type,
+  surface_not_presentable,
 };
 
 constexpr auto
 to_string(app_error_kind kind) -> std::string_view
 {
 #if __cpp_impl_reflection
-  return std::define_static_string(std::meta::identifier_of(^^kind));
+  template for (constexpr auto e :
+    define_static_array(std::meta::enumerators_of(^^app_error_kind)))
+  {
+    if (kind == [:e:]) { return std::meta::identifier_of(e); }
+  }
+  return "<unknown app_error_kind>";
 
 #else
   static constexpr std::array reflected_error_kind {
