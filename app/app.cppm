@@ -62,7 +62,8 @@ required_instance_extensions() -> std::vector<const char*>
 }
 
 constexpr std::array required_device_extensions {
-  vk::KHRSwapchainExtensionName
+  vk::KHRSwapchainExtensionName,
+  vk::EXTExtendedDynamicStateExtensionName,
 };
 
 constexpr std::uint32_t max_frames_in_flight { 2U };
