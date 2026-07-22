@@ -24,6 +24,9 @@ import vkpp.image;
 import vkpp.buffer;
 import vkpp.instance;
 import vkpp.device;
+import vkpp.swapchain;
+import vkpp.command;
+import vkpp.frame;
 
 namespace f1st
 {
