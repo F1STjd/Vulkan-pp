@@ -91,12 +91,9 @@ private:
       .and_then(std::bind_front(&app::create_surface, this))
       .and_then(std::bind_front(&app::create_device_context, this))
       .and_then(std::bind_front(&app::create_swap_chain, this))
-      .and_then(std::bind_front(&app::create_image_views, this))
+      .and_then(std::bind_front(&app::create_command_pool, this))
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
-      .and_then(std::bind_front(&app::create_command_pool, this))
-      .and_then(std::bind_front(&app::create_color_resources, this))
-      .and_then(std::bind_front(&app::create_depth_resources, this))
       .and_then(std::bind_front(&app::create_texture_image, this))
       .and_then(std::bind_front(&app::create_texture_image_view, this))
       .and_then(std::bind_front(&app::create_texture_sampler, this))
@@ -189,128 +186,41 @@ private:
   }
 
   auto
-  choose_swap_surface_format(std::span<const vk::SurfaceFormatKHR> formats)
-    -> vk::SurfaceFormatKHR PRE(formats.size() > 0)
+  create_swap_chain() -> std::expected<void, vkpp::error_t>
   {
-    const auto format_it = std::ranges::find_if(formats,
-      [](const auto& format) -> bool
-      {
-        return format.format == vk::Format::eB8G8R8A8Srgb &&
-          format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
-      });
-    return format_it != formats.end() ? *format_it : formats[ 0 ];
-  }
-
-  [[gnu::pure]]
-  auto
-  choose_swap_present_mode(std::span<const vk::PresentModeKHR> present_modes)
-    -> vk::PresentModeKHR
-  {
-    // We look for mailbox present mode (tripple buffering), but there are
-    // available some new (maybe better) modes, that were not presented in the
-    // tutorial => The revision/study of them needs to be done
-    return std::ranges::any_of(present_modes,
-             [](vk::PresentModeKHR present_mode) -> bool
-             { return present_mode == vk::PresentModeKHR::eMailbox; })
-      ? vk::PresentModeKHR::eMailbox
-      : vk::PresentModeKHR::eFifo;
+    return vkpp::swapchain::create(device_, instance_.surface(),
+      framebuffer_extent_request(),
+      [ this ](const vk::SurfaceCapabilitiesKHR& capabilities,
+        vk::Extent2D framebuffer)
+      { return choose_swap_extent(capabilities, framebuffer); })
+      .transform([ this ](vkpp::swapchain&& swap_chain)
+        { swap_chain_ = std::move(swap_chain); });
   }
 
   auto
-  choose_swap_extent(const vk::SurfaceCapabilitiesKHR& capabilities)
-    -> vk::Extent2D
+  framebuffer_extent_request() const -> vkpp::extent_request
+  {
+    const auto [ width, height ] = window_.getSize();
+    return {
+      .framebuffer_size = { width, height },
+    };
+  }
+
+  auto
+  choose_swap_extent(const vk::SurfaceCapabilitiesKHR& capabilities,
+    vk::Extent2D framebuffer) -> vk::Extent2D
   {
     if (capabilities.currentExtent.width !=
       std::numeric_limits<std::uint32_t>::max())
     {
       return capabilities.currentExtent;
     }
-    auto [ width, height ] = window_.getSize();
-
     return {
-      .width = std::clamp(width, capabilities.minImageExtent.width,
+      .width = std::clamp(framebuffer.width, capabilities.minImageExtent.width,
         capabilities.maxImageExtent.width),
-      .height = std::clamp(height, capabilities.minImageExtent.height,
-        capabilities.maxImageExtent.height),
+      .height = std::clamp(framebuffer.height,
+        capabilities.minImageExtent.height, capabilities.maxImageExtent.height),
     };
-  }
-
-  auto
-  create_swap_chain() -> std::expected<void, vkpp::error_t>
-  {
-    std::uint32_t min_image_count;                     // NOLINT
-    vk::SurfaceTransformFlagBitsKHR current_transform; // NOLINT
-    return UTILS_VK(
-      device_.physical_device().getSurfaceCapabilitiesKHR(*instance_.surface()),
-      ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR)
-      .and_then(
-        [ &, this ](const auto& surface_capabilities)
-        {
-          swap_chain_extent_ = choose_swap_extent(surface_capabilities);
-          min_image_count = choose_swap_min_image_count(surface_capabilities);
-          current_transform = surface_capabilities.currentTransform;
-
-          return UTILS_VK(device_.physical_device().getSurfaceFormatsKHR(
-                            *instance_.surface()),
-            ^^vk::raii::PhysicalDevice::getSurfaceFormatsKHR);
-        })
-      .and_then(
-        [ &, this ](const auto& available_formats)
-        {
-          swap_chain_surface_format_ =
-            choose_swap_surface_format(available_formats);
-          return UTILS_VK(device_.physical_device().getSurfacePresentModesKHR(
-                            *instance_.surface()),
-            ^^vk::raii::PhysicalDevice::getSurfacePresentModesKHR);
-        })
-      .and_then(
-        [ & ](const auto& present_modes)
-        {
-          const auto present_mode = choose_swap_present_mode(present_modes);
-
-          vk::SwapchainCreateInfoKHR swap_chain_create_info {
-            .surface = *instance_.surface(),
-            .minImageCount = min_image_count,
-            .imageFormat = swap_chain_surface_format_.format,
-            .imageColorSpace = swap_chain_surface_format_.colorSpace,
-            .imageExtent = swap_chain_extent_,
-            .imageArrayLayers = 1U,
-            .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
-            .imageSharingMode = vk::SharingMode::eExclusive,
-            .preTransform = current_transform,
-            .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-            .presentMode = present_mode,
-            .clipped = vk::True,
-            .oldSwapchain = nullptr,
-          };
-
-          return UTILS_VK(
-            device_.device().createSwapchainKHR(swap_chain_create_info),
-            ^^vk::raii::Device::createSwapchainKHR);
-        })
-      .and_then(
-        [ this ](vk::raii::SwapchainKHR&& swap_chain)
-        {
-          swap_chain_ = std::move(swap_chain);
-          return UTILS_VK(
-            swap_chain_.getImages(), ^^vk::raii::SwapchainKHR::getImages);
-        })
-      .transform([ this ](std::vector<vk::Image>&& images) -> void
-        { swap_chain_images_ = std::move(images); });
-  }
-
-  [[gnu::pure]]
-  auto
-  choose_swap_min_image_count(
-    const vk::SurfaceCapabilitiesKHR& surface_capabilities) -> std::uint32_t
-  {
-    auto min_image_count = std::max(3U, surface_capabilities.minImageCount);
-    if ((surface_capabilities.maxImageCount > 0U) &&
-      (surface_capabilities.maxImageCount < min_image_count))
-    {
-      min_image_count = surface_capabilities.maxImageCount;
-    }
-    return min_image_count;
   }
 
   auto
@@ -333,25 +243,6 @@ private:
 
     return UTILS_VK(device_.device().createImageView(image_view_info),
       ^^vk::raii::Device::createImageView);
-  }
-
-  auto
-  create_image_views() -> std::expected<void, vkpp::error_t>
-  /* PRE(swap_chain_image_views_.empty()) */
-  {
-    swap_chain_image_views_.clear();
-    swap_chain_image_views_.reserve(swap_chain_images_.size());
-    for (const auto& image : swap_chain_images_)
-    {
-      auto image_view = create_image_view(image,
-        swap_chain_surface_format_.format, vk::ImageAspectFlagBits::eColor, 1U);
-      if (!image_view)
-      {
-        return std::unexpected { std::move(image_view).error() };
-      }
-      swap_chain_image_views_.push_back(std::move(*image_view));
-    }
-    return {};
   }
 
   auto
@@ -506,6 +397,7 @@ private:
             .pDynamicStates = dynamic_states.data(),
           };
 
+          const std::array color_attachment_formats { swap_chain_.format() };
           vk::StructureChain pipeline_create_info_chain {
             vk::GraphicsPipelineCreateInfo {
               .stageCount = 2U,
@@ -522,9 +414,10 @@ private:
               .renderPass = nullptr,
             },
             vk::PipelineRenderingCreateInfo {
-              .colorAttachmentCount = 1,
-              .pColorAttachmentFormats = &swap_chain_surface_format_.format,
-              .depthAttachmentFormat = depth_format_,
+              .colorAttachmentCount =
+                static_cast<std::uint32_t>(color_attachment_formats.size()),
+              .pColorAttachmentFormats = color_attachment_formats.data(),
+              .depthAttachmentFormat = swap_chain_.depth().format(),
             },
           };
           return UTILS_VK(
@@ -657,54 +550,6 @@ private:
         .detail = "Failed to find supported format"sv,
       },
     };
-  }
-
-  auto
-  create_color_resources() -> std::expected<void, vkpp::error_t>
-  {
-    const vkpp::image_runtime_args args {
-      .extent = swap_chain_extent_,
-      .format = swap_chain_surface_format_.format,
-      .samples = device_.msaa_samples(),
-    };
-
-    return vkpp::make_image_resource<vkpp::image_kind::color>(
-      device_.allocator(), device_.device(), args)
-      .transform(
-        [ this ](auto&& resource) { color_resource_ = std::move(resource); });
-  }
-
-  auto
-  find_depth_format() -> std::expected<vk::Format, vkpp::error_t>
-  {
-    static constexpr std::array candidates {
-      vk::Format::eD32Sfloat,
-      vk::Format::eD32SfloatS8Uint,
-      vk::Format::eD24UnormS8Uint,
-    };
-
-    return find_supported_format(candidates, vk::ImageTiling::eOptimal,
-      vk::FormatFeatureFlagBits::eDepthStencilAttachment);
-  }
-
-  auto
-  create_depth_resources() -> std::expected<void, vkpp::error_t>
-  {
-    return find_depth_format()
-      .and_then(
-        [ this ](vk::Format format)
-        {
-          const vkpp::image_runtime_args args {
-            .extent = swap_chain_extent_,
-            .format = format,
-            .samples = device_.msaa_samples(),
-          };
-
-          return vkpp::make_image_resource<vkpp::image_kind::depth>(
-            device_.allocator(), device_.device(), args);
-        })
-      .transform([ this ](vkpp::image_resource<>&& resource) -> void
-        { depth_resource_ = std::move(resource); });
   }
 
   auto
@@ -1025,8 +870,8 @@ private:
     static constexpr auto up { glm::vec3 { 0.0F, 0.0F, 1.0F } };
     static constexpr auto fov_vertical { glm::radians(45.0F) };
     static const auto aspect_ratio { //
-      static_cast<float>(swap_chain_extent_.width) /
-      static_cast<float>(swap_chain_extent_.height)
+      static_cast<float>(swap_chain_.extent().width) /
+      static_cast<float>(swap_chain_.extent().height)
     };
     static constexpr auto near_plane { 0.1F };
     static constexpr auto far_plane { 10.0F };
@@ -1180,7 +1025,7 @@ private:
       .transform(
         [ this, image_index, &command_buffer ]() -> void
         {
-          transition_image_layout(swap_chain_images_[ image_index ],
+          transition_image_layout(swap_chain_.images()[ image_index ],
             vk::ImageLayout::eUndefined,
             vk::ImageLayout::eColorAttachmentOptimal, {},
             vk::AccessFlagBits2::eColorAttachmentWrite,
@@ -1188,7 +1033,7 @@ private:
             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             vk::ImageAspectFlagBits::eColor);
 
-          transition_image_layout(color_resource_.image(),
+          transition_image_layout(swap_chain_.color().image(),
             vk::ImageLayout::eUndefined,
             vk::ImageLayout::eColorAttachmentOptimal, {},
             vk::AccessFlagBits2::eColorAttachmentWrite,
@@ -1196,7 +1041,7 @@ private:
             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             vk::ImageAspectFlagBits::eColor);
 
-          transition_image_layout(depth_resource_.image(),
+          transition_image_layout(swap_chain_.depth().image(),
             vk::ImageLayout::eUndefined,
             vk::ImageLayout::eDepthAttachmentOptimal,
             vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -1214,10 +1059,10 @@ private:
             1.0F,
           } };
           vk::RenderingAttachmentInfo color_attachment_info {
-            .imageView = *color_resource_.view(),
+            .imageView = *swap_chain_.color().view(),
             .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
             .resolveMode = vk::ResolveModeFlagBits::eAverage,
-            .resolveImageView = swap_chain_image_views_[ image_index ],
+            .resolveImageView = swap_chain_.image_view(image_index),
             .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
             .loadOp = vk::AttachmentLoadOp::eClear,
             .storeOp = vk::AttachmentStoreOp::eStore,
@@ -1229,7 +1074,7 @@ private:
             .stencil = 0,
           } };
           vk::RenderingAttachmentInfo depth_attachment_info {
-            .imageView = *depth_resource_.view(),
+            .imageView = *swap_chain_.depth().view(),
             .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
             .loadOp = vk::AttachmentLoadOp::eClear,
             .storeOp = vk::AttachmentStoreOp::eDontCare,
@@ -1240,7 +1085,7 @@ private:
             .renderArea =
               vk::Rect2D {
                 .offset = { .x = 0, .y = 0 },
-                .extent = swap_chain_extent_,
+                .extent = swap_chain_.extent(),
               },
             .layerCount = 1U,
             .colorAttachmentCount = 1U,
@@ -1254,15 +1099,15 @@ private:
             vk::Viewport {
               .x = 0.0F,
               .y = 0.0F,
-              .width = static_cast<float>(swap_chain_extent_.width),
-              .height = static_cast<float>(swap_chain_extent_.height),
+              .width = static_cast<float>(swap_chain_.extent().width),
+              .height = static_cast<float>(swap_chain_.extent().height),
               .minDepth = 0.0F,
               .maxDepth = 1.0F,
             });
           command_buffer.setScissor(0U,
             vk::Rect2D {
               .offset = vk::Offset2D { .x = 0, .y = 0 },
-              .extent = swap_chain_extent_,
+              .extent = swap_chain_.extent(),
             });
           command_buffer.bindVertexBuffers(0U, *vertex_buffer_, { 0UZ });
           command_buffer.bindIndexBuffer(*index_buffer_, 0UZ,
@@ -1273,7 +1118,7 @@ private:
             static_cast<std::uint32_t>(indices_.size()), 1U, 0U, 0U, 0U);
           command_buffer.endRendering();
 
-          transition_image_layout(swap_chain_images_[ image_index ],
+          transition_image_layout(swap_chain_.images()[ image_index ],
             vk::ImageLayout::eColorAttachmentOptimal,
             vk::ImageLayout::ePresentSrcKHR,
             vk::AccessFlagBits2::eColorAttachmentWrite, {},
@@ -1550,23 +1395,11 @@ private:
         });
   }
 
-  [[nodiscard]] auto
-  is_swapchain_extent_valid() -> bool
-  {
-    const auto surface_capabilities = UTILS_VK(
-      device_.physical_device().getSurfaceCapabilitiesKHR(*instance_.surface()),
-      ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR);
-    if (!surface_capabilities) { return false; }
-
-    const auto extent = choose_swap_extent(*surface_capabilities);
-    return extent.width > 0U && extent.height > 0U;
-  }
-
   auto
   suspend_rendering() -> std::expected<void, vkpp::error_t>
   {
     if (frame_rendering_state_ == frame_rendering_state::suspended &&
-      swap_chain_ == nullptr)
+      swap_chain_.empty())
     {
       return {};
     }
@@ -1574,17 +1407,49 @@ private:
     frame_rendering_state_ = frame_rendering_state::suspended;
     resized_ = false;
 
-    if (swap_chain_ == nullptr) { return {}; }
+    if (swap_chain_.empty()) { return {}; }
 
     return UTILS_VK(device_.device().waitIdle(), ^^vk::raii::Device::waitIdle)
-      .transform([ this ]() -> void { cleanup_swap_chain(); });
+      .transform([ this ] { swap_chain_.release(); });
+  }
+
+  auto
+  recreate_swap_chain() -> std::expected<void, vkpp::error_t>
+  {
+    return swap_chain_.recreate(device_, instance_.surface(),
+      framebuffer_extent_request(),
+      [ this ](const vk::SurfaceCapabilitiesKHR& capabilities,
+        vk::Extent2D framebuffer)
+      { return choose_swap_extent(capabilities, framebuffer); });
+  }
+
+  auto
+  query_presentability() -> std::expected<vkpp::presentability, vkpp::error_t>
+  {
+    return vkpp::swapchain::query_presentability(device_, instance_.surface(),
+      framebuffer_extent_request(),
+      [ this ](const vk::SurfaceCapabilitiesKHR& capabilities,
+        vk::Extent2D framebuffer)
+      { return choose_swap_extent(capabilities, framebuffer); });
+  }
+
+  auto
+  recreate_or_suspend() -> std::expected<void, vkpp::error_t>
+  {
+    return query_presentability().and_then(
+      [ this ](vkpp::presentability presentability)
+        -> std::expected<void, vkpp::error_t>
+      {
+        if (!presentability.presentable) { return suspend_rendering(); }
+        return recreate_swap_chain();
+      });
   }
 
   auto
   draw_frame_resume() -> std::expected<void, vkpp::error_t>
   {
     return recreate_swap_chain().and_then(
-      [ this ]() -> std::expected<void, vkpp::error_t>
+      [ this ] -> std::expected<void, vkpp::error_t>
       {
         frame_rendering_state_ = frame_rendering_state::active;
         return draw_frame_active();
@@ -1607,13 +1472,12 @@ private:
         },
       };
     }
-    auto [ result, image_index ] =
-      swap_chain_.acquireNextImage(std::numeric_limits<std::uint64_t>::max(),
-        *present_complete_semaphores_[ frame_index_ ], nullptr);
+    auto [ result, image_index ] = swap_chain_.swap_chain().acquireNextImage(
+      std::numeric_limits<std::uint64_t>::max(),
+      *present_complete_semaphores_[ frame_index_ ], nullptr);
     if (result == vk::Result::eErrorOutOfDateKHR)
     {
-      return is_swapchain_extent_valid() ? recreate_swap_chain()
-                                         : suspend_rendering();
+      return recreate_or_suspend();
     }
     if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
     {
@@ -1631,15 +1495,15 @@ private:
       device_.device().resetFences(*in_flight_fences_[ frame_index_ ]),
       ^^vk::raii::Device::resetFences)
       .and_then(
-        [ this ]() -> std::expected<void, vkpp::error_t>
+        [ this ] -> std::expected<void, vkpp::error_t>
         {
           return UTILS_VK(command_buffers_[ frame_index_ ].reset(),
             ^^vk::raii::CommandBuffer::reset);
         })
-      .and_then([ this, &image_index ]() -> std::expected<void, vkpp::error_t>
+      .and_then([ this, &image_index ] -> std::expected<void, vkpp::error_t>
         { return record_command_buffer(image_index); })
       .and_then(
-        [ this, image_index ]() -> std::expected<void, vkpp::error_t>
+        [ this, image_index ] -> std::expected<void, vkpp::error_t>
         {
           vk::PipelineStageFlags wait_destination_stage_mask {
             vk::PipelineStageFlagBits::eColorAttachmentOutput
@@ -1651,20 +1515,20 @@ private:
             .commandBufferCount = 1,
             .pCommandBuffers = &*command_buffers_[ frame_index_ ],
             .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &*render_finished_semaphores_[ image_index ],
+            .pSignalSemaphores = &*swap_chain_.render_finished(image_index),
           };
           return UTILS_VK(device_.graphics_queue().submit(
                             submit_info, *in_flight_fences_[ frame_index_ ]),
             ^^vk::raii::Queue::submit);
         })
       .and_then(
-        [ this, &image_index, &result ]() -> std::expected<void, vkpp::error_t>
+        [ this, &image_index, &result ] -> std::expected<void, vkpp::error_t>
         {
           const vk::PresentInfoKHR present_info {
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &*render_finished_semaphores_[ image_index ],
+            .pWaitSemaphores = &*swap_chain_.render_finished(image_index),
             .swapchainCount = 1,
-            .pSwapchains = &*swap_chain_,
+            .pSwapchains = &*swap_chain_.swap_chain(),
             .pImageIndices = &image_index,
             .pResults = nullptr,
           };
@@ -1680,8 +1544,7 @@ private:
             result == vk::Result::eErrorOutOfDateKHR || resized_)
           {
             resized_ = false;
-            return is_swapchain_extent_valid() ? recreate_swap_chain()
-                                               : suspend_rendering();
+            return recreate_or_suspend();
           }
           return std::unexpected {
             vkpp::vk_error {
@@ -1696,31 +1559,22 @@ private:
   auto
   draw_frame() -> std::expected<void, vkpp::error_t>
   {
-    if (!is_swapchain_extent_valid()) { return suspend_rendering(); }
-
-    if (frame_rendering_state_ == frame_rendering_state::suspended)
-    {
-      return draw_frame_resume();
-    }
-
-    return draw_frame_active();
+    return query_presentability().and_then(
+      [ this ](vkpp::presentability presentability)
+        -> std::expected<void, vkpp::error_t>
+      {
+        if (!presentability.presentable) { return suspend_rendering(); }
+        if (frame_rendering_state_ == frame_rendering_state::suspended)
+        {
+          return draw_frame_resume();
+        }
+        return draw_frame_active();
+      });
   }
 
   auto
   create_sync_objects() -> std::expected<void, vkpp::error_t>
   {
-    for (auto _ : std::views::iota(0UZ, swap_chain_images_.size()))
-    {
-      if (auto error = UTILS_VK(device_.device().createSemaphore({}),
-            ^^vk::raii::Device::createSemaphore)
-            .transform([ & ](vk::raii::Semaphore&& semaphore) -> void
-              { render_finished_semaphores_.push_back(std::move(semaphore)); });
-        !error)
-      {
-        return error;
-      }
-    }
-
     for (auto _ : std::views::iota(0U, max_frames_in_flight))
     {
       if (auto error = //
@@ -1748,38 +1602,6 @@ private:
     return {};
   }
 
-  // It is possible to create a new swap chain while drawing commands on an
-  // image from the old swap chain are still in-flight. You need to pass the
-  // previous swap chain to the oldSwapchain field in the
-  // vk::SwapchainCreateInfoKHR struct and destroy the old swap chain as soon as
-  // you’ve finished using it.
-  auto
-  recreate_swap_chain() -> std::expected<void, vkpp::error_t>
-  {
-    if (!is_swapchain_extent_valid()) { return suspend_rendering(); }
-
-    return UTILS_VK(device_.device().waitIdle(), ^^vk::raii::Device::waitIdle)
-      .and_then(
-        [ this ]() -> std::expected<void, vkpp::error_t>
-        {
-          cleanup_swap_chain();
-          return create_swap_chain();
-        })
-      .and_then([ this ]() -> std::expected<void, vkpp::error_t>
-        { return create_image_views(); })
-      .and_then([ this ]() -> std::expected<void, vkpp::error_t>
-        { return create_color_resources(); })
-      .and_then([ this ]() -> std::expected<void, vkpp::error_t>
-        { return create_depth_resources(); });
-  }
-
-  void
-  cleanup_swap_chain()
-  {
-    swap_chain_image_views_.clear();
-    swap_chain_ = nullptr;
-  }
-
 private:
   enum class frame_rendering_state : std::uint8_t
   {
@@ -1794,25 +1616,15 @@ private:
   };
   vkpp::instance_context instance_ {};
   vkpp::device_context device_ {};
+  vkpp::swapchain swap_chain_ {};
 
-  vk::raii::SwapchainKHR swap_chain_ { nullptr };
-  std::vector<vk::Image> swap_chain_images_;
-  vk::SurfaceFormatKHR swap_chain_surface_format_;
-  vk::Extent2D swap_chain_extent_;
-  std::vector<vk::raii::ImageView> swap_chain_image_views_;
   vk::raii::PipelineLayout pipeline_layout_ { nullptr };
   vk::raii::Pipeline graphics_pipeline_ { nullptr };
   vk::raii::CommandPool command_pool_ { nullptr };
   std::vector<vk::raii::CommandBuffer> command_buffers_;
   std::vector<vk::raii::Semaphore> present_complete_semaphores_;
-  std::vector<vk::raii::Semaphore> render_finished_semaphores_;
   std::vector<vk::raii::Fence> in_flight_fences_;
   std::uint32_t frame_index_ {};
-
-  vkpp::image_resource<vkpp::vma_policy> color_resource_ {};
-
-  vkpp::image_resource<vkpp::vma_policy> depth_resource_ {};
-  vk::Format depth_format_;
 
   std::uint32_t mip_levels_ {};
 
