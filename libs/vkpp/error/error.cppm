@@ -43,6 +43,7 @@ to_string(app_error_kind kind) -> std::string_view
     "no_graphics_present_queue",
     "no_supported_format",
     "no_memory_type",
+    "surface_not_presentable",
   };
 
   return reflected_error_kind[ std::to_underlying(kind) ];
