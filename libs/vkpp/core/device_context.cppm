@@ -100,54 +100,125 @@ public:
           return UTILS_VK(
             output.physical_device_.createDevice(device_create_info),
             ^^vk::raii::PhysicalDevice::createDevice)
-            .and_then(
-              [ & ](vk::raii::Device&& device)
+            .transform(
+              [ & ](vk::raii::Device&& device) -> void
               {
                 output.device_ = std::move(device);
                 output.graphics_queue_ =
                   output.device_.getQueue(output.graphics_qf_index_, 0);
                 output.msaa_samples_ =
                   get_max_usable_msaa_count(output.physical_device_);
+              })
+            .and_then(
+              [ & ]()
+              {
                 return vma_policy::create(*instance.instance(),
                   output.physical_device_, output.device_,
-                  requirements.min_api_version);
+                  requirements.min_api_version)
+                  .transform([ & ](vma_policy&& policy) -> void
+                    { output.allocator_ = std::move(policy); });
               })
-            .transform(
-              [ & ](vma_policy&& policy) -> device_context
-              {
-                output.allocator_ = std::move(policy);
-                return std::move(output);
-              });
+            .transform([ & ]() -> device_context { return std::move(output); });
         });
   }
 
   [[nodiscard]] auto
-  physical_device() const -> const vk::raii::PhysicalDevice&
-  { return physical_device_; }
+  physical_device(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.physical_device_); }
 
   [[nodiscard]] auto
-  device() const -> const vk::raii::Device&
-  { return device_; }
+  device(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.device_); }
 
   [[nodiscard]] auto
-  graphics_queue() const -> const vk::raii::Queue&
-  { return graphics_queue_; }
+  graphics_queue(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.graphics_queue_); }
 
-  // TODO: Konrad - all getters should be rewritten like the one below (use:
-  // deducing this)
   [[nodiscard]] auto
   allocator(this auto&& self) -> decltype(auto)
   { return std::forward_like<decltype(self)>(self.allocator_); }
 
   [[nodiscard]] auto
-  graphics_qf_index() const -> const std::uint32_t
-  { return graphics_qf_index_; }
+  graphics_qf_index(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.graphics_qf_index_); }
 
   [[nodiscard]] auto
-  msaa_samples() const -> const vk::SampleCountFlagBits
-  { return msaa_samples_; }
+  msaa_samples(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.msaa_samples_); }
 
 private:
+  using device_feature_chain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
+    vk::PhysicalDeviceVulkan13Features,
+    vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>;
+
+  [[nodiscard]] static constexpr auto
+  make_enable_chain(const device_feature_requests& requests)
+    -> device_feature_chain
+  {
+    device_feature_chain chain {};
+
+    auto& core = chain.get<vk::PhysicalDeviceFeatures2>().features;
+    core.samplerAnisotropy = vk::Bool32 { requests.sampler_anisotropy };
+    core.sampleRateShading = vk::Bool32 { requests.sample_rate_shading };
+
+    auto& v13 = chain.get<vk::PhysicalDeviceVulkan13Features>();
+    v13.dynamicRendering = vk::Bool32 { requests.dynamic_rendering };
+    v13.synchronization2 = vk::Bool32 { requests.synchronization2 };
+
+    auto& eds = chain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+    eds.extendedDynamicState = vk::Bool32 { requests.extended_dynamic_state };
+
+    return chain;
+  }
+
+  [[nodiscard]] static auto
+  supports_requested_features(const vk::raii::PhysicalDevice& physical_device,
+    const device_feature_requests& requests) -> bool
+  {
+    const auto available =
+      physical_device.getFeatures2<vk::PhysicalDeviceFeatures2,
+        vk::PhysicalDeviceVulkan13Features,
+        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+
+    const auto& core = available.get<vk::PhysicalDeviceFeatures2>().features;
+    const auto& v13 = available.get<vk::PhysicalDeviceVulkan13Features>();
+    const auto& eds =
+      available.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+
+    if (requests.sampler_anisotropy && core.samplerAnisotropy != vk::True)
+    {
+      return false;
+    }
+    if (requests.sample_rate_shading && core.sampleRateShading != vk::True)
+    {
+      return false;
+    }
+    if (requests.dynamic_rendering && v13.dynamicRendering != vk::True)
+    {
+      return false;
+    }
+    if (requests.synchronization2 && v13.synchronization2 != vk::True)
+    {
+      return false;
+    }
+    if (requests.extended_dynamic_state && eds.extendedDynamicState != vk::True)
+    {
+      return false;
+    }
+
+    return true;
+  }
+
+  [[nodiscard]] static auto
+  features_extensions_consistent(const device_requirements& requirements)
+    -> bool
+  {
+    if (!requirements.features.extended_dynamic_state) { return true; }
+    return std::ranges::contains(requirements.extensions,
+      std::string_view { vk::EXTExtendedDynamicStateExtensionName },
+      [](const char* ext) { return std::string_view { ext }; });
+  }
+
   [[nodiscard]] static auto
   find_graphics_present_qf(const vk::raii::PhysicalDevice& physical_device,
     const vk::raii::SurfaceKHR& surface) -> std::optional<std::uint32_t>
