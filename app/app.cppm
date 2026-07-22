@@ -79,8 +79,9 @@ public:
     const auto result = init_vulkan().and_then(
       [ this ]() -> std::expected<void, vkpp::error_t> { return main_loop(); });
 
+    (void)device_.device().waitIdle();
     if (!result) { std::println(stderr, "{}", vkpp::message(result.error())); }
-    cleanup_swap_chain();
+    swap_chain_.release();
   }
 
 private:
@@ -119,6 +120,7 @@ private:
     while (window_.isOpen())
     {
       window_.handleEvents(on_close, on_resize);
+      if (!window_.isOpen()) { break; }
       if (auto result = draw_frame(); !result) { return result; }
     }
     return UTILS_VK(device_.device().waitIdle(), ^^vk::raii::Device::waitIdle);
