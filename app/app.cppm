@@ -290,15 +290,9 @@ private:
       ^^vk::raii::Device::createPipelineLayout)
       .and_then(
         [ this ](vk::raii::PipelineLayout&& layout)
+          -> std::expected<std::vector<char>, vkpp::error_t>
         {
           pipeline_layout_ = std::move(layout);
-          return find_depth_format();
-        })
-      .and_then(
-        [ this ](
-          vk::Format format) -> std::expected<std::vector<char>, vkpp::error_t>
-        {
-          depth_format_ = format;
           return vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
         })
       .and_then([ this ](std::span<const char> code)
