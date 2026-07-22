@@ -64,8 +64,12 @@ public:
 
           device_context output {};
           output.physical_device_ = *suitable_device_it;
-          output.graphics_qf_index_ = *find_graphics_present_qf(
-            output.physical_device_, instance.surface());
+          // Todo: Konrad - is_suitable() already computes qf index, maybe there
+          // is a way no to repeat this computation
+          output.graphics_qf_index_ = requirements.require_present
+            ? *find_graphics_present_qf(
+                output.physical_device_, instance.surface())
+            : *find_graphics_qf(output.physical_device_);
 
           static constexpr float graphics_queue_priority { 0.5F };
           vk::DeviceQueueCreateInfo device_queue_create_info {
@@ -73,21 +77,8 @@ public:
             .queueCount = 1,
             .pQueuePriorities = &graphics_queue_priority,
           };
-          const vk::StructureChain feature_chain {
-              vk::PhysicalDeviceFeatures2 {
-                .features = {
-                  .sampleRateShading = vk::Bool32{requirements.sample_rate_shading},
-                  .samplerAnisotropy = vk::Bool32{requirements.sampler_anisotropy},
-                },
-              },
-              vk::PhysicalDeviceVulkan13Features {
-                .synchronization2 = vk::Bool32{requirements.synchronization2},
-                .dynamicRendering = vk::Bool32{requirements.dynamic_rendering},
-              },
-              vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT {
-                .extendedDynamicState = vk::Bool32{requirements.extended_dynamic_state},
-              },
-            };
+          const vk::StructureChain feature_chain =
+            make_enable_chain(requirements.features);
           const vk::DeviceCreateInfo device_create_info {
             .pNext = &feature_chain.get<vk::PhysicalDeviceFeatures2>(),
             .queueCreateInfoCount = 1,
@@ -228,12 +219,46 @@ private:
     {
       const bool graphics = static_cast<bool>(
         properties[ property_index ].queueFlags & vk::QueueFlagBits::eGraphics);
-      const auto present =
-        physical_device.getSurfaceSupportKHR(property_index, surface);
+      const bool present = static_cast<bool>(
+        physical_device.getSurfaceSupportKHR(property_index, surface));
       if (graphics && present) { return property_index; }
     }
-
     return std::nullopt;
+  }
+
+  [[nodiscard]] static auto
+  find_graphics_qf(const vk::raii::PhysicalDevice& physical_device)
+    -> std::optional<std::uint32_t>
+  {
+    const auto properties = physical_device.getQueueFamilyProperties();
+    for (std::size_t property_index : std::views::iota(0UZ, properties.size()))
+    {
+      if (properties[ property_index ].queueFlags &
+        vk::QueueFlagBits::eGraphics)
+      {
+        return property_index;
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] static auto
+  device_extensions_supported(const vk::raii::PhysicalDevice& physical_device,
+    std::span<const char* const> required) -> bool
+  {
+    return physical_device.enumerateDeviceExtensionProperties()
+      .transform(
+        [ & ](std::span<const vk::ExtensionProperties> available)
+        {
+          return std::ranges::all_of(required,
+            [ & ](const char* name)
+            {
+              return std::ranges::any_of(available,
+                [ & ](const vk::ExtensionProperties& p)
+                { return std::strcmp(p.extensionName, name) == 0; });
+            });
+        })
+      .value_or(false);
   }
 
   [[nodiscard]] static auto
@@ -241,64 +266,27 @@ private:
     const vk::raii::SurfaceKHR& surface,
     const device_requirements& requirements) -> bool
   {
-
     if (physical_device.getProperties().apiVersion <
       requirements.min_api_version)
     {
       return false;
     }
-    if (requirements.require_present &&
-      !find_graphics_present_qf(physical_device, surface))
+    if (!features_extensions_consistent(requirements)) { return false; }
+    if (!device_extensions_supported(physical_device, requirements.extensions))
+    {
+      return false;
+    }
+    if (!supports_requested_features(physical_device, requirements.features))
     {
       return false;
     }
 
-    const auto queue_family_properties =
-      physical_device.getQueueFamilyProperties();
-    const bool supports_graphics = std::ranges::any_of(queue_family_properties,
-      [](const auto& qf_property)
-      {
-        return (static_cast<bool>(
-          qf_property.queueFlags & vk::QueueFlagBits::eGraphics));
-      });
+    if (requirements.require_present)
+    {
+      return find_graphics_present_qf(physical_device, surface).has_value();
+    }
 
-    const bool supports_required_device_extensions =
-      physical_device.enumerateDeviceExtensionProperties()
-        .transform(
-          [ & ](std::span<const vk::ExtensionProperties>
-              available_device_extensions)
-          {
-            return std::ranges::all_of(requirements.extensions,
-              [ &available_device_extensions ](
-                const auto& required_device_extension)
-              {
-                return std::ranges::any_of(available_device_extensions,
-                  [ required_device_extension ](
-                    const auto& available_device_extension)
-                  {
-                    return strcmp(available_device_extension.extensionName,
-                             required_device_extension) == 0;
-                  });
-              });
-          })
-        .value_or(false);
-
-    const auto features =
-      physical_device.getFeatures2<vk::PhysicalDeviceFeatures2,
-        vk::PhysicalDeviceVulkan13Features,
-        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-    const bool supports_required_features =
-      features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy ==
-        vk::Bool32 { requirements.sampler_anisotropy } &&
-      features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering ==
-        vk::Bool32 { requirements.dynamic_rendering } &&
-      features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 ==
-        vk::Bool32 { requirements.synchronization2 } &&
-      features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
-          .extendedDynamicState ==
-        vk::Bool32 { requirements.extended_dynamic_state };
-
-    return supports_required_device_extensions && supports_required_features;
+    return find_graphics_qf(physical_device).has_value();
   }
 
   [[nodiscard]] static auto
