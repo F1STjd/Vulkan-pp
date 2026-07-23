@@ -66,7 +66,7 @@ constexpr std::array required_device_extensions {
   vk::EXTExtendedDynamicStateExtensionName,
 };
 
-constexpr std::uint32_t max_frames_in_flight { 2U };
+constexpr std::size_t max_frames_in_flight { 2UZ };
 static_assert(max_frames_in_flight > 0,
   "variable % max_frames_in_flight is used later, so being 0 is UB");
 
