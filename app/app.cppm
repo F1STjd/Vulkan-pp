@@ -559,7 +559,29 @@ private:
 
     vk::raii::Buffer staging_buffer { nullptr };
     vk::raii::DeviceMemory staging_buffer_memory { nullptr };
-    vk::raii::CommandBuffer command_buffer { nullptr };
+
+    auto upload = [ & ]
+    {
+      vkpp::single_time_submit sts { command_pool_, device_.device(),
+        device_.graphics_queue() };
+      return sts.begin()
+        .and_then(
+          [ &, this ](vk::raii::CommandBuffer* command_buffer)
+            -> std::expected<void, vkpp::error_t>
+          {
+            transition_image_layout(*command_buffer, texture_image_,
+              vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+              mip_levels_);
+            copy_buffer_to_image(*command_buffer, staging_buffer,
+              texture_image_, static_cast<std::uint32_t>(texture_width),
+              static_cast<std::uint32_t>(texture_height));
+            return generate_mipmaps(*command_buffer, texture_image_,
+              vk::Format::eR8G8B8A8Srgb, texture_width, texture_height,
+              mip_levels_);
+          })
+        .and_then([ & ] -> std::expected<void, vkpp::error_t>
+          { return sts.end_and_submit(); });
+    };
 
     return vkpp::load_texture_file(
       vkpp::texture_path, texture_width, texture_height, mip_levels_)
@@ -581,8 +603,7 @@ private:
             ^^vk::raii::DeviceMemory::mapMemory);
         })
       .and_then(
-        [ &, this ](
-          void* data_staging) -> std::expected<image_memory_pair, vkpp::error_t>
+        [ &, this ](void* data_staging) -> std::expected<void, vkpp::error_t>
         {
           std::memcpy(data_staging, image_p, image_size);
           staging_buffer_memory.unmapMemory();
@@ -597,30 +618,15 @@ private:
                 vk::ImageUsageFlagBits::eTransferDst |
                 vk::ImageUsageFlagBits::eSampled,
             },
-            vk::MemoryPropertyFlagBits::eDeviceLocal);
+            vk::MemoryPropertyFlagBits::eDeviceLocal)
+            .transform(
+              [ this ](image_memory_pair&& pair) -> void
+              {
+                std::tie(texture_image_, texture_image_memory_) =
+                  std::move(pair);
+              });
         })
-      .and_then(
-        [ this, &command_buffer ](
-          image_memory_pair&& pair) -> std::expected<void, vkpp::error_t>
-        {
-          std::tie(texture_image_, texture_image_memory_) = std::move(pair);
-          return begin_single_time_command(command_buffer);
-        })
-      .and_then(
-        [ &, this ]() -> std::expected<void, vkpp::error_t>
-        {
-          transition_image_layout(command_buffer, texture_image_,
-            vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-            mip_levels_);
-          copy_buffer_to_image(command_buffer, staging_buffer, texture_image_,
-            static_cast<std::uint32_t>(texture_width),
-            static_cast<std::uint32_t>(texture_height));
-          return generate_mipmaps(command_buffer, texture_image_,
-            vk::Format::eR8G8B8A8Srgb, texture_width, texture_height,
-            mip_levels_);
-        })
-      .and_then([ this, &command_buffer ] -> std::expected<void, vkpp::error_t>
-        { return end_single_time_command(command_buffer); })
+      .and_then(upload)
       .or_else(
         [ & ](vkpp::error_t error) -> std::expected<void, vkpp::error_t>
         {
@@ -726,20 +732,24 @@ private:
   copy_buffer(vk::raii::Buffer& source, vk::raii::Buffer& destination,
     vk::DeviceSize size) -> std::expected<void, vkpp::error_t>
   {
-    vk::raii::CommandBuffer command_copy_buffer { nullptr };
+    vkpp::single_time_submit sts {
+      command_pool_,
+      device_.device(),
+      device_.graphics_queue(),
+    };
 
-    return begin_single_time_command(command_copy_buffer)
-      .and_then(
-        [ & ]() -> std::expected<void, vkpp::error_t>
-        {
-          command_copy_buffer.copyBuffer(*source, *destination,
-            vk::BufferCopy {
-              .srcOffset = 0,
-              .dstOffset = 0,
-              .size = size,
-            });
-          return end_single_time_command(command_copy_buffer);
-        });
+    return sts.begin().and_then(
+      [ &, this ](vk::raii::CommandBuffer* command_buffer)
+        -> std::expected<void, vkpp::error_t>
+      {
+        command_buffer->copyBuffer(*source, *destination,
+          vk::BufferCopy {
+            .srcOffset = 0UZ,
+            .dstOffset = 0UZ,
+            .size = size,
+          });
+        return sts.end_and_submit();
+      });
   }
 
   auto
@@ -999,7 +1009,7 @@ private:
   create_command_buffers() -> std::expected<void, vkpp::error_t>
   {
     vk::CommandBufferAllocateInfo command_buffer_acclocate_info {
-      .commandPool = command_pool_,
+      .commandPool = *command_pool_.handle(),
       .level = vk::CommandBufferLevel::ePrimary,
       .commandBufferCount = max_frames_in_flight,
     };
@@ -1341,57 +1351,6 @@ private:
   }
 
   auto
-  begin_single_time_command(vk::raii::CommandBuffer& command_buffer)
-    -> std::expected<void, vkpp::error_t>
-  {
-    vk::CommandBufferAllocateInfo allocate_info {
-      .commandPool = command_pool_,
-      .level = vk::CommandBufferLevel::ePrimary,
-      .commandBufferCount = 1,
-    };
-
-    return UTILS_VK(device_.device().allocateCommandBuffers(allocate_info),
-      ^^vk::raii::Device::allocateCommandBuffers)
-      .and_then(
-        [ &command_buffer ](
-          std::vector<vk::raii::CommandBuffer> command_buffers)
-          -> std::expected<void, vkpp::error_t>
-        {
-          command_buffer = std::move(command_buffers.front());
-          return UTILS_VK(
-            command_buffer.begin({
-              .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
-            }),
-            ^^vk::raii::CommandBuffer::begin);
-        });
-  }
-
-  auto
-  end_single_time_command(vk::raii::CommandBuffer& command_buffer)
-    -> std::expected<void, vkpp::error_t>
-  {
-    return UTILS_VK(command_buffer.end(), ^^vk::raii::CommandBuffer::end)
-      .and_then(
-        [ this, &command_buffer ]() -> std::expected<void, vkpp::error_t>
-        {
-          return UTILS_VK( //
-            device_.graphics_queue().submit(
-              vk::SubmitInfo {
-                .commandBufferCount = 1U,
-                .pCommandBuffers = &*command_buffer,
-              },
-              nullptr),
-            ^^vk::raii::Queue::submit);
-        })
-      .and_then(
-        [ this ]() -> std::expected<void, vkpp::error_t>
-        {
-          return UTILS_VK(
-            device_.graphics_queue().waitIdle(), ^^vk::raii::Queue::waitIdle);
-        });
-  }
-
-  auto
   suspend_rendering() -> std::expected<void, vkpp::error_t>
   {
     if (frame_rendering_state_ == frame_rendering_state::suspended &&
@@ -1616,7 +1575,8 @@ private:
 
   vk::raii::PipelineLayout pipeline_layout_ { nullptr };
   vk::raii::Pipeline graphics_pipeline_ { nullptr };
-  vk::raii::CommandPool command_pool_ { nullptr };
+
+  vkpp::command_pool command_pool_ {};
   std::vector<vk::raii::CommandBuffer> command_buffers_;
   std::vector<vk::raii::Semaphore> present_complete_semaphores_;
   std::vector<vk::raii::Fence> in_flight_fences_;
