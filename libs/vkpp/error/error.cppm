@@ -18,6 +18,7 @@ export enum class app_error_kind : std::uint8_t {
   no_supported_format,
   no_memory_type,
   surface_not_presentable,
+  mapping_failed,
 };
 
 constexpr auto
@@ -44,6 +45,7 @@ to_string(app_error_kind kind) -> std::string_view
     "no_supported_format",
     "no_memory_type",
     "surface_not_presentable",
+    "mapping_failed",
   };
 
   return reflected_error_kind[ std::to_underlying(kind) ];
