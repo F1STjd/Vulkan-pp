@@ -93,6 +93,7 @@ private:
       .and_then(std::bind_front(&app::create_device_context, this))
       .and_then(std::bind_front(&app::create_swap_chain, this))
       .and_then(std::bind_front(&app::create_command_pool, this))
+      .and_then(std::bind_front(&app::create_frames, this))
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
       .and_then(std::bind_front(&app::create_texture_image, this))
@@ -101,11 +102,8 @@ private:
       .and_then([ this ] { return vkpp::load_model_obj(vertices_, indices_); })
       .and_then(std::bind_front(&app::create_vertex_buffer, this))
       .and_then(std::bind_front(&app::create_index_buffer, this))
-      .and_then(std::bind_front(&app::create_uniform_buffers, this))
       .and_then(std::bind_front(&app::create_descriptor_pool, this))
-      .and_then(std::bind_front(&app::create_descriptor_sets, this))
-      .and_then(std::bind_front(&app::create_command_buffers, this))
-      .and_then(std::bind_front(&app::create_sync_objects, this));
+      .and_then(std::bind_front(&app::create_descriptor_sets, this));
   }
 
   auto
