@@ -442,16 +442,10 @@ private:
   auto
   create_command_pool() -> std::expected<void, vkpp::error_t>
   {
-    vk::CommandPoolCreateInfo command_pool_create_info {
-      .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-      .queueFamilyIndex = device_.graphics_qf_index(),
-    };
-
-    return UTILS_VK(
-      device_.device().createCommandPool(command_pool_create_info),
-      ^^vk::raii::Device::createCommandPool)
-      .transform([ this ](vk::raii::CommandPool&& command_pool) -> void
-        { command_pool_ = std::move(command_pool); });
+    return vkpp::command_pool::create(
+      device_.device(), device_.graphics_qf_index())
+      .transform([ this ](vkpp::command_pool&& pool)
+        { command_pool_ = std::move(pool); });
   }
 
   using image_memory_pair = std::pair<vk::raii::Image, vk::raii::DeviceMemory>;
@@ -831,41 +825,21 @@ private:
   }
 
   auto
-  create_uniform_buffers() -> std::expected<void, vkpp::error_t>
+  create_frames() -> std::expected<void, vkpp::error_t>
   {
-    uniform_buffers_.reserve(max_frames_in_flight);
-    uniform_buffers_memory_.reserve(max_frames_in_flight);
-    uniform_buffers_mapped_.reserve(max_frames_in_flight);
-    for (auto _ : std::views::iota(0U, max_frames_in_flight))
-    {
-      static constexpr vk::DeviceSize buffer_size =
-        sizeof(uniform_buffer_object);
-      vk::raii::Buffer buffer { nullptr };
-      vk::raii::DeviceMemory buffer_memory { nullptr };
-
-      const auto result =
-        create_buffer(buffer_size, vk::BufferUsageFlagBits::eUniformBuffer,
-          vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent)
-          .and_then(
-            [ & ](
-              buffer_memory_pair&& pair) -> std::expected<void*, vkpp::error_t>
-            {
-              uniform_buffers_.emplace_back(std::move(pair.first));
-              uniform_buffers_memory_.emplace_back(std::move(pair).second);
-              return UTILS_VK(
-                uniform_buffers_memory_.back().mapMemory(0ULL, buffer_size),
-                ^^vk::raii::DeviceMemory::mapMemory);
-            })
-          .transform([ this ](void* mapped_memory) -> void
-            { uniform_buffers_mapped_.emplace_back(mapped_memory); });
-      if (!result) { return result; }
-    }
-    return {};
+    return vkpp::create_frames<max_frames_in_flight>(
+      {
+        .device = &device_,
+        .pool = &command_pool_,
+        .ubo_size = sizeof(uniform_buffer_object),
+      })
+      .transform(
+        [ this ](std::array<vkpp::frame, max_frames_in_flight>&& frames) -> void
+        { frames_ = std::move(frames); });
   }
 
   auto
-  update_uniform_buffer(std::uint32_t current_image)
+  update_uniform_buffer(std::uint32_t current_frame)
   {
     static auto start_time = std::chrono::high_resolution_clock::now();
     auto current_time = std::chrono::high_resolution_clock::now();
@@ -890,8 +864,7 @@ private:
         fov_vertical, aspect_ratio, near_plane, far_plane),
     };
     ubo.projection[ 1 ][ 1 ] *= -1;
-
-    std::memcpy(uniform_buffers_mapped_[ current_image ], &ubo, sizeof(ubo));
+    frames_[ current_frame ].uniform_buffer.write(&ubo, sizeof(ubo));
   }
 
   auto
@@ -937,12 +910,13 @@ private:
       .transform(
         [ this ](std::vector<vk::raii::DescriptorSet>&& sets) -> void
         {
-          descriptor_sets_ = std::move(sets);
-
           for (auto frame_index : std::views::iota(0UZ, max_frames_in_flight))
           {
+            frames_[ frame_index ].descriptor_set =
+              std::move(sets[ frame_index ]);
+
             vk::DescriptorBufferInfo buffer_info {
-              .buffer = uniform_buffers_[ frame_index ],
+              .buffer = frames_[ frame_index ].uniform_buffer.buffer(),
               .offset = 0U,
               .range = sizeof(uniform_buffer_object),
             };
@@ -953,7 +927,7 @@ private:
             };
             std::array descriptor_set_writes {
               vk::WriteDescriptorSet {
-                .dstSet = descriptor_sets_[ frame_index ],
+                .dstSet = *frames_[ frame_index ].descriptor_set,
                 .dstBinding = 0U,
                 .dstArrayElement = 0U,
                 .descriptorCount = 1U,
@@ -961,7 +935,7 @@ private:
                 .pBufferInfo = &buffer_info,
               },
               vk::WriteDescriptorSet {
-                .dstSet = descriptor_sets_[ frame_index ],
+                .dstSet = *frames_[ frame_index ].descriptor_set,
                 .dstBinding = 1U,
                 .dstArrayElement = 0U,
                 .descriptorCount = 1U,
@@ -1006,27 +980,10 @@ private:
   }
 
   auto
-  create_command_buffers() -> std::expected<void, vkpp::error_t>
-  {
-    vk::CommandBufferAllocateInfo command_buffer_acclocate_info {
-      .commandPool = *command_pool_.handle(),
-      .level = vk::CommandBufferLevel::ePrimary,
-      .commandBufferCount = max_frames_in_flight,
-    };
-
-    return UTILS_VK(
-      device_.device().allocateCommandBuffers(command_buffer_acclocate_info),
-      ^^vk::raii::Device::allocateCommandBuffers)
-      .transform(
-        [ this ](std::vector<vk::raii::CommandBuffer>&& command_buffers) -> void
-        { command_buffers_ = std::move(command_buffers); });
-  }
-
-  auto
   record_command_buffer(std::uint32_t image_index)
     -> std::expected<void, vkpp::error_t>
   {
-    const auto& command_buffer = command_buffers_[ frame_index_ ];
+    const auto& command_buffer = frames_[ frame_index_ ].command_buffer;
     return UTILS_VK(command_buffer.begin({}), ^^vk::raii::CommandBuffer::begin)
       .transform(
         [ this, image_index, &command_buffer ]() -> void
@@ -1119,7 +1076,8 @@ private:
           command_buffer.bindIndexBuffer(*index_buffer_, 0UZ,
             vk::IndexTypeValue<decltype(indices_)::value_type>::value);
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-            pipeline_layout_, 0U, *descriptor_sets_[ frame_index_ ], nullptr);
+            pipeline_layout_, 0U, *frames_[ frame_index_ ].descriptor_set,
+            nullptr);
           command_buffer.drawIndexed(
             static_cast<std::uint32_t>(indices_.size()), 1U, 0U, 0U, 0U);
           command_buffer.endRendering();
@@ -1170,7 +1128,7 @@ private:
       .imageMemoryBarrierCount = 1U,
       .pImageMemoryBarriers = &memory_barrier,
     };
-    command_buffers_[ frame_index_ ].pipelineBarrier2(dependency_info);
+    frames_[ frame_index_ ].command_buffer.pipelineBarrier2(dependency_info);
   }
 
   void
@@ -1414,9 +1372,10 @@ private:
   auto
   draw_frame_active() -> std::expected<void, vkpp::error_t>
   {
-    if (auto result =
-          device_.device().waitForFences(*in_flight_fences_[ frame_index_ ],
-            vk::True, std::numeric_limits<std::uint64_t>::max());
+    auto& frame = frames_[ frame_index_ ];
+
+    if (auto result = device_.device().waitForFences(*frame.in_flight, vk::True,
+          std::numeric_limits<std::uint64_t>::max());
       result != vk::Result::eSuccess)
     {
       return std::unexpected {
@@ -1427,9 +1386,10 @@ private:
         },
       };
     }
+
     auto [ result, image_index ] = swap_chain_.swap_chain().acquireNextImage(
-      std::numeric_limits<std::uint64_t>::max(),
-      *present_complete_semaphores_[ frame_index_ ], nullptr);
+      std::numeric_limits<std::uint64_t>::max(), *frame.present_complete,
+      nullptr);
     if (result == vk::Result::eErrorOutOfDateKHR)
     {
       return recreate_or_suspend();
@@ -1446,44 +1406,53 @@ private:
     }
 
     update_uniform_buffer(frame_index_);
-    return UTILS_VK(
-      device_.device().resetFences(*in_flight_fences_[ frame_index_ ]),
+
+    return UTILS_VK(device_.device().resetFences(*frame.in_flight),
       ^^vk::raii::Device::resetFences)
       .and_then(
-        [ this ] -> std::expected<void, vkpp::error_t>
+        [ & ] -> std::expected<void, vkpp::error_t>
         {
-          return UTILS_VK(command_buffers_[ frame_index_ ].reset(),
-            ^^vk::raii::CommandBuffer::reset);
+          return UTILS_VK(
+            frame.command_buffer.reset(), ^^vk::raii::CommandBuffer::reset);
         })
-      .and_then([ this, &image_index ] -> std::expected<void, vkpp::error_t>
+      .and_then([ this, image_index ] -> std::expected<void, vkpp::error_t>
         { return record_command_buffer(image_index); })
       .and_then(
-        [ this, image_index ] -> std::expected<void, vkpp::error_t>
+        [ this, image_index, &frame ] -> std::expected<void, vkpp::error_t>
         {
           vk::PipelineStageFlags wait_destination_stage_mask {
             vk::PipelineStageFlagBits::eColorAttachmentOutput
           };
+          const vk::Semaphore wait_semaphore = *frame.present_complete;
+          const vk::CommandBuffer command_buffer = *frame.command_buffer;
+          const vk::Semaphore signal_semaphore =
+            *swap_chain_.render_finished(image_index);
+
           const vk::SubmitInfo submit_info {
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &*present_complete_semaphores_[ frame_index_ ],
+            .pWaitSemaphores = &wait_semaphore,
             .pWaitDstStageMask = &wait_destination_stage_mask,
             .commandBufferCount = 1,
-            .pCommandBuffers = &*command_buffers_[ frame_index_ ],
+            .pCommandBuffers = &command_buffer,
             .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &*swap_chain_.render_finished(image_index),
+            .pSignalSemaphores = &signal_semaphore,
           };
-          return UTILS_VK(device_.graphics_queue().submit(
-                            submit_info, *in_flight_fences_[ frame_index_ ]),
+          return UTILS_VK(
+            device_.graphics_queue().submit(submit_info, *frame.in_flight),
             ^^vk::raii::Queue::submit);
         })
       .and_then(
         [ this, &image_index, &result ] -> std::expected<void, vkpp::error_t>
         {
+          const vk::Semaphore wait_semaphore =
+            *swap_chain_.render_finished(image_index);
+          const vk::SwapchainKHR swapchain = *swap_chain_.swap_chain();
+
           const vk::PresentInfoKHR present_info {
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &*swap_chain_.render_finished(image_index),
+            .pWaitSemaphores = &wait_semaphore,
             .swapchainCount = 1,
-            .pSwapchains = &*swap_chain_.swap_chain(),
+            .pSwapchains = &swapchain,
             .pImageIndices = &image_index,
             .pResults = nullptr,
           };
@@ -1527,36 +1496,6 @@ private:
       });
   }
 
-  auto
-  create_sync_objects() -> std::expected<void, vkpp::error_t>
-  {
-    for (auto _ : std::views::iota(0U, max_frames_in_flight))
-    {
-      if (auto error = //
-        UTILS_VK(device_.device().createSemaphore({}),
-          ^^vk::raii::Device::createSemaphore)
-          .transform([ & ](vk::raii::Semaphore&& semaphore) -> void
-            { present_complete_semaphores_.push_back(std::move(semaphore)); });
-        !error)
-      {
-        return error;
-      }
-
-      if (auto error = UTILS_VK( //
-            device_.device().createFence({
-              .flags = vk::FenceCreateFlagBits::eSignaled,
-            }),
-            ^^vk::raii::Device::createFence)
-            .transform([ & ](vk::raii::Fence&& fence) -> void
-              { in_flight_fences_.push_back(std::move(fence)); });
-        !error)
-      {
-        return error;
-      }
-    }
-    return {};
-  }
-
 private:
   enum class frame_rendering_state : std::uint8_t
   {
@@ -1576,10 +1515,11 @@ private:
   vk::raii::PipelineLayout pipeline_layout_ { nullptr };
   vk::raii::Pipeline graphics_pipeline_ { nullptr };
 
+  vk::raii::DescriptorSetLayout descriptor_set_layout_ { nullptr };
+  vk::raii::DescriptorPool descriptor_pool_ { nullptr };
+
   vkpp::command_pool command_pool_ {};
-  std::vector<vk::raii::CommandBuffer> command_buffers_;
-  std::vector<vk::raii::Semaphore> present_complete_semaphores_;
-  std::vector<vk::raii::Fence> in_flight_fences_;
+  std::array<vkpp::frame, max_frames_in_flight> frames_ {};
   std::uint32_t frame_index_ {};
 
   std::uint32_t mip_levels_ {};
@@ -1597,12 +1537,6 @@ private:
   vk::raii::DeviceMemory vertex_buffer_memory_ { nullptr };
   vk::raii::Buffer index_buffer_ { nullptr };
   vk::raii::DeviceMemory index_buffer_memory_ { nullptr };
-  std::vector<vk::raii::Buffer> uniform_buffers_;
-  std::vector<vk::raii::DeviceMemory> uniform_buffers_memory_;
-  std::vector<void*> uniform_buffers_mapped_;
-  vk::raii::DescriptorSetLayout descriptor_set_layout_ { nullptr };
-  vk::raii::DescriptorPool descriptor_pool_ { nullptr };
-  std::vector<vk::raii::DescriptorSet> descriptor_sets_;
 
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {
