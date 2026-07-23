@@ -9,7 +9,7 @@ set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 set(CMAKE_CXX_MODULE_STD ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-project(tutorial-final LANGUAGES CXX)
+project(Vulkan++ LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(ProjectWarnings)
@@ -35,10 +35,9 @@ add_slang_shader_target(slang_shaders SOURCES ${SHADER_SLANG_SOURCES})
 set(TEXTURE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/textures")
 set(MODEL_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/models")
 
-# New tree (the vkpp library + f1st app). vkpp must come before app.
-# the renderer that lived in lbn now lives in app/app.cppm (module f1st.app).
-add_subdirectory(libs/vkpp)
-add_subdirectory(app)
+# vkpp is the primary product; f1st is the example app.
+add_subdirectory(vkpp)
+add_subdirectory(examples/f1st)
 
 # Root compile_commands.json is only useful for Clang IDE builds.
 # GCC builds produce .gcm files that clangd cannot consume.

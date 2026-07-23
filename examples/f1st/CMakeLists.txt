@@ -28,7 +28,7 @@ target_link_libraries(f1st PRIVATE
 add_dependencies(f1st slang_shaders)
 
 # Contracts: the renderer uses -fcontracts (GNU only), same as the old `lbn`
-# target. contracts_config.hpp / contracts_handler.cpp now live in app/.
+# target. contracts_config.hpp / contracts_handler.cpp live beside the app.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   target_sources(f1st PRIVATE contracts_handler.cpp)
 endif()
@@ -45,3 +45,4 @@ target_compile_definitions(f1st PRIVATE
   SHADER_DIRECTORY="${_shader_directory}/"
   TEXTURE_DIRECTORY="${_texture_directory}/"
   MODEL_DIRECTORY="${_model_directory}/")
+

@@ -8,7 +8,7 @@
 
 add_library(vkpp STATIC)
 
-# Public include dir so headers placed under libs/vkpp (e.g. a future
+# Public include dir so headers placed under vkpp (e.g. a future
 # error/vk_error_config.hpp holding the UTILS_VK macro) are visible to consumers.
 target_include_directories(vkpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -79,3 +79,4 @@ string(REPLACE "\\" "/" _texture_directory "${_texture_directory}")
 target_compile_definitions(vkpp PRIVATE
   MODEL_DIRECTORY="${_model_directory}/"
   TEXTURE_DIRECTORY="${_texture_directory}/")
+
