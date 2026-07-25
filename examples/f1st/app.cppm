@@ -27,6 +27,10 @@ import vkpp.device;
 import vkpp.swapchain;
 import vkpp.command;
 import vkpp.frame;
+import vkpp.texture;
+import vkpp.barrier;
+import vkpp.pipeline;
+import vkpp.descriptor;
 
 namespace f1st
 {
