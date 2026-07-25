@@ -10,7 +10,9 @@ namespace vkpp
 export enum class memory_intent {
   // GPU reads/writes, CPU never touches: attachments, device-local vertex/index
   gpu_only,
-  // CPU writes, GPU reads: staging buffers, uniform buffers
+  // write-one upload (TRANSFER_SRC buffers)
+  staging,
+  // persistant mapped (UBO)
   cpu_to_gpu,
   // GPU writes, CPU reads back: screenshots, occlusion query results
   gpu_to_cpu,
