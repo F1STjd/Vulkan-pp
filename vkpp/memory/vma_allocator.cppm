@@ -267,6 +267,12 @@ private:
     {
     case memory_intent::gpu_only:
       return { .usage = VMA_MEMORY_USAGE_AUTO };
+    case memory_intent::staging:
+      return {
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+          VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO,
+      };
     case memory_intent::cpu_to_gpu:
       return {
         .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |

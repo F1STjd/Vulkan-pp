@@ -149,6 +149,7 @@ private:
     {
     case memory_intent::gpu_only:
       return vk::MemoryPropertyFlagBits::eDeviceLocal;
+    case memory_intent::staging:
     case memory_intent::cpu_to_gpu:
     case memory_intent::gpu_to_cpu:
       return vk::MemoryPropertyFlagBits::eHostVisible |
