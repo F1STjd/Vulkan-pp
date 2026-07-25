@@ -52,13 +52,14 @@ target_sources(vkpp
       command/command.cppm         # module vkpp.command
 
       # --- Phase 2 Textures ---
-      # resources/texture.cppm  # module vkpp.texture
+      resources/texture.cppm  # module vkpp.texture
+      sync/barrier.cppm      # module vkpp.sync.barrier
 
       # --- Phase 3 Descriptors ---
-      # descriptor/descriptor.cppm   # module vkpp.descriptor
+      descriptor/descriptor.cppm   # module vkpp.descriptor
 
       # --- Phase 4 Pipelines ---
-      # pipeline/pipeline.cppm       # module vkpp.pipeline
+      pipeline/pipeline.cppm       # module vkpp.pipeline
 )
 
 target_compile_features(vkpp PUBLIC cxx_std_26)
