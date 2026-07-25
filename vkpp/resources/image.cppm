@@ -105,6 +105,17 @@ struct image_traits<image_kind::resolve>
   };
 };
 
+template<>
+struct image_traits<image_kind::sampled_texture>
+{
+  static constexpr image_type_spec spec {
+    .intent = memory_intent::gpu_only,
+    .usage = vk::ImageUsageFlagBits::eTransferDst |
+      vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled,
+    .aspect = vk::ImageAspectFlagBits::eColor,
+  };
+};
+
 export consteval auto
 validate(const image_type_spec& spec) -> bool
 {
@@ -127,8 +138,17 @@ validate(const image_type_spec& spec) -> bool
   {
     return false;
   }
+  // texture
+  if (((spec.usage & vk::ImageUsageFlagBits::eSampled) &&
+        (spec.usage & vk::ImageUsageFlagBits::eTransientAttachment)) &&
+    !(spec.aspect & vk::ImageAspectFlagBits::eColor))
+  {
+    return false;
+  }
   return true;
 }
+
+static_assert(validate(image_traits<image_kind::sampled_texture>::spec));
 
 export template<image_kind Kind>
   requires(validate(image_traits<Kind>::spec))
