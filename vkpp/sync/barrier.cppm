@@ -242,7 +242,7 @@ record_generate_mipmaps(vk::raii::CommandBuffer& command_buffer,
       vk::ImageLayout::eTransferDstOptimal, blit, vk::Filter::eLinear);
 
     const image_barrier to_shader_read =
-      transfer_src_to_shader_read(image, mip_levels - 1U);
+      transfer_src_to_shader_read(image, mip_level - 1U);
     record_barriers(command_buffer, std::span { &to_shader_read, 1UZ });
 
     if (mip_width > 1) { mip_width /= 2; }
