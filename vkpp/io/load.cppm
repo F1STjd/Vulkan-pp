@@ -45,17 +45,27 @@ load_shader_file(const std::filesystem::path& filename)
   return { buffer };
 }
 
-export [[nodiscard]] constexpr auto
-load_texture_file(const std::filesystem::path& filename,
-  std::int32_t& texture_width, std::int32_t& texture_height,
-  std::uint32_t& mip_levels) -> std::expected<std::span<stbi_uc>, vkpp::error_t>
+export struct host_image
+{
+  std::vector<std::byte> pixels {};
+  vk::Extent2D extent {};
+  vk::Format format { vk::Format::eR8G8B8A8Srgb };
+  std::uint32_t mip_levels_present { 1U };
+  texture_mip_policy suggested_mip_policy {
+    texture_mip_policy::generate_gpu_blit
+  };
+};
+
+// This will be made generic in future
+export auto
+load_host_image_rgba8(const std::filesystem::path& path)
+  -> std::expected<host_image, error_t>
 {
   std::int32_t texture_channels; // NOLINT
-  auto* pixels = stbi_load(filename.string().c_str(), &texture_width,
-    &texture_height, &texture_channels, STBI_rgb_alpha);
-  const vk::DeviceSize image_size { channels::four * texture_width *
-    texture_height };
-
+  std::int32_t width;            // NOLINT
+  std::int32_t height;           // NOLINT
+  auto* pixels = stbi_load(
+    path.string().c_str(), &width, &height, &texture_channels, STBI_rgb_alpha);
   if (pixels == nullptr)
   {
     return std::unexpected {
@@ -65,9 +75,27 @@ load_texture_file(const std::filesystem::path& filename,
       },
     };
   }
-  mip_levels = static_cast<std::uint32_t>(
-    std::floor(std::log2(std::max(texture_width, texture_height))) + 1U);
-  return std::span { pixels, image_size };
+
+  const vk::DeviceSize image_size { channels::four * width * height };
+  const auto mip_levels = static_cast<std::uint32_t>(
+    std::floor(std::log2(std::max(width, height))) + 1U);
+  auto to_byte = [](stbi_uc byte) static { return std::byte { byte }; };
+  auto pixels_span = std::span { pixels, image_size };
+
+  auto texture = host_image {
+    .pixels = {
+      std::from_range,
+      pixels_span | std::views::transform(to_byte),
+    },
+    .extent = {
+      .width = static_cast<std::uint32_t>(width),
+      .height = static_cast <std::uint32_t>(height),
+    },
+    .mip_levels_present = mip_levels,
+  };
+
+  stbi_image_free(pixels);
+  return texture;
 }
 
 template<std::size_t Components>
