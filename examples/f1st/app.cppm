@@ -101,8 +101,6 @@ private:
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
       .and_then(std::bind_front(&app::create_texture_image, this))
-      .and_then(std::bind_front(&app::create_texture_image_view, this))
-      .and_then(std::bind_front(&app::create_texture_sampler, this))
       .and_then([ this ] { return vkpp::load_model_obj(vertices_, indices_); })
       .and_then(std::bind_front(&app::create_vertex_buffer, this))
       .and_then(std::bind_front(&app::create_index_buffer, this))
@@ -547,125 +545,23 @@ private:
   auto
   create_texture_image() -> std::expected<void, vkpp::error_t>
   {
-    std::int32_t texture_width;  // NOLINT
-    std::int32_t texture_height; // NOLINT
-
-    std::uint8_t* image_p {};
-    std::size_t image_size {};
-
-    vk::raii::Buffer staging_buffer { nullptr };
-    vk::raii::DeviceMemory staging_buffer_memory { nullptr };
-
-    auto upload = [ & ]
-    {
-      vkpp::single_time_submit sts { command_pool_, device_.device(),
-        device_.graphics_queue() };
-      return sts.begin()
-        .and_then(
-          [ &, this ](vk::raii::CommandBuffer* command_buffer)
-            -> std::expected<void, vkpp::error_t>
-          {
-            transition_image_layout(*command_buffer, texture_image_,
-              vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-              mip_levels_);
-            copy_buffer_to_image(*command_buffer, staging_buffer,
-              texture_image_, static_cast<std::uint32_t>(texture_width),
-              static_cast<std::uint32_t>(texture_height));
-            return generate_mipmaps(*command_buffer, texture_image_,
-              vk::Format::eR8G8B8A8Srgb, texture_width, texture_height,
-              mip_levels_);
-          })
-        .and_then([ & ] -> std::expected<void, vkpp::error_t>
-          { return sts.end_and_submit(); });
-    };
-
-    return vkpp::load_texture_file(
-      vkpp::texture_path, texture_width, texture_height, mip_levels_)
+    return vkpp::load_host_image_rgba8(vkpp::texture_path)
       .and_then(
-        [ &, this ](const auto& image)
+        [ &, this ](const vkpp::host_image& host_texture)
         {
-          image_p = image.data();
-          image_size = image.size();
-          return create_buffer(image.size(),
-            vk::BufferUsageFlagBits::eTransferSrc,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-              vk::MemoryPropertyFlagBits::eHostCoherent);
+          return vkpp::make_texture({
+            .device = &device_,
+            .pool = &command_pool_,
+            .pixels = host_texture.pixels,
+            .extent = host_texture.extent,
+            .format = host_texture.format,
+            .mip_levels = host_texture.mip_levels_present,
+            .mip_policy = host_texture.suggested_mip_policy,
+            .sampler = {},
+          });
         })
-      .and_then(
-        [ & ](buffer_memory_pair&& pair) -> std::expected<void*, vkpp::error_t>
-        {
-          std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
-          return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, image_size),
-            ^^vk::raii::DeviceMemory::mapMemory);
-        })
-      .and_then(
-        [ &, this ](void* data_staging) -> std::expected<void, vkpp::error_t>
-        {
-          std::memcpy(data_staging, image_p, image_size);
-          staging_buffer_memory.unmapMemory();
-          stbi_image_free(image_p);
-          image_p = nullptr;
-          return create_image(static_cast<std::uint32_t>(texture_width),
-            static_cast<std::uint32_t>(texture_height), mip_levels_,
-            vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Srgb,
-            vk::ImageTiling::eOptimal,
-            vk::ImageUsageFlags {
-              vk::ImageUsageFlagBits::eTransferSrc |
-                vk::ImageUsageFlagBits::eTransferDst |
-                vk::ImageUsageFlagBits::eSampled,
-            },
-            vk::MemoryPropertyFlagBits::eDeviceLocal)
-            .transform(
-              [ this ](image_memory_pair&& pair) -> void
-              {
-                std::tie(texture_image_, texture_image_memory_) =
-                  std::move(pair);
-              });
-        })
-      .and_then(upload)
-      .or_else(
-        [ & ](vkpp::error_t error) -> std::expected<void, vkpp::error_t>
-        {
-          if (image_p != nullptr) { stbi_image_free(image_p); }
-          return std::unexpected { error };
-        });
-  }
-
-  auto
-  create_texture_image_view() -> std::expected<void, vkpp::error_t>
-  {
-    return create_image_view(*texture_image_, vk::Format::eR8G8B8A8Srgb,
-      vk::ImageAspectFlagBits::eColor, mip_levels_)
-      .transform([ this ](vk::raii::ImageView&& view) -> void
-        { texture_image_view_ = std::move(view); });
-  }
-
-  auto
-  create_texture_sampler() -> std::expected<void, vkpp::error_t>
-  {
-    const auto properties = device_.physical_device().getProperties();
-    vk::SamplerCreateInfo sampler_create_info {
-      .magFilter = vk::Filter::eLinear,
-      .minFilter = vk::Filter::eLinear,
-      .mipmapMode = vk::SamplerMipmapMode::eLinear,
-      .addressModeU = vk::SamplerAddressMode::eRepeat,
-      .addressModeV = vk::SamplerAddressMode::eRepeat,
-      .addressModeW = vk::SamplerAddressMode::eRepeat,
-      .mipLodBias = 0.0F,
-      .anisotropyEnable = vk::True,
-      .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
-      .compareEnable = vk::False,
-      .compareOp = vk::CompareOp::eAlways,
-      .minLod = 0.0F,
-      .maxLod = vk::LodClampNone,
-      .borderColor = vk::BorderColor::eIntOpaqueBlack,
-      .unnormalizedCoordinates = vk::False,
-    };
-
-    return UTILS_VK(device_.device().createSampler(sampler_create_info),
-      ^^vk::raii::Device::createSampler)
-      .transform([ this ](vk::raii::Sampler&& sampler) -> void
-        { texture_sampler_ = std::move(sampler); });
+      .transform([ this ](vkpp::texture<>&& texture) -> void
+        { texture_ = std::move(texture); });
   }
 
   using buffer_memory_pair =
@@ -849,8 +745,8 @@ private:
               .range = sizeof(uniform_buffer_object),
             };
             vk::DescriptorImageInfo image_info {
-              .sampler = texture_sampler_,
-              .imageView = texture_image_view_,
+              .sampler = texture_.sampler(),
+              .imageView = texture_.view(),
               .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
             };
             std::array descriptor_set_writes {
@@ -1060,46 +956,6 @@ private:
     frames_[ frame_index_ ].command_buffer.pipelineBarrier2(dependency_info);
   }
 
-  void
-  transition_image_layout(vk::raii::CommandBuffer& command_buffer,
-    const vk::raii::Image& image, vk::ImageLayout old_layout,
-    vk::ImageLayout new_layout, std::uint32_t mip_levels)
-  {
-    vk::ImageMemoryBarrier barrier {
-        .oldLayout = old_layout,
-        .newLayout = new_layout,
-        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-        .image = image,
-        .subresourceRange = { .aspectMask = vk::ImageAspectFlagBits::eColor,
-          .levelCount = mip_levels,
-          .layerCount = 1U, },
-      };
-
-    vk::PipelineStageFlags source_stage;
-    vk::PipelineStageFlags destination_stage;
-
-    if (old_layout == vk::ImageLayout::eUndefined &&
-      new_layout == vk::ImageLayout::eTransferDstOptimal)
-    {
-      barrier.srcAccessMask = {};
-      barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
-      source_stage = vk::PipelineStageFlagBits::eTopOfPipe;
-      destination_stage = vk::PipelineStageFlagBits::eTransfer;
-    }
-    else if (old_layout == vk::ImageLayout::eTransferDstOptimal &&
-      new_layout == vk::ImageLayout::eShaderReadOnlyOptimal)
-    {
-      barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-      barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-      source_stage = vk::PipelineStageFlagBits::eTransfer;
-      destination_stage = vk::PipelineStageFlagBits::eFragmentShader;
-    }
-
-    command_buffer.pipelineBarrier(
-      source_stage, destination_stage, {}, {}, nullptr, barrier);
-  }
-
   auto
   generate_mipmaps(vk::raii::CommandBuffer& command_buffer,
     vk::raii::Image& image, vk::Format format, std::int32_t texture_width,
@@ -1139,7 +995,7 @@ private:
     auto mip_width = texture_width;
     auto mip_height = texture_height;
 
-    for (auto mip_level : std::views::iota(1U, mip_levels_))
+    for (auto mip_level : std::views::iota(1U, texture_.mip_levels()))
     {
       barrier.subresourceRange.baseMipLevel = mip_level - 1U;
       barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
@@ -1451,12 +1307,7 @@ private:
   std::array<vkpp::frame, max_frames_in_flight> frames_ {};
   std::uint32_t frame_index_ {};
 
-  std::uint32_t mip_levels_ {};
-
-  vk::raii::Image texture_image_ { nullptr };
-  vk::raii::DeviceMemory texture_image_memory_ { nullptr };
-  vk::raii::ImageView texture_image_view_ { nullptr };
-  vk::raii::Sampler texture_sampler_ { nullptr };
+  vkpp::texture<> texture_ {};
 
   // TODO: https://developer.nvidia.com/vulkan-memory-management suggests to use
   // one vk::raii::Buffer to have more buffers inside, and use offsets
