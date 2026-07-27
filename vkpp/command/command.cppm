@@ -4,10 +4,10 @@ module;
 
 export module vkpp.command;
 
-import vkpp.error;
-
 import std;
 import vulkan;
+
+import vkpp.error;
 
 namespace vkpp
 {

@@ -4,6 +4,7 @@ export module vkpp.memory.vma;
 
 import std;
 import vulkan;
+
 import vkpp.error;
 import vkpp.memory;
 

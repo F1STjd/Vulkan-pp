@@ -7,6 +7,7 @@ export module vkpp.instance;
 
 import vulkan;
 import std;
+
 import vkpp.error;
 
 namespace vkpp

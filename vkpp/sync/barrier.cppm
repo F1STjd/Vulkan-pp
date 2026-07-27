@@ -4,10 +4,10 @@ module;
 
 export module vkpp.barrier;
 
-import vkpp.error;
-
 import std;
 import vulkan;
+
+import vkpp.error;
 
 namespace vkpp
 {

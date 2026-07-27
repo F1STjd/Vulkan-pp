@@ -2,6 +2,7 @@ export module vkpp.buffer;
 
 import std;
 import vulkan;
+
 import vkpp.memory;
 import vkpp.memory.vma;
 import vkpp.error;

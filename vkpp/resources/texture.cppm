@@ -4,6 +4,9 @@ module;
 
 export module vkpp.texture;
 
+import std;
+import vulkan;
+
 import vkpp.error;
 import vkpp.memory;
 import vkpp.memory.vma;
@@ -12,9 +15,6 @@ import vkpp.device;
 import vkpp.command;
 import vkpp.buffer;
 import vkpp.barrier;
-
-import std;
-import vulkan;
 
 namespace vkpp
 {

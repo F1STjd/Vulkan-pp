@@ -4,12 +4,12 @@ module;
 
 export module vkpp.swapchain;
 
+import std;
+import vulkan;
+
 import vkpp.device;
 import vkpp.image;
 import vkpp.error;
-
-import std;
-import vulkan;
 
 namespace vkpp
 {
