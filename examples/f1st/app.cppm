@@ -657,7 +657,7 @@ private:
         { frames_ = std::move(frames); });
   }
 
-  auto
+  void
   update_uniform_buffer(std::uint32_t current_frame)
   {
     static auto start_time = std::chrono::high_resolution_clock::now();
