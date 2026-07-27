@@ -725,105 +725,31 @@ private:
   // TODO: Create new command pool for copying (for short-lived buffers), with
   // vk::CommandPoolCreateFlagBits::eTransient
   auto
-  copy_buffer(vk::raii::Buffer& source, vk::raii::Buffer& destination,
-    vk::DeviceSize size) -> std::expected<void, vkpp::error_t>
-  {
-    vkpp::single_time_submit sts {
-      command_pool_,
-      device_.device(),
-      device_.graphics_queue(),
-    };
-
-    return sts.begin().and_then(
-      [ &, this ](vk::raii::CommandBuffer* command_buffer)
-        -> std::expected<void, vkpp::error_t>
-      {
-        command_buffer->copyBuffer(*source, *destination,
-          vk::BufferCopy {
-            .srcOffset = 0UZ,
-            .dstOffset = 0UZ,
-            .size = size,
-          });
-        return sts.end_and_submit();
-      });
-  }
-
-  auto
   create_vertex_buffer() -> std::expected<void, vkpp::error_t>
   {
-    auto buffer_size = std::span { vertices_ }.size_bytes();
-    vk::raii::Buffer staging_buffer { nullptr };
-    vk::raii::DeviceMemory staging_buffer_memory { nullptr };
-
-    return create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferSrc,
-      vk::MemoryPropertyFlagBits::eHostVisible |
-        vk::MemoryPropertyFlagBits::eHostCoherent)
-      .and_then(
-        [ &, buffer_size ](
-          buffer_memory_pair&& pair) -> std::expected<void*, vkpp::error_t>
-        {
-          std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
-          return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, buffer_size),
-            ^^vk::raii::DeviceMemory::mapMemory);
-        })
-      .and_then(
-        [ &, this, buffer_size ](void* data_staging)
-          -> std::expected<buffer_memory_pair, vkpp::error_t>
-        {
-          std::memcpy(data_staging, vertices_.data(), buffer_size);
-          staging_buffer_memory.unmapMemory();
-          return create_buffer(buffer_size,
-            vk::BufferUsageFlagBits::eVertexBuffer |
-              vk::BufferUsageFlagBits::eTransferDst,
-            vk::MemoryPropertyFlagBits::eDeviceLocal);
-        })
-      .and_then(
-        [ &, this, buffer_size ](
-          buffer_memory_pair&& pair) -> std::expected<void, vkpp::error_t>
-        {
-          std::tie(vertex_buffer_, vertex_buffer_memory_) = std::move(pair);
-          return copy_buffer(staging_buffer, vertex_buffer_, buffer_size);
-        });
+    return vkpp::upload_device_local_buffer(
+      {
+        .device = &device_,
+        .pool = &command_pool_,
+        .bytes = std::as_bytes(std::span { vertices_ }),
+        .gpu_usage = vk::BufferUsageFlagBits::eVertexBuffer,
+      })
+      .transform([ this ](vkpp::buffer_resource<>&& buffer) -> void
+        { vertex_buffer_ = std::move(buffer); });
   }
 
-  // TODO: only data and buffers change - maybe some abstraction:
-  // create_buffer(...)
   auto
   create_index_buffer() -> std::expected<void, vkpp::error_t>
   {
-    auto buffer_size = std::span { indices_ }.size_bytes();
-    vk::raii::Buffer staging_buffer { nullptr };
-    vk::raii::DeviceMemory staging_buffer_memory { nullptr };
-
-    return create_buffer(buffer_size, vk::BufferUsageFlagBits::eTransferSrc,
-      vk::MemoryPropertyFlagBits::eHostVisible |
-        vk::MemoryPropertyFlagBits::eHostCoherent)
-      .and_then(
-        [ &, buffer_size ](
-          buffer_memory_pair&& pair) -> std::expected<void*, vkpp::error_t>
-        {
-          std::tie(staging_buffer, staging_buffer_memory) = std::move(pair);
-          return UTILS_VK(staging_buffer_memory.mapMemory(0ULL, buffer_size),
-            ^^vk::raii::DeviceMemory::mapMemory);
-        })
-      .and_then(
-        [ &, this, buffer_size ](void* data_staging)
-          -> std::expected<buffer_memory_pair, vkpp::error_t>
-        {
-          std::memcpy(data_staging, indices_.data(), buffer_size);
-          staging_buffer_memory.unmapMemory();
-          return create_buffer(buffer_size,
-            vk::BufferUsageFlagBits::eIndexBuffer |
-              vk::BufferUsageFlagBits::eTransferDst,
-            vk::MemoryPropertyFlagBits::eDeviceLocal);
-        })
-      .and_then(
-        [ &, this, buffer_size ](
-          buffer_memory_pair&& pair) -> std::expected<void, vkpp::error_t>
-        {
-          std::tie(index_buffer_, index_buffer_memory_) = std::move(pair);
-          return copy_buffer(staging_buffer, index_buffer_, buffer_size);
-        });
+    return vkpp::upload_device_local_buffer(
+      {
+        .device = &device_,
+        .pool = &command_pool_,
+        .bytes = std::as_bytes(std::span { indices_ }),
+        .gpu_usage = vk::BufferUsageFlagBits::eIndexBuffer,
+      })
+      .transform([ this ](vkpp::buffer_resource<>&& buffer) -> void
+        { index_buffer_ = std::move(buffer); });
   }
 
   auto
@@ -1074,8 +1000,9 @@ private:
               .offset = vk::Offset2D { .x = 0, .y = 0 },
               .extent = swap_chain_.extent(),
             });
-          command_buffer.bindVertexBuffers(0U, *vertex_buffer_, { 0UZ });
-          command_buffer.bindIndexBuffer(*index_buffer_, 0UZ,
+          command_buffer.bindVertexBuffers(
+            0U, vertex_buffer_.buffer(), { 0UZ });
+          command_buffer.bindIndexBuffer(index_buffer_.buffer(), 0UZ,
             vk::IndexTypeValue<decltype(indices_)::value_type>::value);
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
             pipeline_layout_, 0U, *frames_[ frame_index_ ].descriptor_set,
@@ -1535,10 +1462,8 @@ private:
   // one vk::raii::Buffer to have more buffers inside, and use offsets
   std::vector<vkpp::vertex> vertices_;
   std::vector<std::uint32_t> indices_;
-  vk::raii::Buffer vertex_buffer_ { nullptr };
-  vk::raii::DeviceMemory vertex_buffer_memory_ { nullptr };
-  vk::raii::Buffer index_buffer_ { nullptr };
-  vk::raii::DeviceMemory index_buffer_memory_ { nullptr };
+  vkpp::buffer_resource<> vertex_buffer_ {};
+  vkpp::buffer_resource<> index_buffer_ {};
 
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {
