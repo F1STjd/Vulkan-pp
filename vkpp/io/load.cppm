@@ -9,9 +9,11 @@ export module vkpp.io;
 
 import std;
 import vulkan;
+
 import vkpp.io.channels;
 import vkpp.vertex;
 import vkpp.error;
+import vkpp.texture;
 
 namespace vkpp
 {
