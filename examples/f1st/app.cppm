@@ -74,6 +74,22 @@ constexpr std::size_t max_frames_in_flight { 2UZ };
 static_assert(max_frames_in_flight > 0,
   "variable % max_frames_in_flight is used later, so being 0 is UB");
 
+// global?
+static constexpr std::array k_set0_bindings {
+  vkpp::descriptor_set_layout_binding {
+    .binding = 0U,
+    .type = vk::DescriptorType::eUniformBuffer,
+    .count = 1U,
+    .stages = vk::ShaderStageFlagBits::eVertex,
+  },
+  vkpp::descriptor_set_layout_binding {
+    .binding = 1U,
+    .type = vk::DescriptorType::eCombinedImageSampler,
+    .count = 1U,
+    .stages = vk::ShaderStageFlagBits::eFragment,
+  },
+};
+
 export class app
 {
 public:
