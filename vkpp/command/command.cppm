@@ -123,4 +123,14 @@ private:
   vk::raii::CommandBuffer command_buffer_ { nullptr };
 };
 
+export namespace upload
+{
+
+struct wait_idle_t
+{};
+
+inline constexpr wait_idle_t wait_idle {};
+
+} // namespace upload
+
 }; // namespace vkpp
