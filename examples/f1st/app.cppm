@@ -275,164 +275,23 @@ private:
   auto
   create_graphics_pipeline() -> std::expected<void, vkpp::error_t>
   {
-    static const vk::PipelineLayoutCreateInfo pipeline_layout_create_info {
-      .setLayoutCount = 1,
-      .pSetLayouts = &*descriptor_set_layout_,
-      .pushConstantRangeCount = 0,
-    };
-
-    return UTILS_VK(
-      device_.device().createPipelineLayout(pipeline_layout_create_info),
-      ^^vk::raii::Device::createPipelineLayout)
+    const std::array color_formats { swap_chain_.format() };
+    return vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv")
       .and_then(
-        [ this ](vk::raii::PipelineLayout&& layout)
-          -> std::expected<std::vector<char>, vkpp::error_t>
+        [ &, this ](
+          const std::vector<char>& spirv) -> std::expected<void, vkpp::error_t>
         {
-          pipeline_layout_ = std::move(layout);
-          return vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
-        })
-      .and_then([ this ](std::span<const char> code)
-        { return create_shader_module(code); })
-      .and_then(
-        [ this ](const vk::raii::ShaderModule& shader_module)
-          -> std::expected<vk::raii::Pipeline, vkpp::error_t>
-        {
-          const vk::PipelineShaderStageCreateInfo
-            vertex_shader_stage_create_info {
-              .stage = vk::ShaderStageFlagBits::eVertex,
-              .module = shader_module,
-              .pName = "vertex_main",
-              .pSpecializationInfo = nullptr,
-            };
-          const vk::PipelineShaderStageCreateInfo
-            fragment_shader_stage_create_info {
-              .stage = vk::ShaderStageFlagBits::eFragment,
-              .module = shader_module,
-              .pName = "fragment_main",
-              .pSpecializationInfo = nullptr,
-            };
-          const std::array shader_stages {
-            vertex_shader_stage_create_info,
-            fragment_shader_stage_create_info,
-          };
-
-          static constexpr auto binding_description =
-            vkpp::vertex::get_binding_description();
-          static constexpr auto attribute_descriptions =
-            vkpp::vertex::get_attribute_descriptions();
-          static constexpr vk::PipelineVertexInputStateCreateInfo
-            vertex_input_create_info {
-              .vertexBindingDescriptionCount = 1U,
-              .pVertexBindingDescriptions = &binding_description,
-              .vertexAttributeDescriptionCount =
-                static_cast<std::uint32_t>(attribute_descriptions.size()),
-              .pVertexAttributeDescriptions = attribute_descriptions.data(),
-            };
-
-          static constexpr vk::PipelineInputAssemblyStateCreateInfo
-            input_assembly_create_info {
-              .topology = vk::PrimitiveTopology::eTriangleList,
-            };
-          static constexpr vk::PipelineViewportStateCreateInfo
-            viewport_state_create_info {
-              .viewportCount = 1U,
-              .scissorCount = 1U,
-            };
-          static constexpr vk::PipelineRasterizationStateCreateInfo
-            rasterizer_create_info {
-              .depthClampEnable = vk::False,
-              .rasterizerDiscardEnable = vk::False,
-              .polygonMode = vk::PolygonMode::eFill,
-              .cullMode = vk::CullModeFlagBits::eBack,
-              .frontFace = vk::FrontFace::eCounterClockwise,
-              .depthBiasEnable = vk::False,
-              .lineWidth = 1.0F,
-            };
-          const vk::PipelineMultisampleStateCreateInfo
-            multisampling_create_info {
-              .rasterizationSamples = device_.msaa_samples(),
-              .sampleShadingEnable = vk::True,
-              .minSampleShading = 0.2F,
-            };
-
-          static constexpr vk::PipelineDepthStencilStateCreateInfo
-            depth_stencil_create_info {
-              .depthTestEnable = vk::True,
-              .depthWriteEnable = vk::True,
-              .depthCompareOp = vk::CompareOp::eLess,
-              .depthBoundsTestEnable = vk::False,
-              .stencilTestEnable = vk::False,
-            };
-
-          static constexpr vk::PipelineColorBlendAttachmentState
-            color_blend_attachment {
-              .blendEnable = vk::False,
-              .colorWriteMask = vk::ColorComponentFlagBits::eR |
-                vk::ColorComponentFlagBits::eG |
-                vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
-            };
-          static constexpr vk::PipelineColorBlendStateCreateInfo
-            color_blend_create_info {
-              .logicOpEnable = vk::False,
-              .logicOp = vk::LogicOp::eCopy,
-              .attachmentCount = 1U,
-              .pAttachments = &color_blend_attachment,
-            };
-
-          static constexpr std::array dynamic_states {
-            vk::DynamicState::eViewport,
-            vk::DynamicState::eScissor,
-          };
-          static constexpr vk::PipelineDynamicStateCreateInfo dynamic_state {
-            .dynamicStateCount =
-              static_cast<std::uint32_t>(dynamic_states.size()),
-            .pDynamicStates = dynamic_states.data(),
-          };
-
-          const std::array color_attachment_formats { swap_chain_.format() };
-          vk::StructureChain pipeline_create_info_chain {
-            vk::GraphicsPipelineCreateInfo {
-              .stageCount = 2U,
-              .pStages = shader_stages.data(),
-              .pVertexInputState = &vertex_input_create_info,
-              .pInputAssemblyState = &input_assembly_create_info,
-              .pViewportState = &viewport_state_create_info,
-              .pRasterizationState = &rasterizer_create_info,
-              .pMultisampleState = &multisampling_create_info,
-              .pDepthStencilState = &depth_stencil_create_info,
-              .pColorBlendState = &color_blend_create_info,
-              .pDynamicState = &dynamic_state,
-              .layout = pipeline_layout_,
-              .renderPass = nullptr,
+          return vkpp::make_graphics_pipeline(device_.device(),
+            vkpp::graphics_pipeline_runtime_args {
+              .color_formats = color_formats,
+              .depth_format = swap_chain_.depth().format(),
+              .samples = device_.msaa_samples(),
+              .set_layout = descriptor_set_layout_,
             },
-            vk::PipelineRenderingCreateInfo {
-              .colorAttachmentCount =
-                static_cast<std::uint32_t>(color_attachment_formats.size()),
-              .pColorAttachmentFormats = color_attachment_formats.data(),
-              .depthAttachmentFormat = swap_chain_.depth().format(),
-            },
-          };
-          return UTILS_VK(
-            device_.device().createGraphicsPipeline(nullptr,
-              pipeline_create_info_chain.get<vk::GraphicsPipelineCreateInfo>()),
-            ^^vk::raii::Device::createGraphicsPipeline);
-        })
-      .transform([ this ](vk::raii::Pipeline&& pipeline) -> void
-        { graphics_pipeline_ = std::move(pipeline); });
-  }
-
-  [[nodiscard]] auto
-  create_shader_module(std::span<const char> code)
-    -> std::expected<vk::raii::ShaderModule, vkpp::error_t>
-  {
-    vk::ShaderModuleCreateInfo shader_module_create_info {
-      .codeSize = code.size_bytes(),
-      .pCode = std::start_lifetime_as<std::uint32_t>(code.data()),
-    };
-
-    return UTILS_VK(
-      device_.device().createShaderModule(shader_module_create_info),
-      ^^vk::raii::Device::createShaderModule);
+            { .spirv = spirv })
+            .transform([ this ](vkpp::graphics_pipeline&& pipeline) -> void
+              { graphics_pipeline_ = std::move(pipeline); });
+        });
   }
 
   auto
@@ -1240,8 +1099,7 @@ private:
   vkpp::device_context device_ {};
   vkpp::swapchain swap_chain_ {};
 
-  vk::raii::PipelineLayout pipeline_layout_ { nullptr };
-  vk::raii::Pipeline graphics_pipeline_ { nullptr };
+  vkpp::graphics_pipeline graphics_pipeline_;
 
   vk::raii::DescriptorSetLayout descriptor_set_layout_ { nullptr };
   vkpp::descriptor_pool descriptor_pool_ {};
