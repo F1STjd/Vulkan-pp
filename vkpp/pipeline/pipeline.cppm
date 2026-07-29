@@ -8,7 +8,6 @@ import std;
 import vulkan;
 
 import vkpp.error;
-import vkpp.vertex;
 
 namespace vkpp
 {
