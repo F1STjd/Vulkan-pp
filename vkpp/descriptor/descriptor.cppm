@@ -12,37 +12,14 @@ import vkpp.error;
 namespace vkpp
 {
 
-// why duplicate vk:: struct?
-export struct descriptor_set_layout_binding
-{
-  std::uint32_t binding {};
-  vk::DescriptorType type {};
-  std::uint32_t count { 1U };
-  vk::ShaderStageFlags stages {};
-};
-
 export auto
 make_descriptor_set_layout(const vk::raii::Device& device,
-  std::span<const descriptor_set_layout_binding> bindings)
+  std::span<const vk::DescriptorSetLayoutBinding> bindings)
   -> std::expected<vk::raii::DescriptorSetLayout, error_t>
 {
-  // insn't pointer valid when passed as static array in f1st?
-  // why then copy?
-  std::vector<vk::DescriptorSetLayoutBinding> native_bindings;
-  native_bindings.reserve(bindings.size());
-  for (const descriptor_set_layout_binding& binding : bindings)
-  {
-    native_bindings.push_back({
-      .binding = binding.binding,
-      .descriptorType = binding.type,
-      .descriptorCount = binding.count,
-      .stageFlags = binding.stages,
-      .pImmutableSamplers = nullptr,
-    });
-  }
   const vk::DescriptorSetLayoutCreateInfo create_info {
-    .bindingCount = static_cast<std::uint32_t>(native_bindings.size()),
-    .pBindings = native_bindings.data(),
+    .bindingCount = static_cast<std::uint32_t>(bindings.size()),
+    .pBindings = bindings.data(),
   };
   return UTILS_VK(device.createDescriptorSetLayout(create_info),
     ^^vk::raii::Device::createDescriptorSetLayout);
@@ -72,7 +49,7 @@ public:
   [[nodiscard]] auto
   allocate(const vk::raii::Device& device,
     const vk::raii::DescriptorSetLayout& layout, std::uint32_t count)
-    -> std::expected<std::vector<vk::raii::DescriptorSet>, error_t>
+    -> std::expected<std::vector<vk::DescriptorSet>, error_t>
   {
     std::vector layouts(count, *layout);
     const vk::DescriptorSetAllocateInfo info {
@@ -81,7 +58,18 @@ public:
       .pSetLayouts = layouts.data(),
     };
     return UTILS_VK(device.allocateDescriptorSets(info),
-      ^^vk::raii::Device::allocateDescriptorSets);
+      ^^vk::raii::Device::allocateDescriptorSets)
+      .transform(
+        [](std::vector<vk::raii::DescriptorSet>&& owned)
+        {
+          std::vector<vk::DescriptorSet> handles;
+          handles.reserve(owned.size());
+          for (vk::raii::DescriptorSet& set : owned)
+          {
+            handles.push_back(set.release());
+          }
+          return handles;
+        });
   }
 
   [[nodiscard]] auto
@@ -99,7 +87,7 @@ public:
 };
 
 export [[nodiscard]] auto
-pool_sizes_for(std::span<const descriptor_set_layout_binding> bindings,
+pool_sizes_for(std::span<const vk::DescriptorSetLayoutBinding> bindings,
   std::uint32_t set_count) -> std::vector<vk::DescriptorPoolSize>
 {
   struct type_count
@@ -110,13 +98,13 @@ pool_sizes_for(std::span<const descriptor_set_layout_binding> bindings,
   std::vector<type_count> counts_by_type;
   for (const auto& binding : bindings)
   {
-    auto existing =
-      std::ranges::find(counts_by_type, binding.type, &type_count::type);
-    const std::uint32_t added = binding.count * set_count;
+    auto existing = std::ranges::find(
+      counts_by_type, binding.descriptorType, &type_count::type);
+    const std::uint32_t added = binding.descriptorCount * set_count;
     if (existing == counts_by_type.end())
     {
       counts_by_type.push_back({
-        .type = binding.type,
+        .type = binding.descriptorType,
         .count = added,
       });
     }

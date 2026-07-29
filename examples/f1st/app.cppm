@@ -74,19 +74,20 @@ constexpr std::size_t max_frames_in_flight { 2UZ };
 static_assert(max_frames_in_flight > 0,
   "variable % max_frames_in_flight is used later, so being 0 is UB");
 
-// global?
 static constexpr std::array k_set0_bindings {
-  vkpp::descriptor_set_layout_binding {
+  vk::DescriptorSetLayoutBinding {
     .binding = 0U,
-    .type = vk::DescriptorType::eUniformBuffer,
-    .count = 1U,
-    .stages = vk::ShaderStageFlagBits::eVertex,
+    .descriptorType = vk::DescriptorType::eUniformBuffer,
+    .descriptorCount = 1U,
+    .stageFlags = vk::ShaderStageFlagBits::eVertex,
+    .pImmutableSamplers = nullptr,
   },
-  vkpp::descriptor_set_layout_binding {
+  vk::DescriptorSetLayoutBinding {
     .binding = 1U,
-    .type = vk::DescriptorType::eCombinedImageSampler,
-    .count = 1U,
-    .stages = vk::ShaderStageFlagBits::eFragment,
+    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+    .descriptorCount = 1U,
+    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+    .pImmutableSamplers = nullptr,
   },
 };
 
@@ -702,16 +703,13 @@ private:
     return descriptor_pool_
       .allocate(device_.device(), descriptor_set_layout_, max_frames_in_flight)
       .transform(
-        [ this ](std::vector<vk::raii::DescriptorSet>&& sets) -> void
+        [ this ](std::vector<vk::DescriptorSet>&& sets) -> void
         {
           for (auto i : std::views::iota(0UZ, max_frames_in_flight))
           {
-            // Ideal: frames_[i].descriptor_set = sets[i].release(); //
-            // non-owning
-            frames_[ i ].descriptor_set = std::move(sets[ i ]);
+            frames_[ i ].descriptor_set = sets[ i ];
             vkpp::write_ubo_and_combined_image(device_.device(),
-              *frames_[ i ].descriptor_set,
-              frames_[ i ].uniform_buffer.buffer(),
+              frames_[ i ].descriptor_set, frames_[ i ].uniform_buffer.buffer(),
               sizeof(uniform_buffer_object), *texture_.sampler(),
               *texture_.view());
           }
@@ -826,7 +824,7 @@ private:
           };
           command_buffer.beginRendering(rendering_info);
           command_buffer.bindPipeline(
-            vk::PipelineBindPoint::eGraphics, *graphics_pipeline_);
+            vk::PipelineBindPoint::eGraphics, *graphics_pipeline_.pipeline());
           command_buffer.setViewport(0U,
             vk::Viewport {
               .x = 0.0F,
@@ -846,8 +844,8 @@ private:
           command_buffer.bindIndexBuffer(index_buffer_.buffer(), 0UZ,
             vk::IndexTypeValue<decltype(indices_)::value_type>::value);
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-            pipeline_layout_, 0U, *frames_[ frame_index_ ].descriptor_set,
-            nullptr);
+            *graphics_pipeline_.layout(), 0U,
+            frames_[ frame_index_ ].descriptor_set, nullptr);
           command_buffer.drawIndexed(
             static_cast<std::uint32_t>(indices_.size()), 1U, 0U, 0U, 0U);
           command_buffer.endRendering();

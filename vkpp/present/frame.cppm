@@ -23,7 +23,7 @@ export struct frame
   vk::raii::Fence in_flight { nullptr };
   vk::raii::CommandBuffer command_buffer { nullptr };
   mapped_buffer<> uniform_buffer {};
-  vk::raii::DescriptorSet descriptor_set { nullptr };
+  vk::DescriptorSet descriptor_set {};
 };
 
 export struct frames_create_info
@@ -95,8 +95,6 @@ create_frames(const frames_create_info& info)
         }
         return {};
       })
-    // TODO: Konrad - Find the difference between returning by value or r-value
-    // ref. R-value ref is disabling (N)RVO
     .transform([ & ] { return std::move(frames); });
 }
 
