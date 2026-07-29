@@ -45,6 +45,8 @@ export struct graphics_pipeline_runtime_args
   vk::Format depth_format { vk::Format::eUndefined };
   vk::SampleCountFlagBits samples { vk::SampleCountFlagBits::e1 };
   const vk::raii::DescriptorSetLayout& set_layout;
+  std::span<const vk::VertexInputBindingDescription> vertex_bindings {};
+  std::span<const vk::VertexInputAttributeDescription> vertex_attributes {};
 };
 
 export class graphics_pipeline
@@ -75,8 +77,6 @@ export struct graphics_pipeline_shaders
   const char* fragment_entry { "fragment_main" };
 };
 
-// i had to change cullmodeflags to cullmodeflagbits, because
-// graphics_pipeline_spec wasn't working as nttp
 export template<graphics_pipeline_spec Spec = graphics_pipeline_spec {}>
   requires(validate(Spec))
 auto make_graphics_pipeline(const vk::raii::Device& device,
@@ -106,7 +106,6 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
       [ & ](vk::raii::ShaderModule&& module)
         -> std::expected<graphics_pipeline, error_t>
       {
-        // prefer std::array over C-style arrays
         const std::array set_layouts { *runtime_args.set_layout };
         const vk::PipelineLayoutCreateInfo layout_info {
           .setLayoutCount = 1U,
@@ -120,8 +119,6 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
             [ &, module = std::move(module) ](vk::raii::PipelineLayout&& layout)
               -> std::expected<graphics_pipeline, error_t>
             {
-              // all static constexpr were changed to const because ICE in GCC
-              // was triggered
               const std::array stages {
                 vk::PipelineShaderStageCreateInfo {
                   .stage = vk::ShaderStageFlagBits::eVertex,
@@ -135,15 +132,15 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
                 },
               };
 
-              const auto binding = vkpp::vertex::get_binding_description();
-              const auto attributes =
-                vkpp::vertex::get_attribute_descriptions();
               const vk::PipelineVertexInputStateCreateInfo vertex_input {
-                .vertexBindingDescriptionCount = 1U,
-                .pVertexBindingDescriptions = &binding,
-                .vertexAttributeDescriptionCount =
-                  static_cast<std::uint32_t>(attributes.size()),
-                .pVertexAttributeDescriptions = attributes.data(),
+                .vertexBindingDescriptionCount = static_cast<std::uint32_t>(
+                  runtime_args.vertex_bindings.size()),
+                .pVertexBindingDescriptions =
+                  runtime_args.vertex_bindings.data(),
+                .vertexAttributeDescriptionCount = static_cast<std::uint32_t>(
+                  runtime_args.vertex_attributes.size()),
+                .pVertexAttributeDescriptions =
+                  runtime_args.vertex_attributes.data(),
               };
               const vk::PipelineInputAssemblyStateCreateInfo input_assembly {
                 .topology = Spec.topology

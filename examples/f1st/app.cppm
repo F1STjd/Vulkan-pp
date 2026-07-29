@@ -280,6 +280,11 @@ private:
   auto
   create_graphics_pipeline() -> std::expected<void, vkpp::error_t>
   {
+    constexpr std::array vertex_bindings {
+      vkpp::vertex::get_binding_description(),
+    };
+    constexpr auto vertex_attributes =
+      vkpp::vertex::get_attribute_descriptions();
     const std::array color_formats { swap_chain_.format() };
     return vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv")
       .and_then(
@@ -292,6 +297,8 @@ private:
               .depth_format = swap_chain_.depth().format(),
               .samples = device_.msaa_samples(),
               .set_layout = descriptor_set_layout_,
+              .vertex_bindings = vertex_bindings,
+              .vertex_attributes = vertex_attributes,
             },
             { .spirv = spirv })
             .transform([ this ](vkpp::graphics_pipeline&& pipeline) -> void
