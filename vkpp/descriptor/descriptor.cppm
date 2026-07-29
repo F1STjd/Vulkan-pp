@@ -77,7 +77,7 @@ public:
   { return UTILS_VK(pool_.reset(), ^^vk::raii::DescriptorPool::reset); }
 
   [[nodiscard]] auto
-  gandle(this auto&& self) -> decltype(auto)
+  handle(this auto&& self) -> decltype(auto)
   { return std::forward_like<decltype(self)>(self.pool_); }
 
   // I'd rather leave the member public, because of inplace init when creating
