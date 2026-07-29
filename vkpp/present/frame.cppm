@@ -42,9 +42,7 @@ create_frames(const frames_create_info& info)
 
   return info.pool.allocate_primary(info.device.device(), N)
     .transform(
-      // TODO: Konrad - passing by value silences clang-tidy, but idomatic
-      // approach should be to pass by r-value ref (3 pointer move overhead)
-      [ & ](std::vector<vk::raii::CommandBuffer> command_buffers) -> void
+      [ & ](std::vector<vk::raii::CommandBuffer>&& command_buffers) -> void
       {
         for (std::size_t index : std::views::iota(0UZ, N))
         {
@@ -96,57 +94,6 @@ create_frames(const frames_create_info& info)
         return {};
       })
     .transform([ & ] { return std::move(frames); });
-}
-
-[[nodiscard]] auto
-create_frame_slot(device_context& device,
-  vk::raii::CommandBuffer&& command_buffer, vk::DeviceSize ubo_size)
-  -> std::expected<frame, error_t>
-{
-  frame output {
-    .command_buffer = std::move(command_buffer),
-  };
-  return UTILS_VK(
-    device.device().createSemaphore({}), ^^vk::raii::Device::createSemaphore)
-    .transform([ & ](vk::raii::Semaphore&& semaphore) -> void
-      { output.present_complete = std::move(semaphore); })
-    .and_then(
-      [ & ] -> std::expected<vk::raii::Fence, error_t>
-      {
-        return UTILS_VK( //
-          device.device().createFence(
-            { .flags = vk::FenceCreateFlagBits::eSignaled }),
-          ^^vk::raii::Device::createFence);
-      })
-    .transform([ & ](vk::raii::Fence&& fence) -> void
-      { output.in_flight = std::move(fence); })
-    .and_then(
-      [ & ] -> std::expected<mapped_buffer<>, error_t>
-      {
-        return make_buffer_resource(device.allocator(), ubo_size,
-          vk::BufferUsageFlagBits::eUniformBuffer, memory_intent::cpu_to_gpu)
-          .and_then(
-            [](buffer_resource<>&& buffer)
-              -> std::expected<mapped_buffer<>, error_t>
-            {
-              if (buffer.mapped() == nullptr)
-              {
-                return std::unexpected {
-                  app_error {
-                    .kind = app_error_kind::mapping_failed,
-                    .detail = "UBO mapping returned nullptr"sv,
-                  },
-                };
-              }
-              return mapped_buffer<> { std::move(buffer) };
-            });
-      })
-    .transform(
-      [ & ](mapped_buffer<>&& ubo) -> frame
-      {
-        output.uniform_buffer = std::move(ubo);
-        return std::move(output);
-      });
 }
 
 }; // namespace vkpp

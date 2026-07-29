@@ -88,7 +88,6 @@ export auto
 make_texture(const texture_create_info& create_info)
   -> std::expected<texture<>, error_t>
 {
-  // can validation be moved to consteval?
   if (create_info.mip_policy == texture_mip_policy::single_level &&
     create_info.mip_levels != 1U)
   {
@@ -114,7 +113,7 @@ make_texture(const texture_create_info& create_info)
     return std::unexpected {
       app_error {
         .kind = app_error_kind::invalid_argument,
-        .detail = "uplad_precomputed_chain policy not working"sv,
+        .detail = "upload_precomputed_chain policy not implemented"sv,
       },
     };
   }
@@ -204,7 +203,6 @@ make_texture(const texture_create_info& create_info)
                           };
                         });
                   });
-              ;
             });
       });
 }
