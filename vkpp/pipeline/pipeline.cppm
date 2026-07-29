@@ -25,8 +25,8 @@ export struct graphics_pipeline_spec
   bool depth_test { true };
   bool depth_write { true };
   bool blend_enable { false };
-  bool sample_shading { true };
-  float min_sample_shading { 0.2F };
+  bool sample_shading { false };
+  float min_sample_shading { 1.0F };
 };
 
 export consteval auto

@@ -74,6 +74,11 @@ constexpr std::size_t max_frames_in_flight { 2UZ };
 static_assert(max_frames_in_flight > 0,
   "variable % max_frames_in_flight is used later, so being 0 is UB");
 
+static constexpr vkpp::graphics_pipeline_spec k_pipeline_spec {
+  .sample_shading = true,
+  .min_sample_shading = 0.2F,
+};
+
 static constexpr std::array k_set0_bindings {
   vk::DescriptorSetLayoutBinding {
     .binding = 0U,
@@ -281,7 +286,7 @@ private:
         [ &, this ](
           const std::vector<char>& spirv) -> std::expected<void, vkpp::error_t>
         {
-          return vkpp::make_graphics_pipeline(device_.device(),
+          return vkpp::make_graphics_pipeline<k_pipeline_spec>(device_.device(),
             vkpp::graphics_pipeline_runtime_args {
               .color_formats = color_formats,
               .depth_format = swap_chain_.depth().format(),
@@ -508,8 +513,8 @@ private:
   {
     return vkpp::create_frames<max_frames_in_flight>(
       {
-        .device = &device_,
-        .pool = &command_pool_,
+        .device = device_,
+        .pool = command_pool_,
         .ubo_size = sizeof(uniform_buffer_object),
       })
       .transform(
