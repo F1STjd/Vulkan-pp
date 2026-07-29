@@ -19,7 +19,6 @@ target_sources(vkpp
   PUBLIC FILE_SET CXX_MODULES
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
     FILES
-      # --- Foundation: error + io + mesh (migrated from old `utils`) ---
       error/error.cppm          # module vkpp.error
       io/channels.cppm          # module vkpp.io.channels
       io/load.cppm              # module vkpp.io
@@ -40,25 +39,21 @@ target_sources(vkpp
       memory/raw_allocator.cppm
       memory/vma_allocator.cppm
 
-      # --- Phase 0.5 / 0.6 Composition primitives + factory ---
       resources/image.cppm    # module vkpp.image
       resources/buffer.cppm   # module vkpp.buffer
 
-      # --- Phase 1 Class decomposition ---
       core/instance_context.cppm   # module vkpp.instance
       core/device_context.cppm     # module vkpp.device
       present/swapchain.cppm       # module vkpp.swapchain
       present/frame.cppm           # module vkpp.frame
       command/command.cppm         # module vkpp.command
 
-      # --- Phase 2 Textures ---
       resources/texture.cppm  # module vkpp.texture
-      sync/barrier.cppm      # module vkpp.sync.barrier
+      resources/sampler.cppm  # module vkpp.sampler
+      sync/barrier.cppm      # module vkpp.barrier
 
-      # --- Phase 3 Descriptors ---
       descriptor/descriptor.cppm   # module vkpp.descriptor
 
-      # --- Phase 4 Pipelines ---
       pipeline/pipeline.cppm       # module vkpp.pipeline
 )
 
