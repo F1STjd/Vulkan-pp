@@ -119,6 +119,7 @@ private:
       .and_then(std::bind_front(&app::create_device_context, this))
       .and_then(std::bind_front(&app::create_swap_chain, this))
       .and_then(std::bind_front(&app::create_command_pool, this))
+      .and_then(std::bind_front(&app::create_upload_pool, this))
       .and_then(std::bind_front(&app::create_frames, this))
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
@@ -287,10 +288,20 @@ private:
   auto
   create_command_pool() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::command_pool::create(
-      device_.device(), device_.graphics_qf_index())
+    return vkpp::command_pool::create(device_.device(),
+      device_.graphics_qf_index(),
+      vk::CommandPoolCreateFlagBits::eResetCommandBuffer)
       .transform([ this ](vkpp::command_pool&& pool)
         { command_pool_ = std::move(pool); });
+  }
+
+  auto
+  create_upload_pool() -> std::expected<void, vkpp::error_t>
+  {
+    return vkpp::command_pool::create(device_.device(),
+      device_.graphics_qf_index(), vk::CommandPoolCreateFlagBits::eTransient)
+      .transform([ this ](vkpp::command_pool&& pool) -> void
+        { upload_pool_ = std::move(pool); });
   }
 
   auto
@@ -302,7 +313,7 @@ private:
         {
           return vkpp::make_texture({
             .device = device_,
-            .pool = command_pool_,
+            .pool = upload_pool_,
             .pixels = host_texture.pixels,
             .extent = host_texture.extent,
             .format = host_texture.format,
@@ -315,15 +326,13 @@ private:
         { texture_ = std::move(texture); });
   }
 
-  // TODO: Create new command pool for copying (for short-lived buffers), with
-  // vk::CommandPoolCreateFlagBits::eTransient
   auto
   create_vertex_buffer() -> std::expected<void, vkpp::error_t>
   {
     return vkpp::upload_device_local_buffer(
       {
         .device = device_,
-        .pool = command_pool_,
+        .pool = upload_pool_,
         .bytes = std::as_bytes(std::span { vertices_ }),
         .gpu_usage = vk::BufferUsageFlagBits::eVertexBuffer,
       })
@@ -337,7 +346,7 @@ private:
     return vkpp::upload_device_local_buffer(
       {
         .device = device_,
-        .pool = command_pool_,
+        .pool = upload_pool_,
         .bytes = std::as_bytes(std::span { indices_ }),
         .gpu_usage = vk::BufferUsageFlagBits::eIndexBuffer,
       })
@@ -780,6 +789,7 @@ private:
   vkpp::descriptor_pool descriptor_pool_ {};
 
   vkpp::command_pool command_pool_ {};
+  vkpp::command_pool upload_pool_ {};
   std::array<vkpp::frame, max_frames_in_flight> frames_ {};
   std::uint32_t frame_index_ {};
 

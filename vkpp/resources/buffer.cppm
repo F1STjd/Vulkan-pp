@@ -145,17 +145,16 @@ upload_device_local_buffer(const buffer_upload_create_info& create_info)
                 device_local_buffer.buffer();
               return single_time.begin()
                 .and_then(
-                  [ & ](vk::raii::CommandBuffer* command_buffer)
-                    -> std::expected<void, error_t>
+                  [ & ] -> std::expected<void, error_t>
                   {
                     vk::BufferCopy region {
                       .srcOffset = 0UZ,
                       .dstOffset = 0UZ,
                       .size = byte_size,
                     };
-                    command_buffer->copyBuffer(
+                    single_time.command_buffer().copyBuffer(
                       source_buffer, destination_buffer, region);
-                    return single_time.end_and_submit();
+                    return single_time.end_and_submit(upload::wait_idle);
                   })
                 .transform(
                   [ &,

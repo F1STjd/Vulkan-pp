@@ -160,13 +160,13 @@ make_texture(const texture_create_info& create_info)
               const vk::Image image_handle = image.image();
               return single_time.begin()
                 .and_then(
-                  [ & ](vk::raii::CommandBuffer* command_buffer)
-                    -> std::expected<void, error_t>
+                  [ & ] -> std::expected<void, error_t>
                   {
+                    auto& command_buffer = single_time.command_buffer();
                     if (create_info.mip_policy ==
                       texture_mip_policy::generate_gpu_blit)
                     {
-                      return record_upload_sampled_texture(*command_buffer,
+                      return record_upload_sampled_texture(command_buffer,
                         create_info.device.physical_device(),
                         staging_buffer.buffer(), image_handle,
                         create_info.format, create_info.extent,
@@ -175,18 +175,18 @@ make_texture(const texture_create_info& create_info)
                     const image_barrier to_transfer_dst =
                       undefined_dst_to_transfer_dst(image_handle, 1U);
                     record_barriers(
-                      *command_buffer, std::span { &to_transfer_dst, 1Uz });
-                    record_copy_buffer_to_image(*command_buffer,
+                      command_buffer, std::span { &to_transfer_dst, 1Uz });
+                    record_copy_buffer_to_image(command_buffer,
                       staging_buffer.buffer(), image_handle,
                       create_info.extent);
                     const image_barrier to_shader_read =
                       transfer_dst_to_shader_read(image_handle, 0U, 1U);
                     record_barriers(
-                      *command_buffer, std::span { &to_shader_read, 1UZ });
+                      command_buffer, std::span { &to_shader_read, 1UZ });
                     return {};
                   })
                 .and_then([ & ] -> std::expected<void, error_t>
-                  { return single_time.end_and_submit(); })
+                  { return single_time.end_and_submit(upload::wait_idle); })
                 .and_then(
                   [ & ]() -> std::expected<texture<>, error_t>
                   {
