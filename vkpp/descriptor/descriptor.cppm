@@ -28,6 +28,11 @@ make_descriptor_set_layout(const vk::raii::Device& device,
 export class descriptor_pool
 {
 public:
+  descriptor_pool() = default;
+  explicit descriptor_pool(vk::raii::DescriptorPool&& pool)
+  : pool_ { std::move(pool) }
+  {}
+
   [[nodiscard]] static auto
   create(const vk::raii::Device& device, std::uint32_t max_sets,
     std::span<const vk::DescriptorPoolSize> pool_sizes,
@@ -43,7 +48,7 @@ public:
     return UTILS_VK(device.createDescriptorPool(info),
       ^^vk::raii::Device::createDescriptorPool)
       .transform([](vk::raii::DescriptorPool&& pool) -> descriptor_pool
-        { return { .pool_ = std::move(pool) }; });
+        { return descriptor_pool { std::move(pool) }; });
   }
 
   [[nodiscard]] auto
@@ -80,9 +85,7 @@ public:
   handle(this auto&& self) -> decltype(auto)
   { return std::forward_like<decltype(self)>(self.pool_); }
 
-  // I'd rather leave the member public, because of inplace init when creating
-  //  private:
-public:
+private:
   vk::raii::DescriptorPool pool_ { nullptr };
 };
 

@@ -15,6 +15,11 @@ namespace vkpp
 export class command_pool
 {
 public:
+  command_pool() = default;
+  explicit command_pool(vk::raii::CommandPool&& pool)
+  : pool_ { std::move(pool) }
+  {}
+
   [[nodiscard]] static auto
   create(const vk::raii::Device& device, std::uint32_t queue_family_index)
     -> std::expected<command_pool, error_t>
@@ -25,13 +30,8 @@ public:
     };
     return UTILS_VK(device.createCommandPool(command_pool_info),
       ^^vk::raii::Device::createCommandPool)
-      .transform(
-        [](vk::raii::CommandPool&& pool)
-        {
-          command_pool output {};
-          output.pool_ = std::move(pool);
-          return output;
-        });
+      .transform([](vk::raii::CommandPool&& pool) -> command_pool
+        { return command_pool { std::move(pool) }; });
   }
 
   [[nodiscard]] auto
