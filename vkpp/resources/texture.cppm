@@ -115,8 +115,8 @@ private:
 
 export struct texture_create_info
 {
-  device_context* device {};
-  command_pool* pool {};
+  device_context& device;
+  command_pool& pool;
   std::span<const std::byte> pixels {};
   vk::Extent2D extent {};
   vk::Format format { vk::Format::eR8G8B8A8Srgb };
@@ -162,7 +162,7 @@ make_texture(const texture_create_info& create_info)
 
   const vk::DeviceSize byte_size = create_info.pixels.size_bytes();
 
-  return make_buffer_resource(create_info.device->allocator(), byte_size,
+  return make_buffer_resource(create_info.device.allocator(), byte_size,
     vk::BufferUsageFlagBits::eTransferSrc, memory_intent::staging)
     .and_then(
       [ & ](
@@ -181,7 +181,7 @@ make_texture(const texture_create_info& create_info)
           staging_buffer.mapped(), create_info.pixels.data(), byte_size);
 
         return make_image_resource<image_kind::sampled_texture>(
-          create_info.device->allocator(), create_info.device->device(),
+          create_info.device.allocator(), create_info.device.device(),
           image_runtime_args {
             .extent = create_info.extent,
             .format = create_info.format,
@@ -194,9 +194,9 @@ make_texture(const texture_create_info& create_info)
               -> std::expected<texture<>, error_t>
             {
               single_time_submit single_time {
-                *create_info.pool,
-                create_info.device->device(),
-                create_info.device->graphics_queue(),
+                create_info.pool,
+                create_info.device.device(),
+                create_info.device.graphics_queue(),
               };
 
               const vk::Image image_handle = image.image();
@@ -209,7 +209,7 @@ make_texture(const texture_create_info& create_info)
                       texture_mip_policy::generate_gpu_blit)
                     {
                       return record_upload_sampled_texture(*command_buffer,
-                        create_info.device->physical_device(),
+                        create_info.device.physical_device(),
                         staging_buffer.buffer(), image_handle,
                         create_info.format, create_info.extent,
                         create_info.mip_levels);
@@ -232,9 +232,8 @@ make_texture(const texture_create_info& create_info)
                 .and_then(
                   [ & ]() -> std::expected<texture<>, error_t>
                   {
-                    return make_sampler(create_info.device->device(),
-                      create_info.device->physical_device(),
-                      create_info.sampler)
+                    return make_sampler(create_info.device.device(),
+                      create_info.device.physical_device(), create_info.sampler)
                       .transform(
                         [ &, image = std::move(image) ](
                           vk::raii::Sampler&& sampler) mutable -> texture<>

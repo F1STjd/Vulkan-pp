@@ -49,7 +49,7 @@ public:
   raw_policy() = default;
   raw_policy(const vk::raii::PhysicalDevice& physical_device,
     const vk::raii::Device& device)
-  : physical_device_ { &physical_device }, device_ { &device }
+  : physical_device_ { physical_device }, device_ { device }
   {}
 
   [[nodiscard]]
@@ -188,9 +188,8 @@ private:
     return *memory_type_it;
   }
 
-  // Pointers nor references, so the policy stays movable
-  const vk::raii::PhysicalDevice* physical_device_ {};
-  const vk::raii::Device* device_ {};
+  std::optional<const vk::raii::PhysicalDevice&> physical_device_ {};
+  std::optional<const vk::raii::Device&> device_ {};
 };
 
 static_assert(device_allocator<raw_policy>);

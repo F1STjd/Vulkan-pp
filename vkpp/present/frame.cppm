@@ -28,8 +28,8 @@ export struct frame
 
 export struct frames_create_info
 {
-  device_context* device {};
-  command_pool* pool {};
+  device_context& device;
+  command_pool& pool;
   vk::DeviceSize ubo_size {};
 };
 
@@ -40,7 +40,7 @@ create_frames(const frames_create_info& info)
 {
   std::array<frame, N> frames {};
 
-  return info.pool->allocate_primary(info.device->device(), N)
+  return info.pool.allocate_primary(info.device.device(), N)
     .transform(
       // TODO: Konrad - passing by value silences clang-tidy, but idomatic
       // approach should be to pass by r-value ref (3 pointer move overhead)
@@ -56,7 +56,7 @@ create_frames(const frames_create_info& info)
       {
         for (std::size_t index : std::views::iota(0UZ, N))
         {
-          auto semaphore = UTILS_VK(info.device->device().createSemaphore({}),
+          auto semaphore = UTILS_VK(info.device.device().createSemaphore({}),
             ^^vk::raii::Device::createSemaphore);
           if (!semaphore)
           {
@@ -65,7 +65,7 @@ create_frames(const frames_create_info& info)
           frames[ index ].present_complete = std::move(*semaphore);
 
           auto fence = UTILS_VK( //
-            info.device->device().createFence(
+            info.device.device().createFence(
               { .flags = vk::FenceCreateFlagBits::eSignaled }),
             ^^vk::raii::Device::createFence);
           if (!fence) { return std::unexpected { std::move(fence).error() }; }
@@ -78,7 +78,7 @@ create_frames(const frames_create_info& info)
       {
         for (std::size_t index : std::views::iota(0UZ, N))
         {
-          auto ubo = make_buffer_resource(info.device->allocator(),
+          auto ubo = make_buffer_resource(info.device.allocator(),
             info.ubo_size, vk::BufferUsageFlagBits::eUniformBuffer,
             memory_intent::cpu_to_gpu);
           if (!ubo) { return std::unexpected { std::move(ubo).error() }; }

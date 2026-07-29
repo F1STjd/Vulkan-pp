@@ -60,7 +60,7 @@ export class single_time_submit
 public:
   single_time_submit(command_pool& pool, const vk::raii::Device& device,
     const vk::raii::Queue& queue)
-  : pool_ { &pool }, device_ { &device }, queue_ { &queue }
+  : pool_ { pool }, device_ { device }, queue_ { queue }
   {}
 
   single_time_submit(const single_time_submit&) = delete;
@@ -77,11 +77,11 @@ public:
   begin() -> std::expected<vk::raii::CommandBuffer*, error_t>
   {
     const vk::CommandBufferAllocateInfo allocate_info {
-      .commandPool = *pool_->handle(),
+      .commandPool = *pool_.handle(),
       .level = vk::CommandBufferLevel::ePrimary,
       .commandBufferCount = 1U,
     };
-    return UTILS_VK(device_->allocateCommandBuffers(allocate_info),
+    return UTILS_VK(device_.allocateCommandBuffers(allocate_info),
       ^^vk::raii::Device::allocateCommandBuffers)
       .and_then(
         [ this ](std::vector<vk::raii::CommandBuffer> buffers)
@@ -110,16 +110,16 @@ public:
             .pCommandBuffers = &handle,
           };
           return UTILS_VK(
-            queue_->submit(submit_info, nullptr), ^^vk::raii::Queue::submit);
+            queue_.submit(submit_info, nullptr), ^^vk::raii::Queue::submit);
         })
       .and_then([ this ] -> std::expected<void, error_t>
-        { return UTILS_VK(queue_->waitIdle(), ^^vk::raii::Queue::waitIdle); });
+        { return UTILS_VK(queue_.waitIdle(), ^^vk::raii::Queue::waitIdle); });
   }
 
 private:
-  command_pool* pool_ {};
-  const vk::raii::Device* device_ {};
-  const vk::raii::Queue* queue_ {};
+  command_pool& pool_;
+  const vk::raii::Device& device_;
+  const vk::raii::Queue& queue_;
   vk::raii::CommandBuffer command_buffer_ { nullptr };
 };
 

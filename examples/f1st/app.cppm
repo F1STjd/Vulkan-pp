@@ -405,8 +405,8 @@ private:
         [ &, this ](const vkpp::host_image& host_texture)
         {
           return vkpp::make_texture({
-            .device = &device_,
-            .pool = &command_pool_,
+            .device = device_,
+            .pool = command_pool_,
             .pixels = host_texture.pixels,
             .extent = host_texture.extent,
             .format = host_texture.format,
@@ -480,8 +480,8 @@ private:
   {
     return vkpp::upload_device_local_buffer(
       {
-        .device = &device_,
-        .pool = &command_pool_,
+        .device = device_,
+        .pool = command_pool_,
         .bytes = std::as_bytes(std::span { vertices_ }),
         .gpu_usage = vk::BufferUsageFlagBits::eVertexBuffer,
       })
@@ -494,8 +494,8 @@ private:
   {
     return vkpp::upload_device_local_buffer(
       {
-        .device = &device_,
-        .pool = &command_pool_,
+        .device = device_,
+        .pool = command_pool_,
         .bytes = std::as_bytes(std::span { indices_ }),
         .gpu_usage = vk::BufferUsageFlagBits::eIndexBuffer,
       })
