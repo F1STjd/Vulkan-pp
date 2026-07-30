@@ -136,7 +136,6 @@ private:
   vk::raii::CommandPool pool_ { nullptr };
 };
 
-// what about destruction of the pointers
 export struct upload_sync
 {
   vk::Semaphore wait {};
