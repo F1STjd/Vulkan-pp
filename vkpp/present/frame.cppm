@@ -20,7 +20,6 @@ using namespace std::string_view_literals;
 export struct frame
 {
   vk::raii::Semaphore present_complete { nullptr };
-  vk::raii::Fence in_flight { nullptr };
   vk::raii::CommandBuffer command_buffer { nullptr };
   mapped_buffer<> uniform_buffer {};
   vk::DescriptorSet descriptor_set {};
@@ -61,13 +60,6 @@ create_frames(const frames_create_info& info)
             return std::unexpected { std::move(semaphore).error() };
           }
           frames[ index ].present_complete = std::move(*semaphore);
-
-          auto fence = UTILS_VK( //
-            info.device.device().createFence(
-              { .flags = vk::FenceCreateFlagBits::eSignaled }),
-            ^^vk::raii::Device::createFence);
-          if (!fence) { return std::unexpected { std::move(fence).error() }; }
-          frames[ index ].in_flight = std::move(*fence);
         }
         return {};
       })

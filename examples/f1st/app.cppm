@@ -31,6 +31,7 @@ import vkpp.texture;
 import vkpp.barrier;
 import vkpp.pipeline;
 import vkpp.descriptor;
+import vkpp.semaphore;
 
 namespace f1st
 {
@@ -121,6 +122,7 @@ private:
       .and_then(std::bind_front(&app::create_command_pool, this))
       .and_then(std::bind_front(&app::create_upload_pool, this))
       .and_then(std::bind_front(&app::create_frames, this))
+      .and_then(std::bind_front(&app::create_frame_timeline, this))
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
       .and_then(std::bind_front(&app::create_texture_image, this))
@@ -203,6 +205,7 @@ private:
           .dynamic_rendering = true,
           .synchronization2 = true,
           .extended_dynamic_state = true,
+          .timeline_semaphore = true,
         },
         .require_present = true,
         .request_dedicated_transfer = true,
@@ -367,6 +370,14 @@ private:
       .transform(
         [ this ](std::array<vkpp::frame, max_frames_in_flight>&& frames) -> void
         { frames_ = std::move(frames); });
+  }
+
+  auto
+  create_frame_timeline() -> std::expected<void, vkpp::error_t>
+  {
+    return vkpp::make_timeline_semaphore(device_.device())
+      .transform([ this ](vk::raii::Semaphore&& semaphore) -> void
+        { frame_timeline_ = std::move(semaphore); });
   }
 
   void
@@ -644,15 +655,27 @@ private:
   auto
   draw_frame_active() -> std::expected<void, vkpp::error_t>
   {
+    frame_index_ =
+      static_cast<std::uint32_t>(frame_counter_ % max_frames_in_flight);
     auto& frame = frames_[ frame_index_ ];
 
-    if (auto result = device_.device().waitForFences(*frame.in_flight, vk::True,
-          std::numeric_limits<std::uint64_t>::max());
+    const std::uint64_t wait_value = frame_counter_ >= max_frames_in_flight
+      ? frame_counter_ - max_frames_in_flight + 1ULL
+      : 0ULL;
+    const vk::Semaphore timeline = *frame_timeline_;
+    const vk::SemaphoreWaitInfo timeline_wait_info {
+      .semaphoreCount = 1U,
+      .pSemaphores = &timeline,
+      .pValues = &wait_value,
+    };
+
+    if (const auto result = device_.device().waitSemaphores(
+          timeline_wait_info, std::numeric_limits<std::uint64_t>::max());
       result != vk::Result::eSuccess)
     {
       return std::unexpected {
         vkpp::vk_error {
-          .function = "waitForFences",
+          .function = "waitSemaphores",
           .type = "vk::raii::Device",
           .result = result,
         },
@@ -679,14 +702,8 @@ private:
 
     update_uniform_buffer(frame_index_);
 
-    return UTILS_VK(device_.device().resetFences(*frame.in_flight),
-      ^^vk::raii::Device::resetFences)
-      .and_then(
-        [ & ] -> std::expected<void, vkpp::error_t>
-        {
-          return UTILS_VK(
-            frame.command_buffer.reset(), ^^vk::raii::CommandBuffer::reset);
-        })
+    return UTILS_VK(
+      frame.command_buffer.reset(), ^^vk::raii::CommandBuffer::reset)
       .and_then([ this, image_index ] -> std::expected<void, vkpp::error_t>
         { return record_command_buffer(image_index); })
       .and_then(
@@ -699,9 +716,16 @@ private:
           const vk::CommandBufferSubmitInfo command_buffer_info {
             .commandBuffer = *frame.command_buffer,
           };
-          const vk::SemaphoreSubmitInfo signal_semaphore_info {
-            .semaphore = *swap_chain_.render_finished(image_index),
-            .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+          const std::array signal_semaphore_infos {
+            vk::SemaphoreSubmitInfo {
+              .semaphore = *swap_chain_.render_finished(image_index),
+              .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            },
+            vk::SemaphoreSubmitInfo {
+              .semaphore = *frame_timeline_,
+              .value = frame_counter_ + 1ULL,
+              .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            },
           };
 
           const vk::SubmitInfo2 submit_info {
@@ -709,11 +733,12 @@ private:
             .pWaitSemaphoreInfos = &wait_semaphore_info,
             .commandBufferInfoCount = 1U,
             .pCommandBufferInfos = &command_buffer_info,
-            .signalSemaphoreInfoCount = 1U,
-            .pSignalSemaphoreInfos = &signal_semaphore_info,
+            .signalSemaphoreInfoCount =
+              static_cast<std::uint32_t>(signal_semaphore_infos.size()),
+            .pSignalSemaphoreInfos = signal_semaphore_infos.data(),
           };
           return UTILS_VK(
-            device_.graphics_queue().submit2(submit_info, *frame.in_flight),
+            device_.graphics_queue().submit2(submit_info, nullptr),
             ^^vk::raii::Queue::submit);
         })
       .and_then(
@@ -734,11 +759,7 @@ private:
 
           result = device_.graphics_queue().presentKHR(present_info);
 
-          if (result == vk::Result::eSuccess)
-          {
-            ++frame_index_ %= max_frames_in_flight;
-            return {};
-          }
+          if (result == vk::Result::eSuccess) { return {}; }
           if (result == vk::Result::eSuboptimalKHR ||
             result == vk::Result::eErrorOutOfDateKHR || resized_)
           {
@@ -796,6 +817,8 @@ private:
   vkpp::command_pool upload_pool_ {};
   std::array<vkpp::frame, max_frames_in_flight> frames_ {};
   std::uint32_t frame_index_ {};
+  vk::raii::Semaphore frame_timeline_ { nullptr };
+  std::uint64_t frame_counter_ { 0ULL };
 
   vkpp::texture<> texture_ {};
 

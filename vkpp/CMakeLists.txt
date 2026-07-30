@@ -44,13 +44,17 @@ target_sources(vkpp
 
       core/instance_context.cppm   # module vkpp.instance
       core/device_context.cppm     # module vkpp.device
+
       present/swapchain.cppm       # module vkpp.swapchain
       present/frame.cppm           # module vkpp.frame
+
       command/command.cppm         # module vkpp.command
 
       resources/texture.cppm  # module vkpp.texture
       resources/sampler.cppm  # module vkpp.sampler
+
       sync/barrier.cppm      # module vkpp.barrier
+      sync/semaphore.cppm    # module vkpp.semaphore
 
       descriptor/descriptor.cppm   # module vkpp.descriptor
 

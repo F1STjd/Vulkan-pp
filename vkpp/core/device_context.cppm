@@ -22,6 +22,7 @@ export struct device_feature_requests
   bool dynamic_rendering { false };
   bool synchronization2 { false };
   bool extended_dynamic_state { false };
+  bool timeline_semaphore { false };
 };
 
 export struct device_requirements
@@ -174,7 +175,7 @@ public:
 
 private:
   using device_feature_chain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
-    vk::PhysicalDeviceVulkan13Features,
+    vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>;
 
   [[nodiscard]] static constexpr auto
@@ -186,6 +187,9 @@ private:
     auto& core = chain.get<vk::PhysicalDeviceFeatures2>().features;
     core.samplerAnisotropy = vk::Bool32 { requests.sampler_anisotropy };
     core.sampleRateShading = vk::Bool32 { requests.sample_rate_shading };
+
+    auto& v12 = chain.get<vk::PhysicalDeviceVulkan12Features>();
+    v12.timelineSemaphore = vk::Bool32 { requests.timeline_semaphore };
 
     auto& v13 = chain.get<vk::PhysicalDeviceVulkan13Features>();
     v13.dynamicRendering = vk::Bool32 { requests.dynamic_rendering };
@@ -203,10 +207,11 @@ private:
   {
     const auto available =
       physical_device.getFeatures2<vk::PhysicalDeviceFeatures2,
-        vk::PhysicalDeviceVulkan13Features,
+        vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
 
     const auto& core = available.get<vk::PhysicalDeviceFeatures2>().features;
+    const auto& v12 = available.get<vk::PhysicalDeviceVulkan12Features>();
     const auto& v13 = available.get<vk::PhysicalDeviceVulkan13Features>();
     const auto& eds =
       available.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
@@ -216,6 +221,10 @@ private:
       return false;
     }
     if (requests.sample_rate_shading && core.sampleRateShading != vk::True)
+    {
+      return false;
+    }
+    if (requests.timeline_semaphore && v12.timelineSemaphore != vk::True)
     {
       return false;
     }
