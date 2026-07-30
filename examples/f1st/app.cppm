@@ -692,25 +692,28 @@ private:
       .and_then(
         [ this, image_index, &frame ] -> std::expected<void, vkpp::error_t>
         {
-          vk::PipelineStageFlags wait_destination_stage_mask {
-            vk::PipelineStageFlagBits::eColorAttachmentOutput
+          const vk::SemaphoreSubmitInfo wait_semaphore_info {
+            .semaphore = *frame.present_complete,
+            .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
           };
-          const vk::Semaphore wait_semaphore = *frame.present_complete;
-          const vk::CommandBuffer command_buffer = *frame.command_buffer;
-          const vk::Semaphore signal_semaphore =
-            *swap_chain_.render_finished(image_index);
+          const vk::CommandBufferSubmitInfo command_buffer_info {
+            .commandBuffer = *frame.command_buffer,
+          };
+          const vk::SemaphoreSubmitInfo signal_semaphore_info {
+            .semaphore = *swap_chain_.render_finished(image_index),
+            .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+          };
 
-          const vk::SubmitInfo submit_info {
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &wait_semaphore,
-            .pWaitDstStageMask = &wait_destination_stage_mask,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &command_buffer,
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &signal_semaphore,
+          const vk::SubmitInfo2 submit_info {
+            .waitSemaphoreInfoCount = 1U,
+            .pWaitSemaphoreInfos = &wait_semaphore_info,
+            .commandBufferInfoCount = 1U,
+            .pCommandBufferInfos = &command_buffer_info,
+            .signalSemaphoreInfoCount = 1U,
+            .pSignalSemaphoreInfos = &signal_semaphore_info,
           };
           return UTILS_VK(
-            device_.graphics_queue().submit(submit_info, *frame.in_flight),
+            device_.graphics_queue().submit2(submit_info, *frame.in_flight),
             ^^vk::raii::Queue::submit);
         })
       .and_then(
