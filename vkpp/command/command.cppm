@@ -171,7 +171,7 @@ public:
     return UTILS_VK(device_.allocateCommandBuffers(allocate_info),
       ^^vk::raii::Device::allocateCommandBuffers)
       .and_then(
-        [ this ](std::vector<vk::raii::CommandBuffer> buffers)
+        [ this ](std::vector<vk::raii::CommandBuffer>&& buffers)
           -> std::expected<void, error_t>
         {
           command_buffer_ = std::move(buffers.front());
