@@ -121,6 +121,7 @@ private:
       .and_then(std::bind_front(&app::create_swap_chain, this))
       .and_then(std::bind_front(&app::create_command_pool, this))
       .and_then(std::bind_front(&app::create_upload_pool, this))
+      .and_then(std::bind_front(&app::create_transfer_upload_pool, this))
       .and_then(std::bind_front(&app::create_frames, this))
       .and_then(std::bind_front(&app::create_frame_timeline, this))
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
@@ -309,6 +310,15 @@ private:
   }
 
   auto
+  create_transfer_upload_pool() -> std::expected<void, vkpp::error_t>
+  {
+    return vkpp::command_pool::create(device_.device(),
+      device_.transfer_qf_index(), vk::CommandPoolCreateFlagBits::eTransient)
+      .transform([ this ](vkpp::command_pool&& pool) -> void
+        { transfer_upload_pool_ = std::move(pool); });
+  }
+
+  auto
   create_texture_image() -> std::expected<void, vkpp::error_t>
   {
     return vkpp::load_host_image_rgba8(vkpp::texture_path)
@@ -318,6 +328,7 @@ private:
           return vkpp::make_texture({
             .device = device_,
             .pool = upload_pool_,
+            .transfer_pool = transfer_upload_pool_,
             .pixels = host_texture.pixels,
             .extent = host_texture.extent,
             .format = host_texture.format,
@@ -337,6 +348,7 @@ private:
       {
         .device = device_,
         .pool = upload_pool_,
+        .transfer_pool = transfer_upload_pool_,
         .bytes = std::as_bytes(std::span { vertices_ }),
         .gpu_usage = vk::BufferUsageFlagBits::eVertexBuffer,
       })
@@ -351,6 +363,7 @@ private:
       {
         .device = device_,
         .pool = upload_pool_,
+        .transfer_pool = transfer_upload_pool_,
         .bytes = std::as_bytes(std::span { indices_ }),
         .gpu_usage = vk::BufferUsageFlagBits::eIndexBuffer,
       })
@@ -816,6 +829,7 @@ private:
 
   vkpp::command_pool command_pool_ {};
   vkpp::command_pool upload_pool_ {};
+  vkpp::command_pool transfer_upload_pool_ {};
   std::array<vkpp::frame, max_frames_in_flight> frames_ {};
   std::uint32_t frame_index_ {};
   vk::raii::Semaphore frame_timeline_ { nullptr };
