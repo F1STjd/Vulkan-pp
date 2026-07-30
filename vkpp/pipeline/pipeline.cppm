@@ -118,8 +118,8 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
             [ &, module = std::move(module) ](vk::raii::PipelineLayout&& layout)
               -> std::expected<graphics_pipeline, error_t>
             {
-              // Removed static constexpr from everything, because GGC's ICE was
-              // trigegred
+              // Removed static constexpr from everything, because GCC's ICE was
+              // triggered
               const std::array stages {
                 vk::PipelineShaderStageCreateInfo {
                   .stage = vk::ShaderStageFlagBits::eVertex,
