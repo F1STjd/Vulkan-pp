@@ -724,7 +724,7 @@ private:
             vk::SemaphoreSubmitInfo {
               .semaphore = *frame_timeline_,
               .value = frame_counter_ + 1ULL,
-              .stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+              .stageMask = vk::PipelineStageFlagBits2::eAllCommands,
             },
           };
 
