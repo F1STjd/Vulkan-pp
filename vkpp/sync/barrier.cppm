@@ -34,6 +34,19 @@ export struct image_barrier
   std::uint32_t dst_queue_family { vk::QueueFamilyIgnored };
 };
 
+export struct buffer_barrier
+{
+  vk::PipelineStageFlags2 src_stage {};
+  vk::AccessFlags2 src_access {};
+  vk::PipelineStageFlags2 dst_stage {};
+  vk::AccessFlags2 dst_access {};
+  vk::Buffer buffer {};
+  vk::DeviceSize offset { 0UZ };
+  vk::DeviceSize size { vk::WholeSize };
+  std::uint32_t src_queue_family { vk::QueueFamilyIgnored };
+  std::uint32_t dst_queue_family { vk::QueueFamilyIgnored };
+};
+
 export void
 record_barriers(vk::raii::CommandBuffer& command_buffer,
   std::span<const image_barrier> barriers)
@@ -59,6 +72,34 @@ record_barriers(vk::raii::CommandBuffer& command_buffer,
     .imageMemoryBarrierCount =
       static_cast<std::uint32_t>(native_barriers.size()),
     .pImageMemoryBarriers = native_barriers.data(),
+  };
+  command_buffer.pipelineBarrier2(dependency_info);
+}
+
+export void
+record_barriers(vk::raii::CommandBuffer& command_buffer,
+  std::span<const buffer_barrier> barriers)
+{
+  std::vector<vk::BufferMemoryBarrier2> native_barriers;
+  native_barriers.reserve(barriers.size());
+  for (const buffer_barrier& barrier : barriers)
+  {
+    native_barriers.push_back({
+      .srcStageMask = barrier.src_stage,
+      .srcAccessMask = barrier.src_access,
+      .dstStageMask = barrier.dst_stage,
+      .dstAccessMask = barrier.dst_access,
+      .srcQueueFamilyIndex = barrier.src_queue_family,
+      .dstQueueFamilyIndex = barrier.dst_queue_family,
+      .buffer = barrier.buffer,
+      .offset = barrier.offset,
+      .size = barrier.size,
+    });
+  }
+  const vk::DependencyInfo dependency_info {
+    .bufferMemoryBarrierCount =
+      static_cast<std::uint32_t>(native_barriers.size()),
+    .pBufferMemoryBarriers = native_barriers.data(),
   };
   command_buffer.pipelineBarrier2(dependency_info);
 }
@@ -276,6 +317,96 @@ record_upload_sampled_texture(vk::raii::CommandBuffer& command_buffer,
     transfer_dst_to_shader_read(image, 0U, mip_levels);
   record_barriers(command_buffer, std::span { &to_shader_read, 1UZ });
   return {};
+}
+
+export struct ownership_transfer
+{
+  std::uint32_t src_queue_family {};
+  std::uint32_t dst_queue_family {};
+};
+
+export [[nodiscard]] constexpr auto
+release_buffer_ownership(vk::Buffer buffer, ownership_transfer transfer,
+  vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access)
+  -> buffer_barrier
+{
+  return {
+    .src_stage = src_stage,
+    .src_access = src_access,
+    .dst_stage = vk::PipelineStageFlagBits2::eNone,
+    .dst_access = {},
+    .buffer = buffer,
+    .src_queue_family = transfer.src_queue_family,
+    .dst_queue_family = transfer.dst_queue_family,
+  };
+}
+
+export [[nodiscard]] constexpr auto
+acquire_buffer_ownership(vk::Buffer buffer, ownership_transfer transfer,
+  vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access)
+  -> buffer_barrier
+{
+  return {
+    .src_stage = vk::PipelineStageFlagBits2::eNone,
+    .src_access = {},
+    .dst_stage = dst_stage,
+    .dst_access = dst_access,
+    .buffer = buffer,
+    .src_queue_family = transfer.src_queue_family,
+    .dst_queue_family = transfer.dst_queue_family,
+  };
+}
+
+export [[nodiscard]] constexpr auto
+release_image_ownership(vk::Image image, ownership_transfer transfer,
+  vk::ImageLayout old_layout, vk::ImageLayout new_layout,
+  vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access,
+  std::uint32_t mip_count = 1U,
+  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor)
+  -> image_barrier
+{
+  return {
+    .src_stage = src_stage,
+    .src_access = src_access,
+    .dst_stage = vk::PipelineStageFlagBits2::eNone,
+    .dst_access = {},
+    .old_layout = old_layout,
+    .new_layout = new_layout,
+    .image = image,
+    .range = {
+      .aspectMask = aspect,
+      .levelCount = mip_count,
+      .layerCount = 1U,
+    },
+    .src_queue_family = transfer.src_queue_family,
+    .dst_queue_family = transfer.dst_queue_family,
+  };
+}
+
+export [[nodiscard]] constexpr auto
+acquire_image_ownership(vk::Image image, ownership_transfer transfer,
+  vk::ImageLayout old_layout, vk::ImageLayout new_layout,
+  vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
+  std::uint32_t mip_count = 1U,
+  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor)
+  -> image_barrier
+{
+  return {
+    .src_stage = vk::PipelineStageFlagBits2::eNone,
+    .src_access = {},
+    .dst_stage = dst_stage,
+    .dst_access = dst_access,
+    .old_layout = old_layout,
+    .new_layout = new_layout,
+    .image = image,
+    .range = {
+      .aspectMask = aspect,
+      .levelCount = mip_count,
+      .layerCount = 1U,
+    },
+    .src_queue_family = transfer.src_queue_family,
+    .dst_queue_family = transfer.dst_queue_family,
+  };
 }
 
 } // namespace vkpp

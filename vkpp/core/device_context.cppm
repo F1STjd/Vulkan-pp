@@ -30,14 +30,12 @@ export struct device_requirements
   std::uint32_t min_api_version { vk::ApiVersion13 };
   device_feature_requests features {};
   bool require_present { true };
+  bool request_dedicated_transfer { false };
 };
 
 export class device_context
 {
 public:
-  // TODO: Konrad - Create additional (transfer) queue for any transfering
-  // operations. Help:
-  // https://docs.vulkan.org/tutorial/latest/04_Vertex_buffers/02_Staging_buffer.html#_transfer_queue
   [[nodiscard]] static auto
   create(
     const instance_context& instance, const device_requirements& requirements)
@@ -71,18 +69,41 @@ public:
                 output.physical_device_, instance.surface())
             : *find_graphics_qf(output.physical_device_);
 
-          static constexpr float graphics_queue_priority { 0.5F };
-          vk::DeviceQueueCreateInfo device_queue_create_info {
-            .queueFamilyIndex = output.graphics_qf_index_,
-            .queueCount = 1,
-            .pQueuePriorities = &graphics_queue_priority,
+          static constexpr float queue_priority { 0.5F };
+          // std::inplace_vector is better; no need of manual ckeck of actual
+          // size. We are in C++26
+          std::inplace_vector<vk::DeviceQueueCreateInfo, 2> queue_create_infos {
+            vk::DeviceQueueCreateInfo {
+              .queueFamilyIndex = output.graphics_qf_index_,
+              .queueCount = 1,
+              .pQueuePriorities = &queue_priority,
+            },
           };
+          output.transfer_qf_index_ = output.graphics_qf_index_;
+          if (requirements.request_dedicated_transfer)
+          {
+            if (const auto transfer_qf =
+                  find_dedicated_transfer_qf(output.physical_device_))
+            {
+              output.transfer_qf_index_ = *transfer_qf;
+              // would like to use emplace_back here, but I don't know how to do
+              // it with aggregates. Also pNext, and flags should be also passed
+              // then
+              queue_create_infos.push_back({
+                .queueFamilyIndex = *transfer_qf,
+                .queueCount = 1,
+                .pQueuePriorities = &queue_priority,
+              });
+            }
+          }
+
           const vk::StructureChain feature_chain =
             make_enable_chain(requirements.features);
           const vk::DeviceCreateInfo device_create_info {
             .pNext = &feature_chain.get<vk::PhysicalDeviceFeatures2>(),
-            .queueCreateInfoCount = 1,
-            .pQueueCreateInfos = &device_queue_create_info,
+            .queueCreateInfoCount =
+              static_cast<std::uint32_t>(queue_create_infos.size()),
+            .pQueueCreateInfos = queue_create_infos.data(),
             .enabledExtensionCount =
               static_cast<std::uint32_t>(requirements.extensions.size()),
             .ppEnabledExtensionNames = requirements.extensions.data(),
@@ -97,6 +118,8 @@ public:
                 output.device_ = std::move(device);
                 output.graphics_queue_ =
                   output.device_.getQueue(output.graphics_qf_index_, 0);
+                output.transfer_queue_ =
+                  output.device_.getQueue(output.transfer_qf_index_, 0);
                 output.msaa_samples_ =
                   get_max_usable_msaa_count(output.physical_device_);
               })
@@ -126,6 +149,10 @@ public:
   { return std::forward_like<decltype(self)>(self.graphics_queue_); }
 
   [[nodiscard]] auto
+  transfer_queue(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.transfer_queue_); }
+
+  [[nodiscard]] auto
   allocator(this auto&& self) -> decltype(auto)
   { return std::forward_like<decltype(self)>(self.allocator_); }
 
@@ -134,8 +161,16 @@ public:
   { return std::forward_like<decltype(self)>(self.graphics_qf_index_); }
 
   [[nodiscard]] auto
+  transfer_qf_index(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.transfer_qf_index_); }
+
+  [[nodiscard]] auto
   msaa_samples(this auto&& self) -> decltype(auto)
   { return std::forward_like<decltype(self)>(self.msaa_samples_); }
+
+  [[nodiscard]] auto
+  has_dedicated_transfer() const -> bool
+  { return transfer_qf_index_ != graphics_qf_index_; }
 
 private:
   using device_feature_chain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
@@ -243,6 +278,23 @@ private:
   }
 
   [[nodiscard]] static auto
+  find_dedicated_transfer_qf(const vk::raii::PhysicalDevice& physical_device)
+    -> std::optional<std::uint32_t>
+  {
+    const auto properties = physical_device.getQueueFamilyProperties();
+    for (std::size_t property_index : std::views::iota(0UZ, properties.size()))
+    {
+      const auto flags = properties[ property_index ].queueFlags;
+      const bool transfer =
+        static_cast<bool>(flags & vk::QueueFlagBits::eTransfer);
+      const bool graphics_or_compute = static_cast<bool>(
+        flags & (vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eCompute));
+      if (transfer && !graphics_or_compute) { return property_index; }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] static auto
   device_extensions_supported(const vk::raii::PhysicalDevice& physical_device,
     std::span<const char* const> required) -> bool
   {
@@ -328,8 +380,10 @@ private:
   vk::raii::PhysicalDevice physical_device_ { nullptr };
   vk::raii::Device device_ { nullptr };
   vk::raii::Queue graphics_queue_ { nullptr };
+  vk::raii::Queue transfer_queue_ { nullptr };
   vma_policy allocator_ {};
   std::uint32_t graphics_qf_index_ { ~0U };
+  std::uint32_t transfer_qf_index_ { ~0U };
   vk::SampleCountFlagBits msaa_samples_ { vk::SampleCountFlagBits::e1 };
 };
 

@@ -136,6 +136,13 @@ private:
   vk::raii::CommandPool pool_ { nullptr };
 };
 
+// what about destruction of the pointers
+export struct upload_sync
+{
+  vk::Semaphore wait {};
+  vk::Semaphore signal {};
+};
+
 export class single_time_submit
 {
 public:
@@ -199,7 +206,8 @@ public:
   }
 
   [[nodiscard]] auto
-  end_and_submit(upload::deferred_t) -> std::expected<submission, error_t>
+  end_and_submit(upload::deferred_t, upload_sync sync = {})
+    -> std::expected<submission, error_t>
   {
     return UTILS_VK(command_buffer_.end(), ^^vk::raii::CommandBuffer::end)
       .and_then(
@@ -209,14 +217,27 @@ public:
             device_.createFence({}), ^^vk::raii::Device::createFence);
         })
       .and_then(
-        [ this ](vk::raii::Fence&& fence) -> std::expected<submission, error_t>
+        [ &, this ](
+          vk::raii::Fence&& fence) -> std::expected<submission, error_t>
         {
+          const vk::SemaphoreSubmitInfo wait_semaphore_info {
+            .semaphore = sync.wait,
+            .stageMask = vk::PipelineStageFlagBits2::eAllCommands,
+          };
+          const vk::SemaphoreSubmitInfo signal_semaphore_info {
+            .semaphore = sync.signal,
+            .stageMask = vk::PipelineStageFlagBits2::eAllCommands,
+          };
           const vk::CommandBufferSubmitInfo command_buffer_info {
             .commandBuffer = *command_buffer_,
           };
           const vk::SubmitInfo2 submit_info {
+            .waitSemaphoreInfoCount = sync.wait ? 1U : 0U,
+            .pWaitSemaphoreInfos = &wait_semaphore_info,
             .commandBufferInfoCount = 1U,
             .pCommandBufferInfos = &command_buffer_info,
+            .signalSemaphoreInfoCount = sync.signal ? 1U : 0U,
+            .pSignalSemaphoreInfos = &signal_semaphore_info,
           };
           return UTILS_VK(
             queue_.submit2(submit_info, nullptr), ^^vk::raii::Queue::submit2)

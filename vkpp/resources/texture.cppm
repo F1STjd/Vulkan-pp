@@ -15,7 +15,7 @@ import vkpp.device;
 import vkpp.command;
 import vkpp.buffer;
 import vkpp.barrier;
-import vkpp.sampler;
+export import vkpp.sampler;
 
 namespace vkpp
 {

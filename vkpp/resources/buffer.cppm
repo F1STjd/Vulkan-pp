@@ -74,13 +74,19 @@ private:
 export template<device_allocator Alloc = vma_policy>
 auto
 make_buffer_resource(Alloc& allocator, vk::DeviceSize size,
-  vk::BufferUsageFlags usage, memory_intent intent)
+  vk::BufferUsageFlags usage, memory_intent intent,
+  std::span<const std::uint32_t> sharing_families = {})
   -> std::expected<buffer_resource<Alloc>, error_t>
 {
+  const bool concurrent = sharing_families.size() >= 2UZ;
   const vk::BufferCreateInfo buffer_info {
     .size = size,
     .usage = usage,
-    .sharingMode = vk::SharingMode::eExclusive,
+    .sharingMode =
+      concurrent ? vk::SharingMode::eConcurrent : vk::SharingMode::eExclusive,
+    .queueFamilyIndexCount =
+      concurrent ? static_cast<std::uint32_t>(sharing_families.size()) : 0U,
+    .pQueueFamilyIndices = concurrent ? sharing_families.data() : nullptr,
   };
   return allocator.create_buffer(buffer_info, intent)
     .transform(

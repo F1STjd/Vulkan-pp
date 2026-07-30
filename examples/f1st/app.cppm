@@ -205,6 +205,7 @@ private:
           .extended_dynamic_state = true,
         },
         .require_present = true,
+        .request_dedicated_transfer = true,
       })
       .transform([ this ](vkpp::device_context&& device)
         { device_ = std::move(device); });
