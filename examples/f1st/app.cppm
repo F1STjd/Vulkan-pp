@@ -739,7 +739,7 @@ private:
           };
           return UTILS_VK(
             device_.graphics_queue().submit2(submit_info, nullptr),
-            ^^vk::raii::Queue::submit)
+            ^^vk::raii::Queue::submit2)
             .transform([ this ] -> void { ++frame_counter_; });
         })
       .and_then(
