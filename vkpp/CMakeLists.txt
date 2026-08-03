@@ -42,6 +42,7 @@ target_sources(vkpp
 
       resources/image.cppm    # module vkpp.image
       resources/buffer.cppm   # module vkpp.buffer
+      resources/buffer_upload.cppm  # module vkpp.buffer.upload
 
       core/instance_context.cppm   # module vkpp.instance
       core/device_context.cppm     # module vkpp.device
@@ -52,6 +53,7 @@ target_sources(vkpp
       command/command.cppm         # module vkpp.command
 
       resources/texture.cppm  # module vkpp.texture
+      resources/texture_upload.cppm  # module vkpp.texture.upload
       resources/sampler.cppm  # module vkpp.sampler
 
       sync/barrier.cppm      # module vkpp.barrier
