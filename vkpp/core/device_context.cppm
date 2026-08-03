@@ -71,14 +71,12 @@ public:
             : *find_graphics_qf(output.physical_device_);
 
           static constexpr float queue_priority { 0.5F };
-          // std::inplace_vector is better; no need of manual ckeck of actual
-          // size. We are in C++26
-          std::inplace_vector<vk::DeviceQueueCreateInfo, 2> queue_create_infos {
-            vk::DeviceQueueCreateInfo {
-              .queueFamilyIndex = output.graphics_qf_index_,
-              .queueCount = 1,
-              .pQueuePriorities = &queue_priority,
-            },
+          std::array<vk::DeviceQueueCreateInfo, 2> queue_create_infos {};
+          std::uint32_t queue_create_info_count { 1U };
+          queue_create_infos[ 0 ] = vk::DeviceQueueCreateInfo {
+            .queueFamilyIndex = output.graphics_qf_index_,
+            .queueCount = 1U,
+            .pQueuePriorities = &queue_priority,
           };
           output.transfer_qf_index_ = output.graphics_qf_index_;
           if (requirements.request_dedicated_transfer)
@@ -87,14 +85,12 @@ public:
                   find_dedicated_transfer_qf(output.physical_device_))
             {
               output.transfer_qf_index_ = *transfer_qf;
-              // would like to use emplace_back here, but I don't know how to do
-              // it with aggregates. Also pNext, and flags should be also passed
-              // then
-              queue_create_infos.push_back({
+              queue_create_infos[ 1 ] = vk::DeviceQueueCreateInfo {
                 .queueFamilyIndex = *transfer_qf,
                 .queueCount = 1,
                 .pQueuePriorities = &queue_priority,
-              });
+              };
+              queue_create_info_count = 2U;
             }
           }
 
@@ -102,8 +98,7 @@ public:
             make_enable_chain(requirements.features);
           const vk::DeviceCreateInfo device_create_info {
             .pNext = &feature_chain.get<vk::PhysicalDeviceFeatures2>(),
-            .queueCreateInfoCount =
-              static_cast<std::uint32_t>(queue_create_infos.size()),
+            .queueCreateInfoCount = queue_create_info_count,
             .pQueueCreateInfos = queue_create_infos.data(),
             .enabledExtensionCount =
               static_cast<std::uint32_t>(requirements.extensions.size()),
