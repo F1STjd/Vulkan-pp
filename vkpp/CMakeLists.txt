@@ -12,8 +12,9 @@ add_library(vkpp STATIC)
 # error/vk_error_config.hpp holding the UTILS_VK macro) are visible to consumers.
 target_include_directories(vkpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-# tinyobjloader implementation is a plain TU (no `import std;`); see the file.
-target_sources(vkpp PRIVATE io/tiny_obj_loader_impl.cpp memory/vma_impl.cpp)
+target_sources(vkpp PRIVATE
+  io/tiny_obj_loader_impl.cpp
+  memory/vma_impl.cpp)
 
 target_sources(vkpp
   PUBLIC FILE_SET CXX_MODULES
