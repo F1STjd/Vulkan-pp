@@ -59,6 +59,8 @@ target_sources(vkpp
       sync/barrier.cppm      # module vkpp.barrier
       sync/semaphore.cppm    # module vkpp.semaphore
 
+      graph/attachment_use.cppm  # module vkpp.graph.attachment_use
+
       descriptor/descriptor.cppm   # module vkpp.descriptor
 
       pipeline/pipeline.cppm       # module vkpp.pipeline
