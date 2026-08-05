@@ -34,6 +34,7 @@ import vkpp.barrier;
 import vkpp.pipeline;
 import vkpp.descriptor;
 import vkpp.semaphore;
+import vkpp.graph;
 
 namespace f1st
 {
@@ -457,37 +458,33 @@ private:
   record_command_buffer(std::uint32_t image_index)
     -> std::expected<void, vkpp::error_t>
   {
-    const auto& command_buffer = frames_[ frame_index_ ].command_buffer;
+    auto& command_buffer = frames_[ frame_index_ ].command_buffer;
     return UTILS_VK(command_buffer.begin({}), ^^vk::raii::CommandBuffer::begin)
       .transform(
         [ this, image_index, &command_buffer ]() -> void
         {
-          transition_image_layout(swap_chain_.images()[ image_index ],
-            vk::ImageLayout::eUndefined,
-            vk::ImageLayout::eColorAttachmentOptimal, {},
-            vk::AccessFlagBits2::eColorAttachmentWrite,
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::ImageAspectFlagBits::eColor);
-
-          transition_image_layout(swap_chain_.color().image(),
-            vk::ImageLayout::eUndefined,
-            vk::ImageLayout::eColorAttachmentOptimal, {},
-            vk::AccessFlagBits2::eColorAttachmentWrite,
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::ImageAspectFlagBits::eColor);
-
-          transition_image_layout(swap_chain_.depth().image(),
-            vk::ImageLayout::eUndefined,
-            vk::ImageLayout::eDepthAttachmentOptimal,
-            vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-            vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-            vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-              vk::PipelineStageFlagBits2::eLateFragmentTests,
-            vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-              vk::PipelineStageFlagBits2::eLateFragmentTests,
-            vk::ImageAspectFlagBits::eDepth);
+          const std::array pre_pass_transitions {
+            vkpp::image_use_transition {
+              .image = swap_chain_.images()[ image_index ],
+              .from = vkpp::image_use::none,
+              .to = vkpp::image_use::color_attachment,
+              .aspect = vk::ImageAspectFlagBits::eColor,
+            },
+            vkpp::image_use_transition {
+              .image = swap_chain_.color().image(),
+              .from = vkpp::image_use::none,
+              .to = vkpp::image_use::color_attachment,
+              .aspect = vk::ImageAspectFlagBits::eColor,
+            },
+            vkpp::image_use_transition {
+              .image = swap_chain_.depth().image(),
+              .from = vkpp::image_use::none,
+              .to = vkpp::image_use::depth_attachment,
+              .aspect = vk::ImageAspectFlagBits::eDepth,
+            },
+          };
+          vkpp::record_image_use_transitions(
+            command_buffer, std::span { pre_pass_transitions });
 
           vk::ClearValue clear_color { vk::ClearColorValue {
             0.0F,
@@ -557,53 +554,20 @@ private:
             static_cast<std::uint32_t>(indices_.size()), 1U, 0U, 0U, 0U);
           command_buffer.endRendering();
 
-          transition_image_layout(swap_chain_.images()[ image_index ],
-            vk::ImageLayout::eColorAttachmentOptimal,
-            vk::ImageLayout::ePresentSrcKHR,
-            vk::AccessFlagBits2::eColorAttachmentWrite, {},
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::PipelineStageFlagBits2::eBottomOfPipe,
-            vk::ImageAspectFlagBits::eColor);
+          const vkpp::image_use_transition present_transition {
+            .image = swap_chain_.images()[ image_index ],
+            .from = vkpp::image_use::color_attachment,
+            .to = vkpp::image_use::present,
+            .aspect = vk::ImageAspectFlagBits::eColor,
+          };
+          vkpp::record_image_use_transitions(
+            command_buffer, std::span { &present_transition, 1UZ });
         })
       .and_then(
         [ &command_buffer ]() -> std::expected<void, vkpp::error_t>
         {
           return UTILS_VK(command_buffer.end(), ^^vk::raii::CommandBuffer::end);
         });
-  }
-
-  void
-  transition_image_layout(vk::Image image, vk::ImageLayout old_layout,
-    vk::ImageLayout new_layout, vk::AccessFlags2 source_access_mask,
-    vk::AccessFlags2 destination_access_mask,
-    vk::PipelineStageFlags2 source_stage_mask,
-    vk::PipelineStageFlags2 destination_stage_mask,
-    vk::ImageAspectFlags image_aspect_flags)
-  {
-    vk::ImageMemoryBarrier2 memory_barrier {
-        .srcStageMask = source_stage_mask,
-        .srcAccessMask = source_access_mask,
-        .dstStageMask = destination_stage_mask,
-        .dstAccessMask = destination_access_mask,
-        .oldLayout = old_layout,
-        .newLayout = new_layout,
-        .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-        .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-        .image = image,
-        .subresourceRange = {
-          .aspectMask = image_aspect_flags,
-          .baseMipLevel = 0U,
-          .levelCount = 1U,
-          .baseArrayLayer = 0U,
-          .layerCount = 1U,
-        },
-      };
-    vk::DependencyInfo dependency_info {
-      .dependencyFlags = {},
-      .imageMemoryBarrierCount = 1U,
-      .pImageMemoryBarriers = &memory_barrier,
-    };
-    frames_[ frame_index_ ].command_buffer.pipelineBarrier2(dependency_info);
   }
 
   auto
