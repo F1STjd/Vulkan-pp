@@ -131,8 +131,7 @@ private:
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
       .and_then(std::bind_front(&app::create_texture_image, this))
       .and_then([ this ] { return vkpp::load_model_obj(vertices_, indices_); })
-      .and_then(std::bind_front(&app::create_vertex_buffer, this))
-      .and_then(std::bind_front(&app::create_index_buffer, this))
+      .and_then(std::bind_front(&app::create_buffers, this))
       .and_then(std::bind_front(&app::create_descriptor_pool, this))
       .and_then(std::bind_front(&app::create_descriptor_sets, this));
   }
@@ -319,6 +318,59 @@ private:
       device_.transfer_qf_index(), vk::CommandPoolCreateFlagBits::eTransient)
       .transform([ this ](vkpp::command_pool&& pool) -> void
         { transfer_upload_pool_ = std::move(pool); });
+  }
+
+  auto
+  create_buffers() -> std::expected<void, vkpp::error_t>
+  {
+    // global (in the monadic pipeline context)
+    // but it has to be like that, so the monadic pipeline is devided into 3
+    // parts:
+    // 1. get mesh (maybe)
+    // 2. upload vertices and init vertex buffer (maybe)
+    // 3. upload indices and init index buffer (maybe)
+    // This is perfect, so in the far, far future it could look like:
+    // auto upload_vertices = ...
+    // auto upload_indices = ...
+    // ...
+    // return load_mesh
+    //   .and_then(do_and_init(upload_vertices, vertex_buffer_))
+    //   .and_then(do_and_init(upload_indices, index_buffer_));
+    //
+    // dont know what about shared packed variable, but we will think about it
+    // later
+
+    vkpp::mesh_interleaved_cpu packed;
+    return vkpp::load_mesh_cpu<vkpp::file_type::gltf>(vkpp::model_path)
+      .and_then(
+        [ & ](vkpp::mesh_cpu&& mesh) -> std::expected<void, vkpp::error_t>
+        {
+          packed = vkpp::pack_interleaved_vertices(mesh.primitives.at(0));
+          return vkpp::upload_device_local_buffer(
+            {
+              .device = device_,
+              .pool = upload_pool_,
+              .transfer_pool = transfer_upload_pool_,
+              .bytes = packed.vertices,
+              .gpu_usage = vk::BufferUsageFlagBits::eVertexBuffer,
+            })
+            .transform([ &, this ](vkpp::buffer_resource<>&& vertices) -> void
+              { vertex_buffer_ = std::move(vertices); });
+        })
+      .and_then(
+        [ & ]
+        {
+          return vkpp::upload_device_local_buffer(
+            {
+              .device = device_,
+              .pool = upload_pool_,
+              .transfer_pool = transfer_upload_pool_,
+              .bytes = packed.indices,
+              .gpu_usage = vk::BufferUsageFlagBits::eIndexBuffer,
+            })
+            .transform([ &, this ](vkpp::buffer_resource<>&& indices) -> void
+              { index_buffer_ = std::move(indices); });
+        });
   }
 
   auto
