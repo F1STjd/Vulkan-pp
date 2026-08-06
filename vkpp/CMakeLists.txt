@@ -73,7 +73,7 @@ set_target_properties(vkpp PROPERTIES CXX_MODULE_STD ON)
 # deliberately has no SFML dependency. Phase 1 must decide whether the app keeps
 # passing a vk::SurfaceKHR handle into vkpp (preferred) or vkpp gains SFML here.
 target_link_libraries(vkpp
-  PUBLIC glm::glm glm::cppm Tutorial::stb Vulkan::cppm
+  PUBLIC glm::glm glm::cppm Tutorial::stb Vulkan::cppm fastgltf::fastgltf
   PRIVATE Tutorial::tinyobjloader Vulkan::vma)
 
 # io/load.cppm builds model/texture paths from these (same as the old `utils`).
