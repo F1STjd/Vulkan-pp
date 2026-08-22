@@ -7,15 +7,16 @@ module;
 #include <SFML/Window/VideoMode.hpp>
 #include <vulkan/vk_platform.h>
 
-#include <stb_image.h>
-
 export module f1st.app;
 
 import std;
 import vulkan;
 import glm;
 import f1st.uniform_buffer;
+import vkpp.io.types;
 import vkpp.io;
+import vkpp.io.mesh;
+import vkpp.io.mesh.gltf;
 import vkpp.error;
 import vkpp.vertex;
 import vkpp.memory;
@@ -39,6 +40,10 @@ import vkpp.graph;
 namespace f1st
 {
 using namespace std::string_view_literals;
+
+export constexpr const char* model_path { MODEL_DIRECTORY "911.glb" };
+export constexpr const char* texture_path { TEXTURE_DIRECTORY
+  "viking_room.png" };
 
 constexpr std::uint32_t window_width { 800 };
 constexpr std::uint32_t window_height { 600 };
@@ -130,7 +135,6 @@ private:
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
       .and_then(std::bind_front(&app::create_texture_image, this))
-      .and_then([ this ] { return vkpp::load_model_obj(vertices_, indices_); })
       .and_then(std::bind_front(&app::create_buffers, this))
       .and_then(std::bind_front(&app::create_descriptor_pool, this))
       .and_then(std::bind_front(&app::create_descriptor_sets, this));
@@ -341,11 +345,13 @@ private:
     // later
 
     vkpp::mesh_interleaved_cpu packed;
-    return vkpp::load_mesh_cpu<vkpp::file_type::gltf>(vkpp::model_path)
+    return vkpp::load_mesh_cpu<vkpp::mesh_file_type::gltf>(model_path)
       .and_then(
-        [ & ](vkpp::mesh_cpu&& mesh) -> std::expected<void, vkpp::error_t>
+        [ &, this ](vkpp::mesh_cpu&& mesh) -> std::expected<void, vkpp::error_t>
         {
           packed = vkpp::pack_interleaved_vertices(mesh.primitives.at(0));
+          index_count_ = packed.index_count;
+          index_type_ = packed.index_type;
           return vkpp::upload_device_local_buffer(
             {
               .device = device_,
@@ -376,9 +382,10 @@ private:
   auto
   create_texture_image() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::load_host_image_rgba8(vkpp::texture_path)
+    return vkpp::load_host_image<vkpp::image_file_type::png>(texture_path)
       .and_then(
-        [ &, this ](const vkpp::host_image& host_texture)
+        [ this ](vkpp::host_image&& host_texture)
+          -> std::expected<vkpp::texture<>, vkpp::error_t>
         {
           return vkpp::make_texture({
             .device = device_,
@@ -394,36 +401,6 @@ private:
         })
       .transform([ this ](vkpp::texture<>&& texture) -> void
         { texture_ = std::move(texture); });
-  }
-
-  auto
-  create_vertex_buffer() -> std::expected<void, vkpp::error_t>
-  {
-    return vkpp::upload_device_local_buffer(
-      {
-        .device = device_,
-        .pool = upload_pool_,
-        .transfer_pool = transfer_upload_pool_,
-        .bytes = std::as_bytes(std::span { vertices_ }),
-        .gpu_usage = vk::BufferUsageFlagBits::eVertexBuffer,
-      })
-      .transform([ this ](vkpp::buffer_resource<>&& buffer) -> void
-        { vertex_buffer_ = std::move(buffer); });
-  }
-
-  auto
-  create_index_buffer() -> std::expected<void, vkpp::error_t>
-  {
-    return vkpp::upload_device_local_buffer(
-      {
-        .device = device_,
-        .pool = upload_pool_,
-        .transfer_pool = transfer_upload_pool_,
-        .bytes = std::as_bytes(std::span { indices_ }),
-        .gpu_usage = vk::BufferUsageFlagBits::eIndexBuffer,
-      })
-      .transform([ this ](vkpp::buffer_resource<>&& buffer) -> void
-        { index_buffer_ = std::move(buffer); });
   }
 
   auto
@@ -597,13 +574,12 @@ private:
             });
           command_buffer.bindVertexBuffers(
             0U, vertex_buffer_.buffer(), { 0UZ });
-          command_buffer.bindIndexBuffer(index_buffer_.buffer(), 0UZ,
-            vk::IndexTypeValue<decltype(indices_)::value_type>::value);
+          command_buffer.bindIndexBuffer(
+            index_buffer_.buffer(), 0UZ, index_type_);
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
             *graphics_pipeline_.layout(), 0U,
             frames_[ frame_index_ ].descriptor_set, nullptr);
-          command_buffer.drawIndexed(
-            static_cast<std::uint32_t>(indices_.size()), 1U, 0U, 0U, 0U);
+          command_buffer.drawIndexed(index_count_, 1U, 0U, 0U, 0U);
           command_buffer.endRendering();
 
           const vkpp::image_use_transition present_transition {
@@ -857,8 +833,8 @@ private:
 
   // TODO: https://developer.nvidia.com/vulkan-memory-management suggests to use
   // one vk::raii::Buffer to have more buffers inside, and use offsets
-  std::vector<vkpp::vertex> vertices_;
-  std::vector<std::uint32_t> indices_;
+  std::uint32_t index_count_ { 0U };
+  vk::IndexType index_type_ { vk::IndexType::eUint16 };
   vkpp::buffer_resource<> vertex_buffer_ {};
   vkpp::buffer_resource<> index_buffer_ {};
 

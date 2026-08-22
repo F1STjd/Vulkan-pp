@@ -23,6 +23,48 @@ namespace vkpp
 using namespace std::string_view_literals;
 
 [[nodiscard]] inline auto
+make_precomputed_copy_regions(vk::Extent2D base_extent,
+  std::uint32_t mip_levels, std::span<const vk::DeviceSize> level_offsets)
+  -> std::vector<vk::BufferImageCopy>
+{
+  std::vector<vk::BufferImageCopy> regions {};
+  regions.reserve(mip_levels);
+  for (auto level : std::views::indices(mip_levels))
+  {
+    regions.push_back({
+      .bufferOffset = level_offsets[level],
+      .bufferRowLength= 0U,
+      .bufferImageHeight = 0U,
+      .imageSubresource = {
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .mipLevel = level,
+        .baseArrayLayer = 0U,
+        .layerCount = 1U,
+      },
+      .imageOffset = {.x = 0, .y = 0, .z = 0},
+      .imageExtent = {
+        .width = std::max(1U, base_extent.width >> level),
+        .height = std::max(1U, base_extent.height >> level),
+        .depth = 1U,
+      },
+    });
+  }
+  return regions;
+}
+
+inline void
+record_copy_precomputed_chain(vk::raii::CommandBuffer& command_buffer,
+  vk::Buffer staging_buffer, vk::Image image,
+  const texture_create_info& create_info)
+{
+  const std::vector<vk::BufferImageCopy> regions =
+    make_precomputed_copy_regions(
+      create_info.extent, create_info.mip_levels, create_info.level_offsets);
+  command_buffer.copyBufferToImage(
+    staging_buffer, image, vk::ImageLayout::eTransferDstOptimal, regions);
+}
+
+[[nodiscard]] inline auto
 upload_texture_via_graphics_queue(const texture_create_info& create_info,
   vk::Buffer staging_buffer, vk::Image image_handle)
   -> std::expected<void, error_t>
@@ -38,19 +80,26 @@ upload_texture_via_graphics_queue(const texture_create_info& create_info,
       [ & ] -> std::expected<void, error_t>
       {
         auto& command_buffer = single_time.command_buffer();
-        if (create_info.mip_policy == texture_mip_policy::generate_gpu_blit)
-        {
-          return record_upload_sampled_texture(command_buffer,
-            create_info.device.physical_device(), staging_buffer, image_handle,
-            create_info.format, create_info.extent, create_info.mip_levels);
-        }
+        const std::uint32_t chain_levels =
+          create_info.mip_policy == texture_mip_policy::upload_precomputed_chain
+          ? create_info.mip_levels
+          : 1U;
         const image_barrier to_transfer_dst =
-          undefined_dst_to_transfer_dst(image_handle, 1U);
+          undefined_dst_to_transfer_dst(image_handle, chain_levels);
         record_barriers(command_buffer, std::span { &to_transfer_dst, 1UZ });
-        record_copy_buffer_to_image(
-          command_buffer, staging_buffer, image_handle, create_info.extent);
+        if (create_info.mip_policy ==
+          texture_mip_policy::upload_precomputed_chain)
+        {
+          record_copy_precomputed_chain(
+            command_buffer, staging_buffer, image_handle, create_info);
+        }
+        else
+        {
+          record_copy_buffer_to_image(
+            command_buffer, staging_buffer, image_handle, create_info.extent);
+        }
         const image_barrier to_shader_read =
-          transfer_dst_to_shader_read(image_handle, 0U, 1U);
+          transfer_dst_to_shader_read(image_handle, 0U, chain_levels);
         record_barriers(command_buffer, std::span { &to_shader_read, 1UZ });
         return {};
       })
@@ -90,8 +139,17 @@ upload_texture_via_tranfer_queue(const texture_create_info& create_info,
                   image_handle, create_info.mip_levels);
               record_barriers(
                 command_buffer, std::span { &to_transfer_dst, 1UZ });
-              record_copy_buffer_to_image(command_buffer, staging_buffer,
-                image_handle, create_info.extent);
+              if (create_info.mip_policy ==
+                texture_mip_policy::upload_precomputed_chain)
+              {
+                record_copy_precomputed_chain(
+                  command_buffer, staging_buffer, image_handle, create_info);
+              }
+              else
+              {
+                record_copy_buffer_to_image(command_buffer, staging_buffer,
+                  image_handle, create_info.extent);
+              }
               const image_barrier release = release_image_ownership(
                 image_handle, transfer, vk::ImageLayout::eTransferDstOptimal,
                 vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -158,12 +216,13 @@ make_texture(const texture_create_info& create_info)
       },
     };
   }
-  if (create_info.mip_policy == texture_mip_policy::upload_precomputed_chain)
+  if (create_info.mip_policy == texture_mip_policy::upload_precomputed_chain &&
+    create_info.level_offsets.size() != create_info.mip_levels)
   {
     return std::unexpected {
       app_error {
         .kind = app_error_kind::invalid_argument,
-        .detail = "upload_precomputed_chain policy not implemented"sv,
+        .detail = "upload_precomputed_chain requires one offset per mip"sv,
       },
     };
   }

@@ -23,26 +23,27 @@ target_sources(vkpp
       error/error.cppm          # module vkpp.error
       io/channels.cppm          # module vkpp.io.channels
       io/load.cppm              # module vkpp.io
+      io/shader.cppm            # module vkpp.io.shader
+      io/types.cppm             # module vkpp.io.types
+      io/mesh_tags.cppm
+      io/mesh_gltf.cppm
+      io/mesh_obj.cppm
+      io/image_tags.cppm
+      io/image_png.cppm
+      io/image_ktx2.cppm
+
       mesh/vertex.cppm          # module vkpp.vertex
 
-      # --- Phase 0.4 Allocator policy (see plan 0.4.0-0.4.4 for full specs) ---
-      # Three SIBLING modules (vkpp.memory, vkpp.memory.raw, vkpp.memory.vma),
-      # NOT partitions: partitions cannot import their own primary interface,
-      # but raw/vma need the concept from vkpp.memory. Same precedent as
-      # vkpp.io / vkpp.io.channels.
-      # vma_allocator includes the VMA *C* header (<vk_mem_alloc.h>) in its
-      # global module fragment and hand-rolls RAII; add `memory/vma_impl.cpp`
-      # (the single VMA_IMPLEMENTATION TU) to the PRIVATE sources above and
-      # `Vulkan::vma` to target_link_libraries below when implementing it.
-      # `import vk_mem_alloc;` is blocked here by VMA-Hpp's RAII layer vs
-      # VULKAN_HPP_USE_STD_EXPECTED - see cmake/VmaCxxModule.cmake.
-      memory/allocator.cppm
-      memory/raw_allocator.cppm
-      memory/vma_allocator.cppm
+      memory/allocator.cppm # module vkpp.memory.allocator
+      memory/raw_allocator.cppm # module vkpp.memory.raw
+      memory/vma_allocator.cppm # module vkpp.memory.vma
+      memory/virtual_block.cppm # module vkpp.memory.virtual_block
 
       resources/image.cppm    # module vkpp.image
       resources/buffer.cppm   # module vkpp.buffer
       resources/buffer_upload.cppm  # module vkpp.buffer.upload
+      resources/buffer_arena.cppm # module vkpp.buffer.arena
+      resources/buffer_arena_upload.cppm # module vkpp.buffer.arena.upload
 
       core/instance_context.cppm   # module vkpp.instance
       core/device_context.cppm     # module vkpp.device
@@ -69,19 +70,7 @@ target_sources(vkpp
 target_compile_features(vkpp PUBLIC cxx_std_26)
 set_target_properties(vkpp PROPERTIES CXX_MODULE_STD ON)
 
-# Surface creation from an SFML window currently lives in the app layer, so vkpp
-# deliberately has no SFML dependency. Phase 1 must decide whether the app keeps
-# passing a vk::SurfaceKHR handle into vkpp (preferred) or vkpp gains SFML here.
 target_link_libraries(vkpp
-  PUBLIC glm::glm glm::cppm Tutorial::stb Vulkan::cppm fastgltf::fastgltf
+  PUBLIC glm::glm glm::cppm Tutorial::stb Vulkan::cppm fastgltf::fastgltf KTX::ktx
   PRIVATE Tutorial::tinyobjloader Vulkan::vma)
-
-# io/load.cppm builds model/texture paths from these (same as the old `utils`).
-file(TO_CMAKE_PATH "${MODEL_OUTPUT_DIRECTORY}" _model_directory)
-string(REPLACE "\\" "/" _model_directory "${_model_directory}")
-file(TO_CMAKE_PATH "${TEXTURE_OUTPUT_DIRECTORY}" _texture_directory)
-string(REPLACE "\\" "/" _texture_directory "${_texture_directory}")
-target_compile_definitions(vkpp PRIVATE
-  MODEL_DIRECTORY="${_model_directory}/"
-  TEXTURE_DIRECTORY="${_texture_directory}/")
 

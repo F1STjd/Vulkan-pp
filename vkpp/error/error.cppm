@@ -20,6 +20,7 @@ export enum class app_error_kind : std::uint8_t {
   surface_not_presentable,
   mapping_failed,
   invalid_argument,
+  arena_exhausted,
 };
 
 constexpr auto
@@ -48,6 +49,7 @@ to_string(app_error_kind kind) -> std::string_view
     "surface_not_presentable",
     "mapping_failed",
     "invalid_argument",
+    "arena_exhausted",
   };
 
   return reflected_error_kind[ std::to_underlying(kind) ];

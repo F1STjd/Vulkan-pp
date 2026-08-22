@@ -81,6 +81,7 @@ export struct texture_create_info
   std::uint32_t mip_levels { 1U };
   texture_mip_policy mip_policy { texture_mip_policy::generate_gpu_blit };
   sampler_create_info sampler {};
+  std::span<const vk::DeviceSize> level_offsets {};
 };
 
 } // namespace vkpp
