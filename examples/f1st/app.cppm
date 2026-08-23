@@ -21,9 +21,12 @@ import vkpp.error;
 import vkpp.vertex;
 import vkpp.memory;
 import vkpp.memory.vma;
+import vkpp.memory.virtual_block;
 import vkpp.image;
 import vkpp.buffer;
 import vkpp.buffer.upload;
+import vkpp.buffer.arena;
+import vkpp.buffer.arena.upload;
 import vkpp.instance;
 import vkpp.device;
 import vkpp.swapchain;
@@ -327,55 +330,80 @@ private:
   auto
   create_buffers() -> std::expected<void, vkpp::error_t>
   {
-    // global (in the monadic pipeline context)
-    // but it has to be like that, so the monadic pipeline is devided into 3
-    // parts:
-    // 1. get mesh (maybe)
-    // 2. upload vertices and init vertex buffer (maybe)
-    // 3. upload indices and init index buffer (maybe)
-    // This is perfect, so in the far, far future it could look like:
-    // auto upload_vertices = ...
-    // auto upload_indices = ...
-    // ...
-    // return load_mesh
-    //   .and_then(do_and_init(upload_vertices, vertex_buffer_))
-    //   .and_then(do_and_init(upload_indices, index_buffer_));
-    //
-    // dont know what about shared packed variable, but we will think about it
-    // later
-
-    vkpp::mesh_interleaved_cpu packed;
     return vkpp::load_mesh_cpu<vkpp::mesh_file_type::gltf>(model_path)
       .and_then(
         [ &, this ](vkpp::mesh_cpu&& mesh) -> std::expected<void, vkpp::error_t>
         {
-          packed = vkpp::pack_interleaved_vertices(mesh.primitives.at(0));
-          index_count_ = packed.index_count;
-          index_type_ = packed.index_type;
-          return vkpp::upload_device_local_buffer(
-            {
-              .device = device_,
-              .pool = upload_pool_,
-              .transfer_pool = transfer_upload_pool_,
-              .bytes = packed.vertices,
-              .gpu_usage = vk::BufferUsageFlagBits::eVertexBuffer,
-            })
-            .transform([ &, this ](vkpp::buffer_resource<>&& vertices) -> void
-              { vertex_buffer_ = std::move(vertices); });
-        })
-      .and_then(
-        [ & ]
-        {
-          return vkpp::upload_device_local_buffer(
-            {
-              .device = device_,
-              .pool = upload_pool_,
-              .transfer_pool = transfer_upload_pool_,
-              .bytes = packed.indices,
-              .gpu_usage = vk::BufferUsageFlagBits::eIndexBuffer,
-            })
-            .transform([ &, this ](vkpp::buffer_resource<>&& indices) -> void
-              { index_buffer_ = std::move(indices); });
+          std::vector<vkpp::mesh_interleaved_cpu> packed;
+          packed.reserve(mesh.primitives.size());
+          for (const auto& primitive : mesh.primitives)
+          {
+            packed.push_back(vkpp::pack_interleaved_vertices(primitive));
+          }
+
+          vk::DeviceSize arena_size { 0UZ };
+          for (const auto& pack : packed)
+          {
+            arena_size += static_cast<vk::DeviceSize>(pack.vertices.size());
+            const vk::DeviceSize index_align =
+              (pack.index_type == vk::IndexType::eUint32) ? 4UZ : 2UZ;
+            arena_size =
+              (arena_size + index_align - 1UZ) / index_align * index_align;
+            arena_size += static_cast<vk::DeviceSize>(pack.indices.size());
+          }
+
+          return vkpp::make_buffer_arena(device_.allocator(), arena_size,
+            vk::BufferUsageFlagBits::eVertexBuffer |
+              vk::BufferUsageFlagBits::eIndexBuffer,
+            vkpp::memory_intent::gpu_only)
+            .and_then(
+              [ this, &packed ](vkpp::buffer_arena<>&& arena)
+                -> std::expected<void, vkpp::error_t>
+              {
+                geometry_arena_ = std::move(arena);
+                draws_.clear();
+                draws_.reserve(packed.size());
+
+                std::vector<vkpp::arena_slice_upload> slices;
+                slices.reserve(packed.size() * 2UZ);
+
+                for (const auto& pack : packed)
+                {
+                  const vk::DeviceSize index_align =
+                    (pack.index_type == vk::IndexType::eUint32) ? 4UZ : 2UZ;
+                  auto vertex = geometry_arena_.allocate(
+                    static_cast<vk::DeviceSize>(pack.vertices.size()), 0UZ);
+                  if (!vertex) { return std::unexpected { vertex.error() }; }
+
+                  auto index = geometry_arena_.allocate(
+                    static_cast<vk::DeviceSize>(pack.indices.size()),
+                    index_align);
+                  if (!index) { return std::unexpected { index.error() }; }
+
+                  slices.push_back({
+                    .bytes = pack.vertices,
+                    .dst_offset = vertex->offset,
+                  });
+                  slices.push_back({
+                    .bytes = pack.indices,
+                    .dst_offset = index->offset,
+                  });
+                  draws_.push_back({
+                    .vertex_slice = *vertex,
+                    .index_slice = *index,
+                    .index_count = pack.index_count,
+                    .index_type = pack.index_type,
+                  });
+                }
+
+                return vkpp::upload_arena_slices({
+                  .device = device_,
+                  .pool = upload_pool_,
+                  .transfer_pool = transfer_upload_pool_,
+                  .arena = geometry_arena_.buffer(),
+                  .slices = slices,
+                });
+              });
         });
   }
 
@@ -572,14 +600,17 @@ private:
               .offset = vk::Offset2D { .x = 0, .y = 0 },
               .extent = swap_chain_.extent(),
             });
-          command_buffer.bindVertexBuffers(
-            0U, vertex_buffer_.buffer(), { 0UZ });
-          command_buffer.bindIndexBuffer(
-            index_buffer_.buffer(), 0UZ, index_type_);
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
             *graphics_pipeline_.layout(), 0U,
             frames_[ frame_index_ ].descriptor_set, nullptr);
-          command_buffer.drawIndexed(index_count_, 1U, 0U, 0U, 0U);
+          for (const auto& draw : draws_)
+          {
+            command_buffer.bindVertexBuffers(
+              0U, geometry_arena_.buffer(), { draw.vertex_slice.offset });
+            command_buffer.bindIndexBuffer(geometry_arena_.buffer(),
+              draw.index_slice.offset, draw.index_type);
+            command_buffer.drawIndexed(draw.index_count, 1U, 0U, 0U, 0U);
+          }
           command_buffer.endRendering();
 
           const vkpp::image_use_transition present_transition {
@@ -831,12 +862,15 @@ private:
 
   vkpp::texture<> texture_ {};
 
-  // TODO: https://developer.nvidia.com/vulkan-memory-management suggests to use
-  // one vk::raii::Buffer to have more buffers inside, and use offsets
-  std::uint32_t index_count_ { 0U };
-  vk::IndexType index_type_ { vk::IndexType::eUint16 };
-  vkpp::buffer_resource<> vertex_buffer_ {};
-  vkpp::buffer_resource<> index_buffer_ {};
+  vkpp::buffer_arena<> geometry_arena_ {};
+  struct primitive_draw
+  {
+    vkpp::virtual_slice vertex_slice {};
+    vkpp::virtual_slice index_slice {};
+    std::uint32_t index_count { 0U };
+    vk::IndexType index_type { vk::IndexType::eUint16 };
+  };
+  std::vector<primitive_draw> draws_ {};
 
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {
