@@ -239,7 +239,7 @@ public:
             .pSignalSemaphoreInfos = &signal_semaphore_info,
           };
           return UTILS_VK(
-            queue_.submit2(submit_info, nullptr), ^^vk::raii::Queue::submit2)
+            queue_.submit2(submit_info, *fence), ^^vk::raii::Queue::submit2)
             .transform(
               [ this, fence = std::move(fence) ] mutable -> submission
               {
