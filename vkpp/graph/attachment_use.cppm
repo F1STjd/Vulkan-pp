@@ -88,7 +88,7 @@ make_image_barrier(const image_use_transition& transition) -> image_barrier
         .access = {},
         .layout = vk::ImageLayout::eUndefined,
       }
-    : fields_for(transition.to);
+    : fields_for(transition.from);
 
   return {
     .src_stage = src.stage,

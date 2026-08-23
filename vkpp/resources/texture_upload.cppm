@@ -80,28 +80,22 @@ upload_texture_via_graphics_queue(const texture_create_info& create_info,
       [ & ] -> std::expected<void, error_t>
       {
         auto& command_buffer = single_time.command_buffer();
-        const std::uint32_t chain_levels =
-          create_info.mip_policy == texture_mip_policy::upload_precomputed_chain
-          ? create_info.mip_levels
-          : 1U;
-        const image_barrier to_transfer_dst =
-          undefined_dst_to_transfer_dst(image_handle, chain_levels);
-        record_barriers(command_buffer, std::span { &to_transfer_dst, 1UZ });
         if (create_info.mip_policy ==
           texture_mip_policy::upload_precomputed_chain)
         {
+          const image_barrier to_transfer_dst =
+            undefined_dst_to_transfer_dst(image_handle, create_info.mip_levels);
+          record_barriers(command_buffer, std::span { &to_transfer_dst, 1UZ });
           record_copy_precomputed_chain(
             command_buffer, staging_buffer, image_handle, create_info);
+          const image_barrier to_shader_read = transfer_dst_to_shader_read(
+            image_handle, 0U, create_info.mip_levels);
+          record_barriers(command_buffer, std::span { &to_shader_read, 1UZ });
+          return {};
         }
-        else
-        {
-          record_copy_buffer_to_image(
-            command_buffer, staging_buffer, image_handle, create_info.extent);
-        }
-        const image_barrier to_shader_read =
-          transfer_dst_to_shader_read(image_handle, 0U, chain_levels);
-        record_barriers(command_buffer, std::span { &to_shader_read, 1UZ });
-        return {};
+        return record_upload_sampled_texture(command_buffer,
+          create_info.device.physical_device(), staging_buffer, image_handle,
+          create_info.format, create_info.extent, create_info.mip_levels);
       })
     .and_then([ & ] -> std::expected<submission, error_t>
       { return single_time.end_and_submit(upload::deferred); })
