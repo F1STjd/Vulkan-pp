@@ -217,7 +217,7 @@ private:
         .require_present = true,
         .request_dedicated_transfer = true,
       })
-      .transform([ this ](vkpp::device_context&& device)
+      .transform([ this ](vkpp::device_context&& device) -> void
         { device_ = std::move(device); });
   }
 
