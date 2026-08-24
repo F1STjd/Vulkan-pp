@@ -65,6 +65,7 @@ target_sources(vkpp
       descriptor/descriptor.cppm   # module vkpp.descriptor
 
       pipeline/pipeline.cppm       # module vkpp.pipeline
+      pipeline/compute.cppm       # module vkpp.pipeline.compute
 )
 
 target_compile_features(vkpp PUBLIC cxx_std_26)

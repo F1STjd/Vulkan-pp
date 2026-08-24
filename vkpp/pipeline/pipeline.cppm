@@ -46,6 +46,10 @@ export struct graphics_pipeline_runtime_args
   const vk::raii::DescriptorSetLayout& set_layout;
   std::span<const vk::VertexInputBindingDescription> vertex_bindings {};
   std::span<const vk::VertexInputAttributeDescription> vertex_attributes {};
+  std::uint32_t push_constant_size { 0U };
+  vk::ShaderStageFlags push_constant_stages {
+    vk::ShaderStageFlagBits::eVertex
+  };
 };
 
 export class graphics_pipeline
@@ -106,10 +110,17 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
         -> std::expected<graphics_pipeline, error_t>
       {
         const std::array set_layouts { *runtime_args.set_layout };
+        const vk::PushConstantRange push_range {
+          .stageFlags = runtime_args.push_constant_stages,
+          .offset = 0U,
+          .size = runtime_args.push_constant_size,
+        };
         const vk::PipelineLayoutCreateInfo layout_info {
           .setLayoutCount = 1U,
           .pSetLayouts = set_layouts.data(),
-          .pushConstantRangeCount = 0U,
+          .pushConstantRangeCount =
+            runtime_args.push_constant_size > 0U ? 1U : 0U,
+          .pPushConstantRanges = &push_range,
         };
 
         return UTILS_VK(device.createPipelineLayout(layout_info),

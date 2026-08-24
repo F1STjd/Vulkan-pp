@@ -65,7 +65,7 @@ category_for(gltf::content_policy content) -> fastgltf::Category
   {
   case gltf::content_policy::geometry_only:
     return Category::Buffers | Category::BufferViews | Category::Accessors |
-      Category::Meshes;
+      Category::Meshes | Category::Nodes | Category::Scenes;
   case gltf::content_policy::geometry_and_materials:
     return Category::OnlyRenderable;
   case gltf::content_policy::geometry_and_host_images:
@@ -272,7 +272,8 @@ build_draw_list(const fastgltf::Asset& gltf) -> std::vector<gltf::draw_item_cpu>
   }
 
   const auto scene_index = gltf.defaultScene.value_or(0UZ);
-  fastgltf::iterateSceneNodes(gltf, scene_index, fastgltf::math::fmat4x4 {},
+  fastgltf::iterateSceneNodes(gltf, scene_index,
+    fastgltf::math::fmat4x4 { 1.0F },
     [ & ](
       const fastgltf::Node& node, const fastgltf::math::fmat4x4& world) -> void
     {

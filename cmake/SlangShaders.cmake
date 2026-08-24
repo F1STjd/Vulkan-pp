@@ -8,7 +8,7 @@ function(add_slang_shader_target TARGET)
   set(SHADERS_DIR "${CMAKE_SOURCE_DIR}/shaders")
   set(SHADER_OUTPUT_DIRECTORY "${SHADERS_DIR}" PARENT_SCOPE)
 
-  set(ENTRY_POINTS -entry vertex_main -entry fragment_main)
+  set(ENTRY_POINTS -entry vertex_main -entry fragment_main -entry compute_main)
 
   add_custom_command(
     OUTPUT ${SHADERS_DIR}

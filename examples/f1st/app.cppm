@@ -36,6 +36,7 @@ import vkpp.texture;
 import vkpp.texture.upload;
 import vkpp.barrier;
 import vkpp.pipeline;
+import vkpp.pipeline.compute;
 import vkpp.descriptor;
 import vkpp.semaphore;
 import vkpp.graph;
@@ -132,6 +133,7 @@ private:
       .and_then(std::bind_front(&app::create_swap_chain, this))
       .and_then(std::bind_front(&app::create_command_pool, this))
       .and_then(std::bind_front(&app::create_upload_pool, this))
+      .and_then(std::bind_front(&app::run_compute_smoke, this))
       .and_then(std::bind_front(&app::create_transfer_upload_pool, this))
       .and_then(std::bind_front(&app::create_frames, this))
       .and_then(std::bind_front(&app::create_frame_timeline, this))
@@ -292,6 +294,8 @@ private:
               .set_layout = descriptor_set_layout_,
               .vertex_bindings = vertex_bindings,
               .vertex_attributes = vertex_attributes,
+              .push_constant_size =
+                static_cast<std::uint32_t>(sizeof(float[ 16 ])),
             },
             { .spirv = spirv })
             .transform([ this ](vkpp::graphics_pipeline&& pipeline) -> void
@@ -319,6 +323,122 @@ private:
   }
 
   auto
+  run_compute_smoke() -> std::expected<void, vkpp::error_t>
+  {
+    constexpr vk::DeviceSize byte_size { 64UZ * sizeof(std::uint32_t) };
+    constexpr std::array compute_bindings {
+      vk::DescriptorSetLayoutBinding {
+        .binding = 2U,
+        .descriptorType = vk::DescriptorType::eStorageBuffer,
+        .descriptorCount = 1U,
+        .stageFlags = vk::ShaderStageFlagBits::eCompute,
+      },
+    };
+
+    auto ssbo = vkpp::make_buffer_resource(device_.allocator(), byte_size,
+      vk::BufferUsageFlagBits::eStorageBuffer |
+        vk::BufferUsageFlagBits::eTransferSrc,
+      vkpp::memory_intent::gpu_only);
+    if (!ssbo) { return std::unexpected { std::move(ssbo).error() }; }
+
+    auto staging = vkpp::make_buffer_resource(device_.allocator(), byte_size,
+      vk::BufferUsageFlagBits::eTransferDst, vkpp::memory_intent::gpu_to_cpu);
+    if (!staging) { return std::unexpected { std::move(staging).error() }; }
+    if (staging->mapped() == nullptr)
+    {
+      return std::unexpected {
+        vkpp::app_error {
+          .kind = vkpp::app_error_kind::mapping_failed,
+          .detail = "compute smoke staging buffer not mapped"sv,
+        },
+      };
+    }
+
+    auto set_layout =
+      vkpp::make_descriptor_set_layout(device_.device(), compute_bindings);
+    if (!set_layout)
+    {
+      return std::unexpected { std::move(set_layout).error() };
+    }
+
+    auto pool_sizes = vkpp::pool_sizes_for(compute_bindings, 1U);
+    auto pool = vkpp::descriptor_pool::create(device_.device(), 1U, pool_sizes);
+    if (!pool) { return std::unexpected { std::move(pool).error() }; }
+
+    auto sets = pool->allocate(device_.device(), *set_layout, 1U);
+    if (!sets) { return std::unexpected { std::move(sets).error() }; }
+
+    const vk::DescriptorBufferInfo buffer_info {
+      .buffer = ssbo->buffer(),
+      .offset = 0UZ,
+      .range = byte_size,
+    };
+    const vk::WriteDescriptorSet write {
+      .dstSet = (*sets)[ 0 ],
+      .dstBinding = 2U,
+      .dstArrayElement = 0U,
+      .descriptorCount = 1U,
+      .descriptorType = vk::DescriptorType::eStorageBuffer,
+      .pBufferInfo = &buffer_info,
+    };
+    vkpp::update_descriptor_sets(device_.device(), std::span { &write, 1UZ });
+
+    auto spirv = vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
+    if (!spirv) { return std::unexpected { std::move(spirv).error() }; }
+
+    auto pipeline = vkpp::make_compute_pipeline(device_.device(),
+      vkpp::compute_pipeline_runtime_args {
+        .set_layout = *set_layout,
+      },
+      vkpp::compute_shader {
+        .spirv = *spirv,
+      });
+
+    vkpp::single_time_submit submit {
+      upload_pool_,
+      device_.device(),
+      device_.graphics_queue(),
+    };
+    if (auto begun = submit.begin(); !begun) { return begun; }
+    auto& command_buffer = submit.command_buffer();
+    command_buffer.bindPipeline(
+      vk::PipelineBindPoint::eCompute, *pipeline->pipeline());
+    command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+      *pipeline->layout(), 0U, (*sets)[ 0 ], nullptr);
+    command_buffer.dispatch(1U, 1U, 1U);
+    const vkpp::buffer_barrier after_compute {
+      .src_stage = vk::PipelineStageFlagBits2::eComputeShader,
+      .src_access = vk::AccessFlagBits2::eShaderStorageWrite,
+      .dst_stage = vk::PipelineStageFlagBits2::eCopy,
+      .dst_access = vk::AccessFlagBits2::eTransferRead,
+      .buffer = ssbo->buffer(),
+    };
+    vkpp::record_barriers(command_buffer, std::span { &after_compute, 1UZ });
+    command_buffer.copyBuffer(
+      ssbo->buffer(), staging->buffer(), vk::BufferCopy { .size = byte_size });
+    auto submitted = submit.end_and_submit(vkpp::upload::deferred);
+    if (!submitted) { return std::unexpected { submitted.error() }; }
+    if (auto waited = submitted->wait(); !waited)
+    {
+      return std::unexpected { waited.error() };
+    }
+    const auto* words = static_cast<const std::uint32_t*>(staging->mapped());
+    for (std::uint32_t i = 0U; i < 64U; ++i)
+    {
+      if (words[ i ] != i)
+      {
+        return std::unexpected {
+          vkpp::app_error {
+            .kind = vkpp::app_error_kind::invalid_argument,
+            .detail = "compute smoke SSBO contents mismatch"sv,
+          },
+        };
+      }
+    }
+    return {};
+  }
+
+  auto
   create_transfer_upload_pool() -> std::expected<void, vkpp::error_t>
   {
     return vkpp::command_pool::create(device_.device(),
@@ -330,13 +450,16 @@ private:
   auto
   create_buffers() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::load_mesh_cpu<vkpp::mesh_file_type::gltf>(model_path)
+    return vkpp::load_gltf_asset_cpu(model_path)
       .and_then(
-        [ &, this ](vkpp::mesh_cpu&& mesh) -> std::expected<void, vkpp::error_t>
+        [ &, this ](
+          vkpp::gltf::asset_cpu&& asset) -> std::expected<void, vkpp::error_t>
         {
+          draw_list_ = std::move(asset.draw_list);
+
           std::vector<vkpp::mesh_interleaved_cpu> packed;
-          packed.reserve(mesh.primitives.size());
-          for (const auto& primitive : mesh.primitives)
+          packed.reserve(asset.meshes.primitives.size());
+          for (const auto& primitive : asset.meshes.primitives)
           {
             packed.push_back(vkpp::pack_interleaved_vertices(primitive));
           }
@@ -603,12 +726,15 @@ private:
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
             *graphics_pipeline_.layout(), 0U,
             frames_[ frame_index_ ].descriptor_set, nullptr);
-          for (const auto& draw : draws_)
+          for (const auto& item : draw_list_)
           {
+            const auto& draw = draws_[ item.primitive_index ];
             command_buffer.bindVertexBuffers(
               0U, geometry_arena_.buffer(), { draw.vertex_slice.offset });
             command_buffer.bindIndexBuffer(geometry_arena_.buffer(),
               draw.index_slice.offset, draw.index_type);
+            command_buffer.pushConstants<float>(*graphics_pipeline_.layout(),
+              vk::ShaderStageFlagBits::eVertex, 0U, item.world_transform);
             command_buffer.drawIndexed(draw.index_count, 1U, 0U, 0U, 0U);
           }
           command_buffer.endRendering();
@@ -871,6 +997,7 @@ private:
     vk::IndexType index_type { vk::IndexType::eUint16 };
   };
   std::vector<primitive_draw> draws_ {};
+  std::vector<vkpp::gltf::draw_item_cpu> draw_list_ {};
 
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {
