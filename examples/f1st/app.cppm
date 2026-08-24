@@ -54,7 +54,7 @@ constexpr std::uint32_t window_height { 600 };
 
 // During the development i want validation layers (for corectness) in the
 // release build
-#ifdef NDEBUG
+#ifndef NDEBUG
 constexpr std::array validation_layers {
   "VK_LAYER_KHRONOS_validation",
   // This one is not checked in the code :(, but should be
