@@ -23,6 +23,7 @@ export struct device_feature_requests
   bool synchronization2 { false };
   bool extended_dynamic_state { false };
   bool timeline_semaphore { false };
+  bool host_query_reset { false };
 };
 
 export struct device_requirements
@@ -185,6 +186,7 @@ private:
 
     auto& v12 = chain.get<vk::PhysicalDeviceVulkan12Features>();
     v12.timelineSemaphore = vk::Bool32 { requests.timeline_semaphore };
+    v12.hostQueryReset = vk::Bool32 { requests.host_query_reset };
 
     auto& v13 = chain.get<vk::PhysicalDeviceVulkan13Features>();
     v13.dynamicRendering = vk::Bool32 { requests.dynamic_rendering };
@@ -220,6 +222,10 @@ private:
       return false;
     }
     if (requests.timeline_semaphore && v12.timelineSemaphore != vk::True)
+    {
+      return false;
+    }
+    if (requests.host_query_reset && v12.hostQueryReset != vk::True)
     {
       return false;
     }

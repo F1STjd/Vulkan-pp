@@ -40,6 +40,7 @@ import vkpp.pipeline.compute;
 import vkpp.descriptor;
 import vkpp.semaphore;
 import vkpp.graph;
+import vkpp.query;
 
 namespace f1st
 {
@@ -137,6 +138,7 @@ private:
       .and_then(std::bind_front(&app::create_transfer_upload_pool, this))
       .and_then(std::bind_front(&app::create_frames, this))
       .and_then(std::bind_front(&app::create_frame_timeline, this))
+      .and_then(std::bind_front(&app::create_timestamp_ring, this))
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
       .and_then(std::bind_front(&app::create_texture_image, this))
@@ -218,6 +220,7 @@ private:
           .synchronization2 = true,
           .extended_dynamic_state = true,
           .timeline_semaphore = true,
+          .host_query_reset = true,
         },
         .require_present = true,
         .request_dedicated_transfer = true,
@@ -576,6 +579,16 @@ private:
         { frame_timeline_ = std::move(semaphore); });
   }
 
+  auto
+  create_timestamp_ring() -> std::expected<void, vkpp::error_t>
+  {
+    return vkpp::timestamp_ring::create(device_.device(),
+      device_.physical_device(),
+      static_cast<std::uint32_t>(max_frames_in_flight), 2U)
+      .transform([ this ](vkpp::timestamp_ring&& ring) -> void
+        { timestamps_ = std::move(ring); });
+  }
+
   void
   update_uniform_buffer(std::uint32_t current_frame)
   {
@@ -643,6 +656,8 @@ private:
       .transform(
         [ this, image_index, &command_buffer ]() -> void
         {
+          timestamps_.write(command_buffer, frame_index_, 0U,
+            vk::PipelineStageFlagBits2::eNone);
           const std::array pre_pass_transitions {
             vkpp::image_use_transition {
               .image = swap_chain_.images()[ image_index ],
@@ -738,6 +753,8 @@ private:
             command_buffer.drawIndexed(draw.index_count, 1U, 0U, 0U, 0U);
           }
           command_buffer.endRendering();
+          timestamps_.write(command_buffer, frame_index_, 1U,
+            vk::PipelineStageFlagBits2::eAllCommands);
 
           const vkpp::image_use_transition present_transition {
             .image = swap_chain_.images()[ image_index ],
@@ -844,6 +861,22 @@ private:
           .result = result,
         },
       };
+    }
+
+    if (frame_counter_ >= max_frames_in_flight)
+    {
+      // TODO (Konrad): shouldn't we use std::chrono for time? I believe it is
+      // one of the best written part of the stdlib
+      if (auto ns = timestamps_.read_and_reset_frame_ns(frame_index_); ns)
+      {
+        const double gpu_ms = ((*ns)[ 1 ] - (*ns)[ 0 ]) * 1e-6;
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_gpu_print_ >= std::chrono::seconds { 1 })
+        {
+          std::println("GPU frame: {:.3f} ms", gpu_ms);
+          last_gpu_print_ = now;
+        }
+      }
     }
 
     auto [ result, image_index ] = swap_chain_.swap_chain().acquireNextImage(
@@ -985,6 +1018,9 @@ private:
   std::uint32_t frame_index_ {};
   vk::raii::Semaphore frame_timeline_ { nullptr };
   std::uint64_t frame_counter_ { 0ULL };
+
+  vkpp::timestamp_ring timestamps_ {};
+  std::chrono::steady_clock::time_point last_gpu_print_ {};
 
   vkpp::texture<> texture_ {};
 

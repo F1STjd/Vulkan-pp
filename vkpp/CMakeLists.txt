@@ -66,6 +66,8 @@ target_sources(vkpp
 
       pipeline/pipeline.cppm       # module vkpp.pipeline
       pipeline/compute.cppm       # module vkpp.pipeline.compute
+
+      query/timestamp.cppm # module vkpp.query
 )
 
 target_compile_features(vkpp PUBLIC cxx_std_26)
