@@ -94,7 +94,7 @@ export struct mesh_streams_cpu
 
   [[nodiscard]] auto
   normals_view() const -> attribute_mdspan<3>
-  { return attribute_mdspan<3> { texcoords.data(), vertex_count }; }
+  { return attribute_mdspan<3> { normals.data(), vertex_count }; }
 };
 
 export struct mesh_cpu
@@ -150,7 +150,8 @@ pack_interleaved_vertices(const mesh_streams_cpu& streams)
 export namespace gltf
 {
 
-enum class content_policy : std::uint8_t {
+enum class content_policy : std::uint8_t
+{
   geometry_only,
   geometry_and_materials,
   geometry_and_host_images,
@@ -173,7 +174,8 @@ struct texture_ref_cpu
   std::optional<std::uint32_t> sampler_index {};
 };
 
-enum class alpha_mode : std::uint8_t {
+enum class alpha_mode : std::uint8_t
+{
   opaque,
   mask,
   blend,
@@ -212,7 +214,8 @@ struct draw_item_cpu
   std::array<float, 16> world_transform {};
 };
 
-enum class image_kind : std::uint8_t {
+enum class image_kind : std::uint8_t
+{
   encoded_png,
   encoded_jpeg,
   encoded_ktx2,
