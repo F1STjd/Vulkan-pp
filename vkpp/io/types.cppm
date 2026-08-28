@@ -144,9 +144,6 @@ pack_interleaved_vertices(const mesh_streams_cpu& streams)
   return packed;
 }
 
-// should we do the same for htx2/png/mesh/etc... to stay consistant? I believe
-// yes, but don't know what about `namespace mesh`. If it has logical sense then
-// yes
 export namespace gltf
 {
 
