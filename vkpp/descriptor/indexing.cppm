@@ -24,6 +24,13 @@ export class bindless_table
 public:
   bindless_table() = default;
 
+  bindless_table(vk::raii::DescriptorSetLayout&& layout,
+    vk::raii::DescriptorPool&& pool, vk::DescriptorSet set,
+    std::uint32_t capacity)
+  : layout_ { std::move(layout) }, pool_ { std::move(pool) }, set_ { set },
+    capacity_ { capacity }
+  {}
+
   [[nodiscard]] static auto
   create(const vk::raii::Device& device,
     const bindless_table_create_info& create_info)
@@ -98,13 +105,12 @@ public:
                     [ & ](std::vector<vk::raii::DescriptorSet>&& sets) mutable
                       -> bindless_table
                     {
-                      // what about constructor ???
-                      bindless_table table {};
-                      table.layout_ = std::move(layout);
-                      table.pool_ = std::move(pool);
-                      table.set_ = sets.front().release();
-                      table.capacity_ = create_info.capacity;
-                      return table;
+                      return bindless_table {
+                        std::move(layout),
+                        std::move(pool),
+                        sets.front().release(),
+                        create_info.capacity,
+                      };
                     });
               });
         });
