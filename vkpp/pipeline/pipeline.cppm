@@ -93,7 +93,7 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
       app_error {
         .kind = app_error_kind::invalid_argument,
         .detail =
-          "graphics_pipeline_runtime_args missing set_layout/color_formats"sv,
+          "graphics_pipeline_runtime_args missing set_layouts/color_formats"sv,
       },
     };
   }
