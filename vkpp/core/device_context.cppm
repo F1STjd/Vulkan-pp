@@ -242,15 +242,18 @@ private:
     {
       return false;
     }
-    if ((requests.descriptor_indexing &&
-          (v12.descriptorIndexing ||
-            v12.shaderSampledImageArrayNonUniformIndexing ||
-            v12.runtimeDescriptorArray || v12.descriptorBindingPartiallyBound ||
-            v12.descriptorBindingSampledImageUpdateAfterBind ||
-            v12.descriptorBindingUpdateUnusedWhilePending ||
-            v12.descriptorBindingVariableDescriptorCount)) != vk::True)
+    if (requests.descriptor_indexing)
     {
-      return false;
+      if (v12.descriptorIndexing != vk::True ||
+        v12.shaderSampledImageArrayNonUniformIndexing != vk::True ||
+        v12.runtimeDescriptorArray != vk::True ||
+        v12.descriptorBindingPartiallyBound != vk::True ||
+        v12.descriptorBindingSampledImageUpdateAfterBind != vk::True ||
+        v12.descriptorBindingUpdateUnusedWhilePending != vk::True ||
+        v12.descriptorBindingVariableDescriptorCount != vk::True)
+      {
+        return false;
+      }
     }
     {
       if (requests.dynamic_rendering && v13.dynamicRendering != vk::True)
