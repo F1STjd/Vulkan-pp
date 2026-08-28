@@ -43,7 +43,7 @@ export struct graphics_pipeline_runtime_args
   std::span<const vk::Format> color_formats {};
   vk::Format depth_format { vk::Format::eUndefined };
   vk::SampleCountFlagBits samples { vk::SampleCountFlagBits::e1 };
-  const vk::raii::DescriptorSetLayout& set_layout;
+  std::span<const vk::DescriptorSetLayout> set_layouts;
   std::span<const vk::VertexInputBindingDescription> vertex_bindings {};
   std::span<const vk::VertexInputAttributeDescription> vertex_attributes {};
   std::uint32_t push_constant_size { 0U };
@@ -87,7 +87,7 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
   const graphics_pipeline_shaders& shaders)
   -> std::expected<graphics_pipeline, error_t>
 {
-  if (runtime_args.set_layout == nullptr || runtime_args.color_formats.empty())
+  if (runtime_args.set_layouts.empty() || runtime_args.color_formats.empty())
   {
     return std::unexpected {
       app_error {
@@ -109,15 +109,15 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
       [ & ](vk::raii::ShaderModule&& module)
         -> std::expected<graphics_pipeline, error_t>
       {
-        const std::array set_layouts { *runtime_args.set_layout };
         const vk::PushConstantRange push_range {
           .stageFlags = runtime_args.push_constant_stages,
           .offset = 0U,
           .size = runtime_args.push_constant_size,
         };
         const vk::PipelineLayoutCreateInfo layout_info {
-          .setLayoutCount = 1U,
-          .pSetLayouts = set_layouts.data(),
+          .setLayoutCount =
+            static_cast<std::uint32_t>(runtime_args.set_layouts.size()),
+          .pSetLayouts = runtime_args.set_layouts.data(),
           .pushConstantRangeCount =
             runtime_args.push_constant_size > 0U ? 1U : 0U,
           .pPushConstantRanges = &push_range,

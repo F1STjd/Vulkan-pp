@@ -24,6 +24,7 @@ export struct device_feature_requests
   bool extended_dynamic_state { false };
   bool timeline_semaphore { false };
   bool host_query_reset { false };
+  bool descriptor_indexing { false };
 };
 
 export struct device_requirements
@@ -187,6 +188,18 @@ private:
     auto& v12 = chain.get<vk::PhysicalDeviceVulkan12Features>();
     v12.timelineSemaphore = vk::Bool32 { requests.timeline_semaphore };
     v12.hostQueryReset = vk::Bool32 { requests.host_query_reset };
+    v12.descriptorIndexing = vk::Bool32 { requests.descriptor_indexing };
+    v12.shaderSampledImageArrayNonUniformIndexing =
+      vk::Bool32 { requests.descriptor_indexing };
+    v12.runtimeDescriptorArray = vk::Bool32 { requests.descriptor_indexing };
+    v12.descriptorBindingPartiallyBound =
+      vk::Bool32 { requests.descriptor_indexing };
+    v12.descriptorBindingSampledImageUpdateAfterBind =
+      vk::Bool32 { requests.descriptor_indexing };
+    v12.descriptorBindingUpdateUnusedWhilePending =
+      vk::Bool32 { requests.descriptor_indexing };
+    v12.descriptorBindingVariableDescriptorCount =
+      vk::Bool32 { requests.descriptor_indexing };
 
     auto& v13 = chain.get<vk::PhysicalDeviceVulkan13Features>();
     v13.dynamicRendering = vk::Bool32 { requests.dynamic_rendering };
@@ -229,9 +242,21 @@ private:
     {
       return false;
     }
-    if (requests.dynamic_rendering && v13.dynamicRendering != vk::True)
+    if ((requests.descriptor_indexing &&
+          (v12.descriptorIndexing ||
+            v12.shaderSampledImageArrayNonUniformIndexing ||
+            v12.runtimeDescriptorArray || v12.descriptorBindingPartiallyBound ||
+            v12.descriptorBindingSampledImageUpdateAfterBind ||
+            v12.descriptorBindingUpdateUnusedWhilePending ||
+            v12.descriptorBindingVariableDescriptorCount)) != vk::True)
     {
       return false;
+    }
+    {
+      if (requests.dynamic_rendering && v13.dynamicRendering != vk::True)
+      {
+        return false;
+      }
     }
     if (requests.synchronization2 && v13.synchronization2 != vk::True)
     {

@@ -18,31 +18,32 @@ struct vertex_shader_output {
   float2 texture_coordinates;
 };
 
-struct world_push {
+struct draw_push {
   float4x4 world;
+  uint texture_index;
 };
 
 [[vk::push_constant]]
-ConstantBuffer<world_push> world_pc;
+ConstantBuffer<draw_push> draw_pc;
 
 [shader("vertex")]
 vertex_shader_output vertex_main(vertex_shader_input input)
 {
   vertex_shader_output output;
   const float4 local = float4(input.position, 1.0);
-  output.position = mul(ubo.projection, mul(ubo.view, mul(ubo.model, mul(world_pc.world, local))));
+  output.position = mul(ubo.projection, mul(ubo.view, mul(ubo.model, mul(draw_pc.world, local))));
   output.color = input.color;
   output.texture_coordinates = input.texture_coordinates;
   return output;
 }
 
-[[vk::binding(1, 0)]]
-Sampler2D texture;
+[[vk::binding(0, 1)]]
+Sampler2D textures[];
 
 [shader("fragment")]
 float4 fragment_main(vertex_shader_output input) : SV_Target
 {
-  return texture.Sample(input.texture_coordinates);
+  return textures[NonUniformResourceIndex(draw_pc.texture_index)].Sample(input.texture_coordinates);
 }
 
 [[vk::binding(2, 0)]]

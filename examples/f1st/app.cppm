@@ -38,6 +38,7 @@ import vkpp.barrier;
 import vkpp.pipeline;
 import vkpp.pipeline.compute;
 import vkpp.descriptor;
+import vkpp.descriptor.indexing;
 import vkpp.semaphore;
 import vkpp.graph;
 import vkpp.query;
@@ -47,8 +48,6 @@ namespace f1st
 using namespace std::string_view_literals;
 
 export constexpr const char* model_path { MODEL_DIRECTORY "911.glb" };
-export constexpr const char* texture_path { TEXTURE_DIRECTORY
-  "viking_room.png" };
 
 constexpr std::uint32_t window_width { 800 };
 constexpr std::uint32_t window_height { 600 };
@@ -93,22 +92,13 @@ static constexpr vkpp::graphics_pipeline_spec k_pipeline_spec {
   .min_sample_shading = 0.2F,
 };
 
-static constexpr std::array k_set0_bindings {
-  vk::DescriptorSetLayoutBinding {
-    .binding = 0U,
-    .descriptorType = vk::DescriptorType::eUniformBuffer,
-    .descriptorCount = 1U,
-    .stageFlags = vk::ShaderStageFlagBits::eVertex,
-    .pImmutableSamplers = nullptr,
-  },
-  vk::DescriptorSetLayoutBinding {
-    .binding = 1U,
-    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-    .descriptorCount = 1U,
-    .stageFlags = vk::ShaderStageFlagBits::eFragment,
-    .pImmutableSamplers = nullptr,
-  },
-};
+static constexpr std::array k_set0_bindings { vk::DescriptorSetLayoutBinding {
+  .binding = 0U,
+  .descriptorType = vk::DescriptorType::eUniformBuffer,
+  .descriptorCount = 1U,
+  .stageFlags = vk::ShaderStageFlagBits::eVertex,
+  .pImmutableSamplers = nullptr,
+} };
 
 export class app
 {
@@ -140,8 +130,8 @@ private:
       .and_then(std::bind_front(&app::create_frame_timeline, this))
       .and_then(std::bind_front(&app::create_timestamp_ring, this))
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
+      .and_then(std::bind_front(&app::create_bindless_table, this))
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
-      .and_then(std::bind_front(&app::create_texture_image, this))
       .and_then(std::bind_front(&app::create_buffers, this))
       .and_then(std::bind_front(&app::create_descriptor_pool, this))
       .and_then(std::bind_front(&app::create_descriptor_sets, this));
@@ -221,6 +211,7 @@ private:
           .extended_dynamic_state = true,
           .timeline_semaphore = true,
           .host_query_reset = true,
+          .descriptor_indexing = true,
         },
         .require_present = true,
         .request_dedicated_transfer = true,
@@ -276,6 +267,15 @@ private:
   }
 
   auto
+  create_bindless_table() -> std::expected<void, vkpp::error_t>
+  {
+    return vkpp::bindless_table::create(device_.device(),
+      { .capacity = 256U, .stages = vk::ShaderStageFlagBits::eFragment })
+      .transform([ this ](vkpp::bindless_table&& table) -> void
+        { bindless_table_ = std::move(table); });
+  }
+
+  auto
   create_graphics_pipeline() -> std::expected<void, vkpp::error_t>
   {
     constexpr std::array vertex_bindings {
@@ -284,6 +284,10 @@ private:
     constexpr auto vertex_attributes =
       vkpp::vertex::get_attribute_descriptions();
     const std::array color_formats { swap_chain_.format() };
+    const std::array set_layouts {
+      *descriptor_set_layout_,
+      *bindless_table_.layout(),
+    };
     return vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv")
       .and_then(
         [ &, this ](
@@ -294,11 +298,13 @@ private:
               .color_formats = color_formats,
               .depth_format = swap_chain_.depth().format(),
               .samples = device_.msaa_samples(),
-              .set_layout = descriptor_set_layout_,
+              .set_layouts = set_layouts,
               .vertex_bindings = vertex_bindings,
               .vertex_attributes = vertex_attributes,
               .push_constant_size =
-                static_cast<std::uint32_t>(sizeof(float[ 16 ])),
+                static_cast<std::uint32_t>(sizeof(draw_push)),
+              .push_constant_stages = vk::ShaderStageFlagBits::eVertex |
+                vk::ShaderStageFlagBits::eFragment,
             },
             { .spirv = spirv })
             .transform([ this ](vkpp::graphics_pipeline&& pipeline) -> void
@@ -453,17 +459,117 @@ private:
   auto
   create_buffers() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::load_gltf_asset_cpu(model_path)
+    return vkpp::load_gltf_asset_cpu(model_path,
+      {
+        .content = vkpp::gltf::content_policy::geometry_and_host_images,
+      })
       .and_then(
         [ &, this ](
           vkpp::gltf::asset_cpu&& asset) -> std::expected<void, vkpp::error_t>
         {
           draw_list_ = std::move(asset.draw_list);
 
+          textures_.clear();
+          textures_.reserve(asset.host_images.size());
+          std::vector<std::uint32_t> image_to_slot(
+            asset.host_images.size(), 0U);
+
+          for (auto index : std::views::indices(asset.host_images.size()))
+          {
+            const auto& host = asset.host_images[ index ];
+            std::expected<vkpp::texture<>, vkpp::error_t> made;
+
+            if (host.decoded.has_value())
+            {
+              const auto& image = *host.decoded;
+              made = vkpp::make_texture({
+                .device = device_,
+                .pool = upload_pool_,
+                .transfer_pool = transfer_upload_pool_,
+                .pixels = image.pixels,
+                .extent = image.extent,
+                .format = image.format,
+                .mip_levels = image.mip_levels_present,
+                .mip_policy = image.suggested_mip_policy,
+                .sampler = {},
+              });
+            }
+            else if (host.mip_chain.has_value())
+            {
+              const auto& chain = *host.mip_chain;
+              made = vkpp::make_texture({
+                .device = device_,
+                .pool = upload_pool_,
+                .transfer_pool = transfer_upload_pool_,
+                .pixels = chain.texels,
+                .extent = chain.base_extent,
+                .format = chain.format,
+                .mip_levels = chain.mip_levels_present,
+                .mip_policy = chain.suggested_mip_policy,
+                .sampler = {},
+                .level_offsets = chain.level_offsets,
+              });
+            }
+            else
+            {
+              return std::unexpected {
+                vkpp::app_error {
+                  .kind = vkpp::app_error_kind::invalid_argument,
+                  .detail = "gltf host image empty after realize"sv,
+                },
+              };
+            }
+            if (!made) { return std::unexpected { std::move(made).error() }; }
+
+            const auto slot = bindless_table_.acquire_index();
+            if (!slot)
+            {
+              return std::unexpected {
+                vkpp::app_error {
+                  .kind = vkpp::app_error_kind::invalid_argument,
+                  .detail = "bindless_table capacity exhausted"sv,
+                },
+              };
+            }
+            bindless_table_.write(
+              device_.device(), *slot, *made->sampler(), *made->view());
+            image_to_slot[ index ] = *slot;
+            textures_.push_back(std::move(*made));
+          }
+
+          const std::uint32_t fallback_slot =
+            image_to_slot.empty() ? 0U : image_to_slot.front();
+
+          auto resolve_base_color =
+            [ & ](const vkpp::mesh_streams_cpu& primitive) -> std::uint32_t
+          {
+            if (!primitive.material_index.has_value()) { return fallback_slot; }
+            const auto material_i = *primitive.material_index;
+            if (material_i >= asset.materials.size()) { return fallback_slot; }
+            const auto& material = asset.materials[ material_i ];
+            if (!material.base_color_texture.has_value())
+            {
+              return fallback_slot;
+            }
+            const auto& ref = *material.base_color_texture;
+            const std::optional<std::uint32_t> image_index =
+              ref.basisu_image_index.has_value() ? ref.basisu_image_index
+                                                 : ref.image_index;
+            if (!image_index.has_value() ||
+              *image_index >= image_to_slot.size())
+            {
+              return fallback_slot;
+            }
+            return image_to_slot[ *image_index ];
+          };
+
           std::vector<vkpp::mesh_interleaved_cpu> packed;
+          std::vector<std::uint32_t> base_color_indices;
           packed.reserve(asset.meshes.primitives.size());
+          base_color_indices.reserve(asset.meshes.primitives.size());
           for (const auto& primitive : asset.meshes.primitives)
           {
+            base_color_indices.push_back(resolve_base_color(primitive));
             packed.push_back(vkpp::pack_interleaved_vertices(primitive));
           }
 
@@ -483,7 +589,8 @@ private:
               vk::BufferUsageFlagBits::eIndexBuffer,
             vkpp::memory_intent::gpu_only)
             .and_then(
-              [ this, &packed ](vkpp::buffer_arena<>&& arena)
+              [ this, &packed, &base_color_indices ](
+                vkpp::buffer_arena<>&& arena)
                 -> std::expected<void, vkpp::error_t>
               {
                 geometry_arena_ = std::move(arena);
@@ -493,18 +600,22 @@ private:
                 std::vector<vkpp::arena_slice_upload> slices;
                 slices.reserve(packed.size() * 2UZ);
 
-                for (const auto& pack : packed)
+                for (auto index : std::views::indices(packed.size()))
                 {
+                  const auto& pack = packed[ index ];
                   const vk::DeviceSize index_align =
                     (pack.index_type == vk::IndexType::eUint32) ? 4UZ : 2UZ;
                   auto vertex = geometry_arena_.allocate(
                     static_cast<vk::DeviceSize>(pack.vertices.size()), 0UZ);
                   if (!vertex) { return std::unexpected { vertex.error() }; }
 
-                  auto index = geometry_arena_.allocate(
+                  auto index_slice = geometry_arena_.allocate(
                     static_cast<vk::DeviceSize>(pack.indices.size()),
                     index_align);
-                  if (!index) { return std::unexpected { index.error() }; }
+                  if (!index_slice)
+                  {
+                    return std::unexpected { index_slice.error() };
+                  }
 
                   slices.push_back({
                     .bytes = pack.vertices,
@@ -512,13 +623,14 @@ private:
                   });
                   slices.push_back({
                     .bytes = pack.indices,
-                    .dst_offset = index->offset,
+                    .dst_offset = index_slice->offset,
                   });
                   draws_.push_back({
                     .vertex_slice = *vertex,
-                    .index_slice = *index,
+                    .index_slice = *index_slice,
                     .index_count = pack.index_count,
                     .index_type = pack.index_type,
+                    .base_color_index = base_color_indices[ index ],
                   });
                 }
 
@@ -531,30 +643,6 @@ private:
                 });
               });
         });
-  }
-
-  auto
-  create_texture_image() -> std::expected<void, vkpp::error_t>
-  {
-    return vkpp::load_host_image<vkpp::image_file_type::png>(texture_path)
-      .and_then(
-        [ this ](vkpp::host_image&& host_texture)
-          -> std::expected<vkpp::texture<>, vkpp::error_t>
-        {
-          return vkpp::make_texture({
-            .device = device_,
-            .pool = upload_pool_,
-            .transfer_pool = transfer_upload_pool_,
-            .pixels = host_texture.pixels,
-            .extent = host_texture.extent,
-            .format = host_texture.format,
-            .mip_levels = host_texture.mip_levels_present,
-            .mip_policy = host_texture.suggested_mip_policy,
-            .sampler = {},
-          });
-        })
-      .transform([ this ](vkpp::texture<>&& texture) -> void
-        { texture_ = std::move(texture); });
   }
 
   auto
@@ -636,13 +724,24 @@ private:
       .transform(
         [ this ](std::vector<vk::DescriptorSet>&& sets) -> void
         {
-          for (auto i : std::views::iota(0UZ, max_frames_in_flight))
+          for (auto index : std::views::indices(max_frames_in_flight))
           {
-            frames_[ i ].descriptor_set = sets[ i ];
-            vkpp::write_ubo_and_combined_image(device_.device(),
-              frames_[ i ].descriptor_set, frames_[ i ].uniform_buffer.buffer(),
-              sizeof(uniform_buffer_object), *texture_.sampler(),
-              *texture_.view());
+            frames_[ index ].descriptor_set = sets[ index ];
+            const vk::DescriptorBufferInfo buffer_info {
+              .buffer = frames_[ index ].uniform_buffer.buffer(),
+              .offset = 0U,
+              .range = sizeof(uniform_buffer_object),
+            };
+            const vk::WriteDescriptorSet write {
+              .dstSet = frames_[ index ].descriptor_set,
+              .dstBinding = 0U,
+              .dstArrayElement = 0U,
+              .descriptorCount = 1U,
+              .descriptorType = vk::DescriptorType::eUniformBuffer,
+              .pBufferInfo = &buffer_info,
+            };
+            vkpp::update_descriptor_sets(
+              device_.device(), std::span { &write, 1UZ });
           }
         });
   }
@@ -741,6 +840,8 @@ private:
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
             *graphics_pipeline_.layout(), 0U,
             frames_[ frame_index_ ].descriptor_set, nullptr);
+          command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+            *graphics_pipeline_.layout(), 1U, bindless_table_.set(), nullptr);
           for (const auto& item : draw_list_)
           {
             const auto& draw = draws_[ item.primitive_index ];
@@ -748,8 +849,15 @@ private:
               0U, geometry_arena_.buffer(), { draw.vertex_slice.offset });
             command_buffer.bindIndexBuffer(geometry_arena_.buffer(),
               draw.index_slice.offset, draw.index_type);
-            command_buffer.pushConstants<float>(*graphics_pipeline_.layout(),
-              vk::ShaderStageFlagBits::eVertex, 0U, item.world_transform);
+
+            const draw_push push_constants {
+              .world = item.world_transform,
+              .texture_index = draw.base_color_index,
+            };
+            command_buffer.pushConstants(*graphics_pipeline_.layout(),
+              vk::ShaderStageFlagBits::eVertex |
+                vk::ShaderStageFlagBits::eFragment,
+              0U, sizeof(push_constants), &push_constants);
             command_buffer.drawIndexed(draw.index_count, 1U, 0U, 0U, 0U);
           }
           command_buffer.endRendering();
@@ -1022,7 +1130,14 @@ private:
   vkpp::timestamp_ring timestamps_ {};
   std::chrono::steady_clock::time_point last_gpu_print_ {};
 
-  vkpp::texture<> texture_ {};
+  struct draw_push
+  {
+    std::array<float, 16> world {};
+    std::uint32_t texture_index {};
+  };
+
+  vkpp::bindless_table bindless_table_ {};
+  std::vector<vkpp::texture<>> textures_ {};
 
   vkpp::buffer_arena<> geometry_arena_ {};
   struct primitive_draw
@@ -1031,6 +1146,7 @@ private:
     vkpp::virtual_slice index_slice {};
     std::uint32_t index_count { 0U };
     vk::IndexType index_type { vk::IndexType::eUint16 };
+    std::uint32_t base_color_index { 0U };
   };
   std::vector<primitive_draw> draws_ {};
   std::vector<vkpp::gltf::draw_item_cpu> draw_list_ {};
