@@ -255,6 +255,51 @@ map_gltf_sampler(const fastgltf::Sampler& sampler) -> gltf::sampler_cpu
   return mapped;
 }
 
+[[nodiscard]] constexpr auto
+map_texture_ref(const fastgltf::Texture& texture) -> gltf::texture_ref_cpu
+{
+  return {
+    .image_index = texture.imageIndex.has_value()
+      ? std::optional { static_cast<std::uint32_t>(*texture.imageIndex) }
+      : std::nullopt,
+    .basisu_image_index = texture.basisuImageIndex.has_value()
+      ? std::optional { static_cast<std::uint32_t>(*texture.basisuImageIndex) }
+      : std::nullopt,
+    .sampler_index = texture.samplerIndex.has_value()
+      ? std::optional { static_cast<std::uint32_t>(*texture.samplerIndex) }
+      : std::nullopt,
+  };
+}
+
+[[nodiscard]] constexpr auto
+map_texture_ref(const fastgltf::Asset& gltf, std::size_t texture_index)
+  -> gltf::texture_ref_cpu
+{ return map_texture_ref(gltf.textures[ texture_index ]); }
+
+[[nodiscard]] constexpr auto
+map_optional_texture(
+  const fastgltf::Asset& gltf, const std::optional<fastgltf::TextureInfo>& info)
+  -> std::optional<gltf::texture_ref_cpu>
+{
+  if (!info.has_value()) { return std::nullopt; }
+  return map_texture_ref(gltf, info->textureIndex);
+}
+
+[[nodiscard]] constexpr auto
+map_alpha_mode(fastgltf::AlphaMode mode) -> gltf::alpha_mode
+{
+  switch (mode)
+  {
+  case fastgltf::AlphaMode::Opaque:
+    return gltf::alpha_mode::opaque;
+  case fastgltf::AlphaMode::Mask:
+    return gltf::alpha_mode::mask;
+  case fastgltf::AlphaMode::Blend:
+    return gltf::alpha_mode::blend;
+  }
+  return gltf::alpha_mode::opaque;
+}
+
 [[nodiscard]] auto
 build_draw_list(const fastgltf::Asset& gltf) -> std::vector<gltf::draw_item_cpu>
 {
@@ -516,26 +561,33 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
           },
           .metallic_factor = material.pbrData.metallicFactor,
           .roughness_factor = material.pbrData.roughnessFactor,
+          .base_color_texture = map_optional_texture(gltf, material.pbrData.baseColorTexture),
+          .metallic_roughness_texture = map_optional_texture(gltf, material.pbrData.metallicRoughnessTexture),
+          .emissive_factor = {
+            material.emissiveFactor[0],
+            material.emissiveFactor[1],
+            material.emissiveFactor[2],
+          },
+          .alpha_mode = map_alpha_mode(material.alphaMode),
+          .alpha_cutoff = material.alphaCutoff,
+          .double_sided = material.doubleSided,
         };
-        if (material.pbrData.baseColorTexture.has_value())
+        if (material.normalTexture.has_value())
         {
-          const auto texture_index =
-            material.pbrData.baseColorTexture->textureIndex;
-          const auto& texture = gltf.textures[ texture_index ];
-          mapped.base_color_texture = {
-            .image_index = texture.imageIndex.has_value()
-              ? std::optional { static_cast<std::uint32_t>(
-                  *texture.imageIndex) }
-              : std::nullopt,
-            .basisu_image_index = texture.basisuImageIndex.has_value()
-              ? std::optional { static_cast<std::uint32_t>(
-                  *texture.basisuImageIndex) }
-              : std::nullopt,
-            .sampler_index = texture.samplerIndex.has_value()
-              ? std::optional { static_cast<std::uint32_t>(
-                  *texture.samplerIndex) }
-              : std::nullopt,
-          };
+          mapped.normal_texture =
+            map_texture_ref(gltf, material.normalTexture->textureIndex);
+          mapped.normal_scale = material.normalTexture->scale;
+        }
+        if (material.occlusionTexture.has_value())
+        {
+          mapped.occlusion_texture =
+            map_texture_ref(gltf, material.occlusionTexture->textureIndex);
+          mapped.occlusion_strength = material.occlusionTexture->strength;
+        }
+        if (material.emissiveTexture.has_value())
+        {
+          mapped.emissive_texture =
+            map_texture_ref(gltf, material.emissiveTexture->textureIndex);
         }
         out.materials.push_back(std::move(mapped));
       }
@@ -546,22 +598,12 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
         out.samplers.push_back(map_gltf_sampler(sampler));
       }
 
+      out.textures.reserve(gltf.textures.size());
       for (const auto& texture : gltf.textures)
       {
-        out.textures.push_back({
-          .image_index = texture.imageIndex.has_value()
-            ? std::optional { static_cast<std::uint32_t>(*texture.imageIndex) }
-            : std::nullopt,
-          .basisu_image_index = texture.basisuImageIndex.has_value()
-            ? std::optional { static_cast<std::uint32_t>(
-                *texture.basisuImageIndex) }
-            : std::nullopt,
-          .sampler_index = texture.samplerIndex.has_value()
-            ? std::optional { static_cast<std::uint32_t>(
-                *texture.samplerIndex) }
-            : std::nullopt,
-        });
+        out.textures.push_back(map_texture_ref(texture));
       }
+
       if (runtime_args.content == gltf::content_policy::geometry_and_materials)
       {
         return out;
