@@ -538,11 +538,12 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
           };
         }
         out.materials.push_back(std::move(mapped));
-        out.samplers.reserve(gltf.samplers.size());
-        for (const fastgltf::Sampler& sampler : gltf.samplers)
-        {
-          out.samplers.push_back(map_gltf_sampler(sampler));
-        }
+      }
+
+      out.samplers.reserve(gltf.samplers.size());
+      for (const fastgltf::Sampler& sampler : gltf.samplers)
+      {
+        out.samplers.push_back(map_gltf_sampler(sampler));
       }
 
       for (const auto& texture : gltf.textures)
