@@ -76,7 +76,7 @@ load_mesh_cpu<mesh_file_type::obj>(const std::filesystem::path& path)
         }
         else
         {
-          streams.texcoords.insert(streams.texcoords.end(), 0.0F, 0.0F);
+          streams.texcoords.insert(streams.texcoords.end(), { 0.0F, 0.0F });
         }
         ++streams.vertex_count;
       }
