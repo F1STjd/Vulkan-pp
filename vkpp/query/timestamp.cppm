@@ -18,6 +18,12 @@ export class timestamp_ring
 public:
   timestamp_ring() = default;
 
+  timestamp_ring(vk::raii::QueryPool&& pool, float timestamp_period,
+    std::uint32_t queries_per_frame)
+  : pool_ { std::move(pool) }, timestamp_period_ { timestamp_period },
+    queries_per_frame_ { queries_per_frame }
+  {}
+
   [[nodiscard]] static auto
   create(const vk::raii::Device& device,
     const vk::raii::PhysicalDevice& physical_device,
@@ -44,12 +50,12 @@ public:
       .transform(
         [ & ](vk::raii::QueryPool&& pool) -> timestamp_ring
         {
-          timestamp_ring ring {};
-          ring.pool_ = std::move(pool);
-          ring.timestamp_period_ = properties.limits.timestampPeriod;
-          ring.queries_per_frame_ = queries_per_frame;
-          ring.pool_.reset(0U, frames_in_flight * queries_per_frame);
-          return ring;
+          pool.reset(0U, frames_in_flight * queries_per_frame);
+          return timestamp_ring {
+            std::move(pool),
+            properties.limits.timestampPeriod,
+            queries_per_frame,
+          };
         });
   }
 
@@ -65,7 +71,6 @@ public:
   read_and_reset_frame_ns(std::uint32_t frame_slot)
     -> std::expected<std::vector<double>, error_t>
   {
-    // some differences in plan. ticks is no container
     const auto first = frame_slot * queries_per_frame_;
     auto [ result, ticks ] = pool_.getResults<std::uint64_t>(first,
       queries_per_frame_, queries_per_frame_ * sizeof(std::uint64_t),
