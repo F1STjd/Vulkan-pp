@@ -59,7 +59,7 @@ chain_from_ktx_texture(
 
   if (ktxTexture2_NeedsTranscoding(held.get()))
   {
-    if (runtime_args.transcode_target.has_value())
+    if (!runtime_args.transcode_target.has_value())
     {
       return std::unexpected {
         app_error {
