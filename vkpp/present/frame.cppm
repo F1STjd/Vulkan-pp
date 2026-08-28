@@ -43,7 +43,7 @@ create_frames(const frames_create_info& info)
     .transform(
       [ & ](std::vector<vk::raii::CommandBuffer>&& command_buffers) -> void
       {
-        for (std::size_t index : std::views::iota(0UZ, N))
+        for (std::size_t index : std::views::indices(N))
         {
           frames[ index ].command_buffer = std::move(command_buffers[ index ]);
         }
@@ -51,7 +51,7 @@ create_frames(const frames_create_info& info)
     .and_then(
       [ & ] -> std::expected<void, error_t>
       {
-        for (std::size_t index : std::views::iota(0UZ, N))
+        for (std::size_t index : std::views::indices(N))
         {
           auto semaphore = UTILS_VK(info.device.device().createSemaphore({}),
             ^^vk::raii::Device::createSemaphore);
@@ -66,7 +66,7 @@ create_frames(const frames_create_info& info)
     .and_then(
       [ & ] -> std::expected<void, error_t>
       {
-        for (std::size_t index : std::views::iota(0UZ, N))
+        for (std::size_t index : std::views::indices(N))
         {
           auto ubo = make_buffer_resource(info.device.allocator(),
             info.ubo_size, vk::BufferUsageFlagBits::eUniformBuffer,

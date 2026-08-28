@@ -288,7 +288,7 @@ private:
     const vk::raii::SurfaceKHR& surface) -> std::optional<std::uint32_t>
   {
     const auto properties = physical_device.getQueueFamilyProperties();
-    for (std::size_t property_index : std::views::iota(0UZ, properties.size()))
+    for (std::size_t property_index : std::views::indices(properties.size()))
     {
       const bool graphics = static_cast<bool>(
         properties[ property_index ].queueFlags & vk::QueueFlagBits::eGraphics);
@@ -304,7 +304,7 @@ private:
     -> std::optional<std::uint32_t>
   {
     const auto properties = physical_device.getQueueFamilyProperties();
-    for (std::size_t property_index : std::views::iota(0UZ, properties.size()))
+    for (std::size_t property_index : std::views::indices(properties.size()))
     {
       if (properties[ property_index ].queueFlags &
         vk::QueueFlagBits::eGraphics)
@@ -320,7 +320,7 @@ private:
     -> std::optional<std::uint32_t>
   {
     const auto properties = physical_device.getQueueFamilyProperties();
-    for (std::size_t property_index : std::views::iota(0UZ, properties.size()))
+    for (std::size_t property_index : std::views::indices(properties.size()))
     {
       const auto flags = properties[ property_index ].queueFlags;
       const bool transfer =

@@ -176,7 +176,7 @@ public:
         {
           output.render_finished_semaphores_.clear();
           output.render_finished_semaphores_.reserve(output.images_.size());
-          for (auto _ : std::views::iota(0UZ, output.images_.size()))
+          for (auto _ : std::views::indices(output.images_.size()))
           {
             if (auto error = UTILS_VK(device.device().createSemaphore({}),
                   ^^vk::raii::Device::createSemaphore)

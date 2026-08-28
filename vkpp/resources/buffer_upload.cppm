@@ -41,7 +41,7 @@ public:
   [[nodiscard]] auto
   join() && -> std::expected<Resource, error_t>
   {
-    for (std::uint32_t index : std::views::iota(0U, submission_count_))
+    for (std::uint32_t index : std::views::indices(submission_count_))
     {
       if (auto done = submissions_[ index ].wait(); !done)
       {

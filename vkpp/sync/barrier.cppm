@@ -244,7 +244,7 @@ record_generate_mipmaps(vk::raii::CommandBuffer& command_buffer,
   auto mip_width = width;
   auto mip_height = height;
 
-  for (std::uint32_t mip_level : std::views::iota(1U, mip_levels))
+  for (std::uint32_t mip_level : std::views::indices(mip_levels))
   {
     const image_barrier to_transfer_src =
       transfer_dst_to_transfer_src(image, mip_level - 1);

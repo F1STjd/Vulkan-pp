@@ -308,7 +308,6 @@ build_draw_list(const fastgltf::Asset& gltf) -> std::vector<gltf::draw_item_cpu>
 
   std::vector<std::uint32_t> first_primitive(gltf.meshes.size(), 0U);
   std::uint32_t running { 0U };
-  // TODO (Konrad): change all views::iota that were used for indices to this
   for (auto mesh_index : std::views::indices(gltf.meshes.size()))
   {
     first_primitive[ mesh_index ] = running;

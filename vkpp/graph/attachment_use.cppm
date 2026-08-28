@@ -118,7 +118,7 @@ fill_image_barriers(std::span<const image_use_transition> transitions,
 {
   const std::uint32_t count =
     static_cast<std::uint32_t>(std::min(transitions.size(), out.size()));
-  for (auto index : std::views::iota(0U, count))
+  for (auto index : std::views::indices(count))
   {
     out[ index ] = make_image_barrier(transitions[ index ]);
   }

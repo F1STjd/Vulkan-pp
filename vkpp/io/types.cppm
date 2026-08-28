@@ -129,7 +129,7 @@ pack_interleaved_vertices(const mesh_streams_cpu& streams)
   const attribute_mdspan<3> colors = streams.colors_view();
   const attribute_mdspan<2> texcoords = streams.texcoords_view();
 
-  for (auto index : std::views::iota(0U, streams.vertex_count))
+  for (auto index : std::views::indices(streams.vertex_count))
   {
     const auto xyz = std::submdspan(positions, index, std::full_extent);
     const auto rgb = std::submdspan(colors, index, std::full_extent);

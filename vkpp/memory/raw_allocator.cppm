@@ -166,7 +166,7 @@ private:
   {
     const auto available_properties = physical_device_->getMemoryProperties();
     const auto memory_types =
-      std::views::iota(0U, available_properties.memoryTypeCount);
+      std::views::indices(available_properties.memoryTypeCount);
     auto memory_type_it = std::ranges::find_if(memory_types,
       [ type_filter, properties, &available_properties ](
         std::uint32_t memory_type) -> bool
