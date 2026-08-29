@@ -136,4 +136,128 @@ record_image_use_transitions(vk::raii::CommandBuffer& command_buffer,
     std::span { storage.data(), static_cast<std::size_t>(count) });
 }
 
+export enum class buffer_use : std::uint8_t {
+  none,
+  storage_compute_write,
+  storage_compute_read,
+  storage_vertex_read,
+  storage_fragment_read,
+  uniform_fragment_read,
+  transfer_src,
+  transfer_dst,
+  vertex,
+  index,
+  indirect,
+};
+
+export struct buffer_use_fields
+{
+  vk::PipelineStageFlags2 stage {};
+  vk::AccessFlags2 access {};
+};
+
+export [[nodiscard]] constexpr auto
+fields_for(buffer_use use) -> buffer_use_fields
+{
+  switch (use)
+  {
+  case buffer_use::none:
+    return {};
+  case buffer_use::storage_compute_write:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eComputeShader,
+      .access = vk::AccessFlagBits2::eShaderStorageWrite,
+    };
+  case buffer_use::storage_compute_read:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eComputeShader,
+      .access = vk::AccessFlagBits2::eShaderStorageRead,
+    };
+  case buffer_use::storage_vertex_read:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eVertexShader,
+      .access = vk::AccessFlagBits2::eShaderStorageRead,
+    };
+  case buffer_use::storage_fragment_read:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eFragmentShader,
+      .access = vk::AccessFlagBits2::eShaderStorageRead,
+    };
+  case buffer_use::uniform_fragment_read:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eFragmentShader,
+      .access = vk::AccessFlagBits2::eUniformRead,
+    };
+  case buffer_use::transfer_src:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eCopy,
+      .access = vk::AccessFlagBits2::eTransferRead,
+    };
+  case buffer_use::transfer_dst:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eCopy,
+      .access = vk::AccessFlagBits2::eTransferWrite,
+    };
+  case buffer_use::vertex:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eVertexAttributeInput,
+      .access = vk::AccessFlagBits2::eVertexAttributeRead,
+    };
+  case buffer_use::index:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eIndexInput,
+      .access = vk::AccessFlagBits2::eIndexRead,
+    };
+  case buffer_use::indirect:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eDrawIndirect,
+      .access = vk::AccessFlagBits2::eIndirectCommandRead,
+    };
+  }
+  return {};
+}
+
+export struct buffer_use_transition
+{
+  vk::Buffer buffer {};
+  buffer_use from { buffer_use::none };
+  buffer_use to {};
+  vk::DeviceSize offset { 0UZ };
+  vk::DeviceSize size { vk::WholeSize };
+};
+
+export [[nodiscard]] constexpr auto
+make_buffer_barrier(const buffer_use_transition& transition) -> buffer_barrier
+{
+  const auto dst = fields_for(transition.to);
+  const bool first_use = transition.from == buffer_use::none;
+  const auto src = first_use
+    ? buffer_use_fields { .stage = dst.stage, .access = {} }
+    : fields_for(transition.from);
+  return {
+    .src_stage = src.stage,
+    .src_access = src.access,
+    .dst_stage = dst.stage,
+    .dst_access = dst.access,
+    .buffer = transition.buffer,
+    .offset = transition.offset,
+    .size = transition.size,
+  };
+}
+
+export void
+record_buffer_use_transitions(vk::raii::CommandBuffer& command_buffer,
+  std::span<const buffer_use_transition> transitions)
+{
+  std::array<buffer_barrier, 8> storage {};
+  const auto count =
+    static_cast<std::uint32_t>(std::min(transitions.size(), storage.size()));
+  for (auto index : std::views::indices(count))
+  {
+    storage[ index ] = make_buffer_barrier(transitions[ index ]);
+  }
+  record_barriers(command_buffer,
+    std::span { storage.data(), static_cast<std::size_t>(count) });
+}
+
 } // namespace vkpp

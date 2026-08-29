@@ -418,14 +418,13 @@ private:
     command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
       *pipeline->layout(), 0U, (*sets)[ 0 ], nullptr);
     command_buffer.dispatch(1U, 1U, 1U);
-    const vkpp::buffer_barrier after_compute {
-      .src_stage = vk::PipelineStageFlagBits2::eComputeShader,
-      .src_access = vk::AccessFlagBits2::eShaderStorageWrite,
-      .dst_stage = vk::PipelineStageFlagBits2::eCopy,
-      .dst_access = vk::AccessFlagBits2::eTransferRead,
+    const vkpp::buffer_use_transition after_compute {
       .buffer = ssbo->buffer(),
+      .from = vkpp::buffer_use::storage_compute_write,
+      .to = vkpp::buffer_use::transfer_src,
     };
-    vkpp::record_barriers(command_buffer, std::span { &after_compute, 1UZ });
+    vkpp::record_buffer_use_transitions(
+      command_buffer, std::span { &after_compute, 1UZ });
     command_buffer.copyBuffer(
       ssbo->buffer(), staging->buffer(), vk::BufferCopy { .size = byte_size });
     auto submitted = submit.end_and_submit(vkpp::upload::deferred);
