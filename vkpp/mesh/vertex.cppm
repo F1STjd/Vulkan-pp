@@ -66,11 +66,13 @@ namespace std
 template<>
 struct hash<vkpp::vertex>
 {
-  size_t
-  operator()(const vkpp::vertex& vertex) const
+  auto
+  operator()(const vkpp::vertex& vertex) const -> size_t
   {
-    return ((hash<glm::vec3>()(vertex.position) ^
-              (hash<glm::vec3>()(vertex.color) << 1)) >>
+    return ((((hash<glm::vec3>()(vertex.position) ^
+                (hash<glm::vec3>()(vertex.color) << 1)) >>
+               1) ^
+              (hash<glm::vec3>()(vertex.normal) << 1)) >>
              1) ^
       (hash<glm::vec2>()(vertex.texture_coordinates) << 1);
   }
