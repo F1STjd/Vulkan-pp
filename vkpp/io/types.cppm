@@ -3,6 +3,7 @@ export module vkpp.io.types;
 
 import std;
 import vulkan;
+import glm;
 
 import vkpp.texture;
 import vkpp.vertex;
@@ -134,8 +135,17 @@ pack_interleaved_vertices(const mesh_streams_cpu& streams)
     const auto xyz = std::submdspan(positions, index, std::full_extent);
     const auto rgb = std::submdspan(colors, index, std::full_extent);
     const auto uv = std::submdspan(texcoords, index, std::full_extent);
+    glm::vec3 n_xyz { 0.0F, 1.0F, 0.0F };
+    if (streams.normals.size() >= (index + 1UZ) * 3UZ)
+    {
+      const auto normals =
+        std::submdspan(streams.normals_view(), index, std::full_extent);
+      n_xyz = { normals[ 0 ], normals[ 1 ], normals[ 2 ] };
+    }
+
     out[ index ] = vertex {
       .position = { xyz[ 0 ], xyz[ 1 ], xyz[ 2 ] },
+      .normal = n_xyz,
       .color = { rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] },
       .texture_coordinates = { uv[ 0 ], uv[ 1 ] },
     };

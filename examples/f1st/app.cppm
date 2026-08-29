@@ -88,17 +88,20 @@ static_assert(max_frames_in_flight > 0,
   "variable % max_frames_in_flight is used later, so being 0 is UB");
 
 static constexpr vkpp::graphics_pipeline_spec k_pipeline_spec {
-  .sample_shading = true,
+  .sample_shading = false,
   .min_sample_shading = 0.2F,
 };
 
-static constexpr std::array k_set0_bindings { vk::DescriptorSetLayoutBinding {
-  .binding = 0U,
-  .descriptorType = vk::DescriptorType::eUniformBuffer,
-  .descriptorCount = 1U,
-  .stageFlags = vk::ShaderStageFlagBits::eVertex,
-  .pImmutableSamplers = nullptr,
-} };
+static constexpr std::array k_set0_bindings {
+  vk::DescriptorSetLayoutBinding {
+    .binding = 0U,
+    .descriptorType = vk::DescriptorType::eUniformBuffer,
+    .descriptorCount = 1U,
+    .stageFlags =
+      vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+    .pImmutableSamplers = nullptr,
+  },
+};
 
 export class app
 {
@@ -568,11 +571,13 @@ private:
           std::vector<vkpp::gltf::alpha_mode> alpha_modes;
           std::vector<float> alpha_cutoffs;
           std::vector<std::uint8_t> double_sided;
+          std::vector<std::array<float, 4>> base_color_factors;
           packed.reserve(asset.meshes.primitives.size());
           base_color_indices.reserve(asset.meshes.primitives.size());
           alpha_modes.reserve(asset.meshes.primitives.size());
           alpha_cutoffs.reserve(asset.meshes.primitives.size());
           double_sided.reserve(asset.meshes.primitives.size());
+          base_color_factors.reserve(asset.meshes.primitives.size());
           for (const auto& primitive : asset.meshes.primitives)
           {
             base_color_indices.push_back(resolve_base_color(primitive));
@@ -580,6 +585,7 @@ private:
             vkpp::gltf::alpha_mode mode { vkpp::gltf::alpha_mode::opaque };
             float cutoff { 0.5F };
             bool two_sided { false };
+            std::array<float, 4> factor { 1.0F, 1.0F, 1.0F, 1.0F };
             if (primitive.material_index.has_value() &&
               *primitive.material_index < asset.materials.size())
             {
@@ -588,10 +594,12 @@ private:
               mode = material.alpha_mode;
               cutoff = material.alpha_cutoff;
               two_sided = material.double_sided;
+              factor = material.base_color_factor;
             }
             alpha_modes.push_back(mode);
             alpha_cutoffs.push_back(cutoff);
             double_sided.push_back(two_sided);
+            base_color_factors.push_back(factor);
           }
 
           vk::DeviceSize arena_size { 0UZ };
@@ -653,6 +661,7 @@ private:
                     .base_color_index = base_color_indices[ index ],
                     .alpha_mode = alpha_modes[ index ],
                     .alpha_cutoff = alpha_cutoffs[ index ],
+                    .base_color_factor = base_color_factors[ index ],
                     .double_sided = static_cast<bool>(double_sided[ index ]),
                   });
                 }
@@ -724,6 +733,9 @@ private:
       .view = glm::gtc::lookAt(camera_position, target, up),
       .projection = glm::gtc::perspective(
         fov_vertical, aspect_ratio, near_plane, far_plane),
+      .light_direction = glm::normalize(glm::vec3 { 0.4F, 1.0F, 0.3F }),
+      .light_color = glm::vec3 { 1.0F, 0.98F, 0.92F },
+      .camera_position = camera_position,
     };
     ubo.projection[ 1 ][ 1 ] *= -1;
     frames_[ current_frame ].uniform_buffer.write(&ubo, sizeof(ubo));
@@ -767,6 +779,15 @@ private:
               device_.device(), std::span { &write, 1UZ });
           }
         });
+  }
+
+  [[nodiscard]] static auto
+  is_mirrored(const std::array<float, 16>& world) -> bool
+  {
+    const glm::vec3 axis_x { world[ 0 ], world[ 1 ], world[ 2 ] };
+    const glm::vec3 axis_y { world[ 0 ], world[ 1 ], world[ 2 ] };
+    const glm::vec3 axis_z { world[ 0 ], world[ 1 ], world[ 2 ] };
+    return glm::dot(glm::cross(axis_x, axis_y), axis_z) < 0.0F;
   }
 
   auto
@@ -879,6 +900,7 @@ private:
               .texture_index = draw.base_color_index,
               .alpha_mode = static_cast<std::uint32_t>(draw.alpha_mode),
               .alpha_cutoff = draw.alpha_cutoff,
+              .base_color_factor = draw.base_color_factor,
             };
             command_buffer.pushConstants(*graphics_pipeline_.layout(),
               vk::ShaderStageFlagBits::eVertex |
@@ -887,6 +909,9 @@ private:
             command_buffer.setCullMode(draw.double_sided
                 ? vk::CullModeFlagBits::eNone
                 : vk::CullModeFlagBits::eBack);
+            command_buffer.setFrontFace(is_mirrored(item.world_transform)
+                ? vk::FrontFace::eClockwise
+                : vk::FrontFace::eCounterClockwise);
             command_buffer.drawIndexed(draw.index_count, 1U, 0U, 0U, 0U);
           }
           command_buffer.endRendering();
@@ -1165,6 +1190,8 @@ private:
     std::uint32_t texture_index {};
     std::uint32_t alpha_mode {};
     float alpha_cutoff { 0.5F };
+    float padding {};
+    std::array<float, 4> base_color_factor { 1.0F, 1.0F, 1.0F, 1.0F };
   };
 
   vkpp::bindless_table bindless_table_ {};
@@ -1180,6 +1207,7 @@ private:
     std::uint32_t base_color_index { 0U };
     vkpp::gltf::alpha_mode alpha_mode { vkpp::gltf::alpha_mode::opaque };
     float alpha_cutoff { 0.5F };
+    std::array<float, 4> base_color_factor { 1.0F, 1.0F, 1.0F, 1.0F };
     bool double_sided { false };
   };
   std::vector<primitive_draw> draws_ {};

@@ -10,9 +10,11 @@ import vulkan;
 
 namespace vkpp
 {
+
 export struct vertex
 {
   glm::vec3 position;
+  glm::vec3 normal;
   glm::vec3 color;
   glm::vec2 texture_coordinates;
 
@@ -28,7 +30,7 @@ export struct vertex
 
   static consteval auto
   get_attribute_descriptions()
-    -> std::array<vk::VertexInputAttributeDescription, 3>
+    -> std::array<vk::VertexInputAttributeDescription, 4>
   {
     return std::array {
       vk::VertexInputAttributeDescription {
@@ -41,10 +43,16 @@ export struct vertex
         .location = 1,
         .binding = 0,
         .format = vk::Format::eR32G32B32Sfloat,
-        .offset = offsetof(vertex, color),
+        .offset = offsetof(vertex, normal),
       },
       vk::VertexInputAttributeDescription {
         .location = 2,
+        .binding = 0,
+        .format = vk::Format::eR32G32B32Sfloat,
+        .offset = offsetof(vertex, color),
+      },
+      vk::VertexInputAttributeDescription {
+        .location = 3,
         .binding = 0,
         .format = vk::Format::eR32G32Sfloat,
         .offset = offsetof(vertex, texture_coordinates),
@@ -55,10 +63,11 @@ export struct vertex
   auto
   operator==(const vertex& rhs) const -> bool
   {
-    return position == rhs.position && color == rhs.color &&
-      texture_coordinates == rhs.texture_coordinates;
+    return position == rhs.position && normal == rhs.normal &&
+      color == rhs.color && texture_coordinates == rhs.texture_coordinates;
   }
 };
+
 }; // namespace vkpp
 
 namespace std
