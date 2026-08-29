@@ -686,7 +686,7 @@ private:
     static constexpr auto degrees { glm::radians(90.0F) };
     static constexpr auto camera_position { glm::vec3 { 2.0F, 2.0F, 2.0F } };
     static constexpr auto target { glm::vec3 { 0.0F, 0.0F, 0.0F } };
-    static constexpr auto up { glm::vec3 { 0.0F, 0.0F, 1.0F } };
+    static constexpr auto up { glm::vec3 { 0.0F, 1.0F, 0.0F } };
     static constexpr auto fov_vertical { glm::radians(45.0F) };
     static const auto aspect_ratio { //
       static_cast<float>(swap_chain_.extent().width) /
@@ -697,7 +697,7 @@ private:
 
     uniform_buffer_object ubo {
       .model = glm::gtc::rotate(
-        glm::mat4 { 1.0F }, time * degrees, glm::vec3 { 0.0F, 0.0F, 1.0F }),
+        glm::mat4 { 1.0F }, time * degrees, glm::vec3 { 0.0F, 1.0F, 0.0F }),
       .view = glm::gtc::lookAt(camera_position, target, up),
       .projection = glm::gtc::perspective(
         fov_vertical, aspect_ratio, near_plane, far_plane),
