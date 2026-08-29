@@ -21,6 +21,8 @@ struct vertex_shader_output {
 struct draw_push {
   float4x4 world;
   uint texture_index;
+  uint alpha_mode;
+  float alpha_cutoff;
 };
 
 [[vk::push_constant]]
@@ -43,7 +45,17 @@ Sampler2D textures[];
 [shader("fragment")]
 float4 fragment_main(vertex_shader_output input) : SV_Target
 {
-  return textures[NonUniformResourceIndex(draw_pc.texture_index)].Sample(input.texture_coordinates);
+  float4 color =
+    textures[ NonUniformResourceIndex(draw_pc.texture_index) ]
+    .Sample(input.texture_coordinates);
+  if (draw_pc.alpha_mode == 1)
+  {
+    if (color.a < draw_pc.alpha_cutoff)
+    {
+      discard;
+    }
+  }
+  return float4(color.rgb, 1.0);
 }
 
 [[vk::binding(2, 0)]]

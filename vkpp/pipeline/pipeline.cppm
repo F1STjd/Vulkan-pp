@@ -197,6 +197,7 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
               const std::array dynamic_states {
                 vk::DynamicState::eViewport,
                 vk::DynamicState::eScissor,
+                vk::DynamicState::eCullMode,
               };
               const vk::PipelineDynamicStateCreateInfo dynamic {
                 .dynamicStateCount =

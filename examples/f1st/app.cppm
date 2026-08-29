@@ -565,12 +565,33 @@ private:
 
           std::vector<vkpp::mesh_interleaved_cpu> packed;
           std::vector<std::uint32_t> base_color_indices;
+          std::vector<vkpp::gltf::alpha_mode> alpha_modes;
+          std::vector<float> alpha_cutoffs;
+          std::vector<std::uint8_t> double_sided;
           packed.reserve(asset.meshes.primitives.size());
           base_color_indices.reserve(asset.meshes.primitives.size());
+          alpha_modes.reserve(asset.meshes.primitives.size());
+          alpha_cutoffs.reserve(asset.meshes.primitives.size());
+          double_sided.reserve(asset.meshes.primitives.size());
           for (const auto& primitive : asset.meshes.primitives)
           {
             base_color_indices.push_back(resolve_base_color(primitive));
             packed.push_back(vkpp::pack_interleaved_vertices(primitive));
+            vkpp::gltf::alpha_mode mode { vkpp::gltf::alpha_mode::opaque };
+            float cutoff { 0.5F };
+            bool two_sided { false };
+            if (primitive.material_index.has_value() &&
+              *primitive.material_index < asset.materials.size())
+            {
+              const auto& material =
+                asset.materials[ *primitive.material_index ];
+              mode = material.alpha_mode;
+              cutoff = material.alpha_cutoff;
+              two_sided = material.double_sided;
+            }
+            alpha_modes.push_back(mode);
+            alpha_cutoffs.push_back(cutoff);
+            double_sided.push_back(two_sided);
           }
 
           vk::DeviceSize arena_size { 0UZ };
@@ -589,8 +610,7 @@ private:
               vk::BufferUsageFlagBits::eIndexBuffer,
             vkpp::memory_intent::gpu_only)
             .and_then(
-              [ this, &packed, &base_color_indices ](
-                vkpp::buffer_arena<>&& arena)
+              [ &, this ](vkpp::buffer_arena<>&& arena)
                 -> std::expected<void, vkpp::error_t>
               {
                 geometry_arena_ = std::move(arena);
@@ -631,6 +651,9 @@ private:
                     .index_count = pack.index_count,
                     .index_type = pack.index_type,
                     .base_color_index = base_color_indices[ index ],
+                    .alpha_mode = alpha_modes[ index ],
+                    .alpha_cutoff = alpha_cutoffs[ index ],
+                    .double_sided = static_cast<bool>(double_sided[ index ]),
                   });
                 }
 
@@ -845,6 +868,7 @@ private:
           for (const auto& item : draw_list_)
           {
             const auto& draw = draws_[ item.primitive_index ];
+            if (draw.alpha_mode == vkpp::gltf::alpha_mode::blend) { continue; }
             command_buffer.bindVertexBuffers(
               0U, geometry_arena_.buffer(), { draw.vertex_slice.offset });
             command_buffer.bindIndexBuffer(geometry_arena_.buffer(),
@@ -853,11 +877,16 @@ private:
             const draw_push push_constants {
               .world = item.world_transform,
               .texture_index = draw.base_color_index,
+              .alpha_mode = static_cast<std::uint32_t>(draw.alpha_mode),
+              .alpha_cutoff = draw.alpha_cutoff,
             };
             command_buffer.pushConstants(*graphics_pipeline_.layout(),
               vk::ShaderStageFlagBits::eVertex |
                 vk::ShaderStageFlagBits::eFragment,
               0U, sizeof(push_constants), &push_constants);
+            command_buffer.setCullMode(draw.double_sided
+                ? vk::CullModeFlagBits::eNone
+                : vk::CullModeFlagBits::eBack);
             command_buffer.drawIndexed(draw.index_count, 1U, 0U, 0U, 0U);
           }
           command_buffer.endRendering();
@@ -1134,6 +1163,8 @@ private:
   {
     std::array<float, 16> world {};
     std::uint32_t texture_index {};
+    std::uint32_t alpha_mode {};
+    float alpha_cutoff { 0.5F };
   };
 
   vkpp::bindless_table bindless_table_ {};
@@ -1147,6 +1178,9 @@ private:
     std::uint32_t index_count { 0U };
     vk::IndexType index_type { vk::IndexType::eUint16 };
     std::uint32_t base_color_index { 0U };
+    vkpp::gltf::alpha_mode alpha_mode { vkpp::gltf::alpha_mode::opaque };
+    float alpha_cutoff { 0.5F };
+    bool double_sided { false };
   };
   std::vector<primitive_draw> draws_ {};
   std::vector<vkpp::gltf::draw_item_cpu> draw_list_ {};
