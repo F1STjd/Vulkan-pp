@@ -9,3 +9,5 @@ compile_commands.json
 
 /docs/vulkan-analysis.md
 /docs/library-development-policy.md
+/docs/*
+.gitignore
