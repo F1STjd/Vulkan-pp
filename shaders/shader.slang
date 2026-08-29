@@ -54,9 +54,10 @@ Sampler2D textures[];
 [shader("fragment")]
 float4 fragment_main(vertex_shader_output input, bool front_face : SV_IsFrontFace) : SV_Target
 {
-  float4 sampled =
-    textures[NonUniformResourceIndex(draw_pc.texture_index)]
-    .Sample(input.texture_coordinates);
+  float4 sampled = textures [
+    NonUniformResourceIndex(draw_pc.texture_index)
+  ].Sample(input.texture_coordinates);
+
   if (draw_pc.alpha_mode == 1)
   {
     if (sampled.a < draw_pc.alpha_cutoff)
