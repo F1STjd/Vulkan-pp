@@ -793,6 +793,7 @@ private:
   record_command_buffer(std::uint32_t image_index)
     -> std::expected<void, vkpp::error_t>
   {
+    image_uses_.reset();
     auto& command_buffer = frames_[ frame_index_ ].command_buffer;
     return UTILS_VK(command_buffer.begin({}), ^^vk::raii::CommandBuffer::begin)
       .transform(
@@ -800,28 +801,14 @@ private:
         {
           timestamps_.write(command_buffer, frame_index_, 0U,
             vk::PipelineStageFlagBits2::eNone);
-          const std::array pre_pass_transitions {
-            vkpp::image_use_transition {
-              .image = swap_chain_.images()[ image_index ],
-              .from = vkpp::image_use::none,
-              .to = vkpp::image_use::color_attachment,
-              .aspect = vk::ImageAspectFlagBits::eColor,
-            },
-            vkpp::image_use_transition {
-              .image = swap_chain_.color().image(),
-              .from = vkpp::image_use::none,
-              .to = vkpp::image_use::color_attachment,
-              .aspect = vk::ImageAspectFlagBits::eColor,
-            },
-            vkpp::image_use_transition {
-              .image = swap_chain_.depth().image(),
-              .from = vkpp::image_use::none,
-              .to = vkpp::image_use::depth_attachment,
-              .aspect = vk::ImageAspectFlagBits::eDepth,
-            },
-          };
-          vkpp::record_image_use_transitions(
-            command_buffer, std::span { pre_pass_transitions });
+
+          image_uses_.transition(command_buffer,
+            swap_chain_.images()[ image_index ],
+            vkpp::image_use::color_attachment, vk::ImageAspectFlagBits::eColor);
+          image_uses_.transition(command_buffer, swap_chain_.color().image(),
+            vkpp::image_use::color_attachment, vk::ImageAspectFlagBits::eColor);
+          image_uses_.transition(command_buffer, swap_chain_.depth().image(),
+            vkpp::image_use::depth_attachment, vk::ImageAspectFlagBits::eDepth);
 
           vk::ClearValue clear_color { vk::ClearColorValue {
             0.0F,
@@ -917,14 +904,9 @@ private:
           timestamps_.write(command_buffer, frame_index_, 1U,
             vk::PipelineStageFlagBits2::eAllCommands);
 
-          const vkpp::image_use_transition present_transition {
-            .image = swap_chain_.images()[ image_index ],
-            .from = vkpp::image_use::color_attachment,
-            .to = vkpp::image_use::present,
-            .aspect = vk::ImageAspectFlagBits::eColor,
-          };
-          vkpp::record_image_use_transitions(
-            command_buffer, std::span { &present_transition, 1UZ });
+          image_uses_.transition(command_buffer,
+            swap_chain_.images()[ image_index ], vkpp::image_use::present,
+            vk::ImageAspectFlagBits::eColor);
         })
       .and_then(
         [ &command_buffer ]() -> std::expected<void, vkpp::error_t>
@@ -1166,6 +1148,8 @@ private:
   vkpp::instance_context instance_ {};
   vkpp::device_context device_ {};
   vkpp::swapchain swap_chain_ {};
+
+  vkpp::image_use_tracker image_uses_ {};
 
   vkpp::graphics_pipeline graphics_pipeline_;
 
