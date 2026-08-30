@@ -15,6 +15,7 @@ namespace vkpp
 export enum class image_use : std::uint8_t {
   none,
   color_attachment,
+  color_blend,
   depth_attachment,
   present,
   sampled_fragment,
@@ -32,7 +33,6 @@ fields_for(image_use use) -> image_use_fields
 {
   switch (use)
   {
-
   case image_use::none:
     return {
       .stage = {},
@@ -44,6 +44,13 @@ fields_for(image_use use) -> image_use_fields
       .stage = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
       .access = vk::AccessFlagBits2::eColorAttachmentWrite,
       .layout = vk::ImageLayout::eColorAttachmentOptimal,
+    };
+  case image_use::color_blend:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+      .access = vk::AccessFlagBits2::eColorAttachmentRead |
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+      .layout = vk::ImageLayout::eDepthAttachmentOptimal,
     };
   case image_use::depth_attachment:
     return {
@@ -64,6 +71,7 @@ fields_for(image_use use) -> image_use_fields
       .access = vk::AccessFlagBits2::eShaderSampledRead,
       .layout = vk::ImageLayout::eShaderReadOnlyOptimal,
     };
+    break;
   }
 
   return {};
@@ -259,5 +267,53 @@ record_buffer_use_transitions(vk::raii::CommandBuffer& command_buffer,
   record_barriers(command_buffer,
     std::span { storage.data(), static_cast<std::size_t>(count) });
 }
+
+export class image_use_tracker
+{
+public:
+  void
+  transition(vk::raii::CommandBuffer& command_buffer, vk::Image image,
+    image_use to, vk::ImageAspectFlags aspect)
+  {
+    image_use from { image_use::none };
+    for (auto index : std::views::indices(count_))
+    {
+      if (images_[ index ] == image)
+      {
+        from = std::exchange(uses_[ index ], to);
+        const image_use_transition transition {
+          .image = image,
+          .from = from,
+          .to = to,
+          .aspect = aspect,
+        };
+        record_image_use_transitions(
+          command_buffer, std::span { &transition, 1UZ });
+        return;
+      }
+    }
+    if (count_ >= images_.size()) { return; }
+    images_[ count_ ] = image;
+    uses_[ count_ ] = to;
+    ++count_;
+    const image_use_transition transition {
+      .image = image,
+      .from = image_use::none,
+      .to = to,
+      .aspect = aspect,
+    };
+    record_image_use_transitions(
+      command_buffer, std::span { &transition, 1UZ });
+  }
+
+  void
+  reset()
+  { count_ = 0U; }
+
+private:
+  std::array<vk::Image, 16> images_ {};
+  std::array<image_use, 16> uses_ {};
+  std::uint32_t count_ {};
+};
 
 } // namespace vkpp
