@@ -50,7 +50,7 @@ fields_for(image_use use) -> image_use_fields
       .stage = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
       .access = vk::AccessFlagBits2::eColorAttachmentRead |
         vk::AccessFlagBits2::eColorAttachmentWrite,
-      .layout = vk::ImageLayout::eDepthAttachmentOptimal,
+      .layout = vk::ImageLayout::eColorAttachmentOptimal,
     };
   case image_use::depth_attachment:
     return {
