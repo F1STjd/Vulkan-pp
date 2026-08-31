@@ -271,9 +271,9 @@ record_buffer_use_transitions(vk::raii::CommandBuffer& command_buffer,
 export class image_use_tracker
 {
 public:
-  void
+  auto
   transition(vk::raii::CommandBuffer& command_buffer, vk::Image image,
-    image_use to, vk::ImageAspectFlags aspect)
+    image_use to, vk::ImageAspectFlags aspect) -> bool
   {
     image_use from { image_use::none };
     for (auto index : std::views::indices(count_))
@@ -289,10 +289,12 @@ public:
         };
         record_image_use_transitions(
           command_buffer, std::span { &transition, 1UZ });
-        return;
+        return true;
       }
     }
-    if (count_ >= images_.size()) { return; }
+
+    if (count_ >= images_.size()) { return false; }
+
     images_[ count_ ] = image;
     uses_[ count_ ] = to;
     ++count_;
@@ -304,6 +306,7 @@ public:
     };
     record_image_use_transitions(
       command_buffer, std::span { &transition, 1UZ });
+    return true;
   }
 
   void
