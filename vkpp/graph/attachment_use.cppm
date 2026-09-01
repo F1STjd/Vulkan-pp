@@ -119,7 +119,7 @@ make_image_barrier(const image_use_transition& transition) -> image_barrier
 // Sadly we can't use std::inplace_vector as return value, because of GCC's ICE.
 // Why do we convert size to std::uint32_t???
 // The conversion should be only done when interacting with Vulkan API, but in
-// the modern C++ std::size_t (std::ssize_t) should be used almost everythime.
+// the modern C++ std::size_t (std::ssize_t) should be used almost everytime.
 export [[nodiscard]] constexpr auto
 fill_image_barriers(std::span<const image_use_transition> transitions,
   std::span<image_barrier> out) -> std::uint32_t

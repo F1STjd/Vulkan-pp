@@ -26,6 +26,52 @@ export struct presentability
   vk::Extent2D extent {};
 };
 
+[[nodiscard]] auto
+find_supported_format(const vk::raii::PhysicalDevice& physical_device,
+  std::span<const vk::Format> candidates, vk::ImageTiling tiling,
+  vk::FormatFeatureFlags features) -> std::expected<vk::Format, vkpp::error_t>
+{
+  for (const auto format : candidates)
+  {
+    const auto properties = physical_device.getFormatProperties(format);
+
+    if (((tiling == vk::ImageTiling::eLinear) &&
+          ((properties.linearTilingFeatures & features) == features)) ||
+      ((tiling == vk::ImageTiling::eOptimal) &&
+        ((properties.optimalTilingFeatures & features) == features)))
+    {
+      return format;
+    }
+  }
+
+  return std::unexpected {
+    vkpp::app_error {
+      .kind = vkpp::app_error_kind::no_supported_format,
+      .detail = "Failed to find supported format"sv,
+    },
+  };
+}
+
+export [[nodiscard]] auto
+find_depth_attachment_format(const vk::raii::PhysicalDevice& physical_device)
+  -> std::expected<vk::Format, vkpp::error_t>
+{
+  static constexpr std::array candidates {
+    vk::Format::eD32Sfloat,
+    vk::Format::eD32SfloatS8Uint,
+    vk::Format::eD24UnormS8Uint,
+  };
+
+  return find_supported_format(physical_device, candidates,
+    vk::ImageTiling::eOptimal,
+    vk::FormatFeatureFlagBits::eDepthStencilAttachment);
+}
+
+export enum class swapchain_scene_attachments : std::uint8_t {
+  msaa_color_and_depth,
+  none,
+};
+
 export class swapchain
 {
 public:
@@ -33,9 +79,13 @@ public:
   create(device_context& device, const vk::raii::SurfaceKHR& surface,
     extent_request window,
     std::invocable<const vk::SurfaceCapabilitiesKHR&, vk::Extent2D> auto&&
-      choose_extent) -> std::expected<swapchain, error_t>
+      choose_extent,
+    swapchain_scene_attachments scene_attachments =
+      swapchain_scene_attachments::msaa_color_and_depth)
+    -> std::expected<swapchain, error_t>
   {
     swapchain output {};
+    output.scene_attachments_ = scene_attachments;
     surface_build_info build {};
 
     return UTILS_VK(
@@ -143,6 +193,11 @@ public:
       .and_then(
         [ & ] -> std::expected<void, error_t>
         {
+          if (scene_attachments !=
+            swapchain_scene_attachments::msaa_color_and_depth)
+          {
+            return {};
+          }
           return make_image_resource<image_kind::color>(device.allocator(),
             device.device(),
             image_runtime_args {
@@ -156,7 +211,12 @@ public:
       .and_then(
         [ & ] -> std::expected<void, error_t>
         {
-          return find_depth_format(device.physical_device())
+          if (scene_attachments !=
+            swapchain_scene_attachments::msaa_color_and_depth)
+          {
+            return {};
+          }
+          return find_depth_attachment_format(device.physical_device())
             .and_then(
               [ & ](vk::Format format)
               {
@@ -207,12 +267,14 @@ public:
     std::invocable<const vk::SurfaceCapabilitiesKHR&, vk::Extent2D> auto&&
       choose_extent) -> std::expected<void, error_t>
   {
+    const swapchain_scene_attachments scene_attachments = scene_attachments_;
     return UTILS_VK(device.device().waitIdle(), ^^vk::raii::Device::waitIdle)
       .and_then(
         [ & ]() -> std::expected<void, error_t>
         {
           release();
-          return create(device, surface, window, choose_extent)
+          return create(
+            device, surface, window, choose_extent, scene_attachments)
             .transform(
               [ & ](swapchain&& swapchain) { *this = std::move(swapchain); });
         });
@@ -341,47 +403,6 @@ private:
     return min_image_count;
   }
 
-  static auto
-  find_depth_format(const vk::raii::PhysicalDevice& physical_device)
-    -> std::expected<vk::Format, vkpp::error_t>
-  {
-    static constexpr std::array candidates {
-      vk::Format::eD32Sfloat,
-      vk::Format::eD32SfloatS8Uint,
-      vk::Format::eD24UnormS8Uint,
-    };
-
-    return find_supported_format(physical_device, candidates,
-      vk::ImageTiling::eOptimal,
-      vk::FormatFeatureFlagBits::eDepthStencilAttachment);
-  }
-
-  static auto
-  find_supported_format(const vk::raii::PhysicalDevice& physical_device,
-    std::span<const vk::Format> candidates, vk::ImageTiling tiling,
-    vk::FormatFeatureFlags features) -> std::expected<vk::Format, vkpp::error_t>
-  {
-    for (const auto format : candidates)
-    {
-      const auto properties = physical_device.getFormatProperties(format);
-
-      if (((tiling == vk::ImageTiling::eLinear) &&
-            ((properties.linearTilingFeatures & features) == features)) ||
-        ((tiling == vk::ImageTiling::eOptimal) &&
-          ((properties.optimalTilingFeatures & features) == features)))
-      {
-        return format;
-      }
-    }
-
-    return std::unexpected {
-      vkpp::app_error {
-        .kind = vkpp::app_error_kind::no_supported_format,
-        .detail = "Failed to find supported format"sv,
-      },
-    };
-  }
-
   vk::raii::SwapchainKHR swap_chain_ { nullptr };
   std::vector<vk::Image> images_;
   std::vector<vk::raii::ImageView> image_views_;
@@ -389,6 +410,9 @@ private:
   vk::Extent2D extent_ {};
   image_resource<> color_ {};
   image_resource<> depth_ {};
+  swapchain_scene_attachments scene_attachments_ {
+    swapchain_scene_attachments::msaa_color_and_depth
+  };
   std::vector<vk::raii::Semaphore> render_finished_semaphores_;
 };
 

@@ -114,6 +114,14 @@ static constexpr std::array k_set0_bindings {
     .stageFlags = vk::ShaderStageFlagBits::eFragment,
     .pImmutableSamplers = nullptr,
   },
+  vk::DescriptorSetLayoutBinding {
+    .binding = 3U,
+    .descriptorType = vk::DescriptorType::eStorageBuffer,
+    .descriptorCount = 1U,
+    .stageFlags =
+      vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+    .pImmutableSamplers = nullptr,
+  },
 };
 
 export class app
@@ -153,7 +161,8 @@ private:
       .and_then(std::bind_front(&app::create_descriptor_pool, this))
       .and_then(std::bind_front(&app::create_descriptor_sets, this))
       .and_then(std::bind_front(&app::create_imgui_descriptor_pool, this))
-      .and_then(std::bind_front(&app::init_imgui, this));
+      .and_then(std::bind_front(&app::init_imgui, this))
+      .and_then(std::bind_front(&app::create_scene_sampler, this));
   }
 
   auto
@@ -241,11 +250,12 @@ private:
   auto
   create_swap_chain() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::swapchain::create(device_, instance_.surface(),
-      framebuffer_extent_request(),
+    return vkpp::swapchain::create(
+      device_, instance_.surface(), framebuffer_extent_request(),
       [ this ](const vk::SurfaceCapabilitiesKHR& capabilities,
         vk::Extent2D framebuffer)
-      { return choose_swap_extent(capabilities, framebuffer); })
+      { return choose_swap_extent(capabilities, framebuffer); },
+      vkpp::swapchain_scene_attachments::none)
       .transform([ this ](vkpp::swapchain&& swap_chain)
         { swap_chain_ = std::move(swap_chain); });
   }
@@ -306,27 +316,35 @@ private:
       *descriptor_set_layout_,
       *bindless_table_.layout(),
     };
-    return vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv")
+    return vkpp::find_depth_attachment_format(device_.physical_device())
       .and_then(
         [ &, this ](
-          const std::vector<char>& spirv) -> std::expected<void, vkpp::error_t>
+          vk::Format depth_format) -> std::expected<void, vkpp::error_t>
         {
-          return vkpp::make_graphics_pipeline<k_pipeline_spec>(device_.device(),
-            vkpp::graphics_pipeline_runtime_args {
-              .color_formats = color_formats,
-              .depth_format = swap_chain_.depth().format(),
-              .samples = device_.msaa_samples(),
-              .set_layouts = set_layouts,
-              .vertex_bindings = vertex_bindings,
-              .vertex_attributes = vertex_attributes,
-              .push_constant_size =
-                static_cast<std::uint32_t>(sizeof(draw_push)),
-              .push_constant_stages = vk::ShaderStageFlagBits::eVertex |
-                vk::ShaderStageFlagBits::eFragment,
-            },
-            { .spirv = spirv })
-            .transform([ this ](vkpp::graphics_pipeline&& pipeline) -> void
-              { graphics_pipeline_ = std::move(pipeline); });
+          return vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv")
+            .and_then(
+              [ &, this, depth_format ](const std::vector<char>& spirv)
+                -> std::expected<void, vkpp::error_t>
+              {
+                return vkpp::make_graphics_pipeline<k_pipeline_spec>(
+                  device_.device(),
+                  vkpp::graphics_pipeline_runtime_args {
+                    .color_formats = color_formats,
+                    .depth_format = depth_format,
+                    .samples = device_.msaa_samples(),
+                    .set_layouts = set_layouts,
+                    .vertex_bindings = vertex_bindings,
+                    .vertex_attributes = vertex_attributes,
+                    .push_constant_size =
+                      static_cast<std::uint32_t>(sizeof(draw_push)),
+                    .push_constant_stages = vk::ShaderStageFlagBits::eVertex |
+                      vk::ShaderStageFlagBits::eFragment,
+                  },
+                  { .spirv = spirv })
+                  .transform(
+                    [ this ](vkpp::graphics_pipeline&& pipeline) -> void
+                    { graphics_pipeline_ = std::move(pipeline); });
+              });
         });
   }
 
@@ -555,9 +573,6 @@ private:
             textures_.push_back(std::move(*made));
           }
 
-          const std::uint32_t fallback_slot =
-            image_to_slot.empty() ? 0U : image_to_slot.front();
-
           auto resolve_slot =
             [ & ](const std::optional<vkpp::gltf::texture_ref_cpu>& ref,
               std::uint32_t bit, std::uint32_t& mask) -> std::uint32_t
@@ -571,7 +586,6 @@ private:
             {
               return 0U;
             }
-
             mask |= bit;
             return image_to_slot[ *image_index ];
           };
@@ -630,57 +644,69 @@ private:
           }
           material_buffer_ = std::move(*uploaded_materials);
 
-          std::vector<vkpp::mesh_interleaved_cpu> packed;
-          std::vector<std::uint32_t> base_color_indices;
-          std::vector<vkpp::gltf::alpha_mode> alpha_modes;
-          std::vector<float> alpha_cutoffs;
-          std::vector<std::uint8_t> double_sided;
-          std::vector<std::array<float, 4>> base_color_factors;
-          packed.reserve(asset.meshes.primitives.size());
-          base_color_indices.reserve(asset.meshes.primitives.size());
-          alpha_modes.reserve(asset.meshes.primitives.size());
-          alpha_cutoffs.reserve(asset.meshes.primitives.size());
-          double_sided.reserve(asset.meshes.primitives.size());
-          base_color_factors.reserve(asset.meshes.primitives.size());
-
-          const auto resolve_primitive_base_color =
-            [ & ](const vkpp::mesh_streams_cpu& primitive) -> std::uint32_t
+          std::vector<draw_gpu> draws_gpu {};
+          draws_gpu.reserve(draw_list_.size());
+          const std::uint32_t default_material_index =
+            static_cast<std::uint32_t>(asset.materials.size());
+          for (const vkpp::gltf::draw_item_cpu& item : draw_list_)
           {
-            if (!primitive.material_index.has_value() ||
-              *primitive.material_index >= asset.materials.size())
+            if (item.primitive_index >= asset.meshes.primitives.size())
             {
-              return fallback_slot;
+              return std::unexpected {
+                vkpp::app_error {
+                  .kind = vkpp::app_error_kind::invalid_argument,
+                  .detail = "draw item primitive index out of range"sv,
+                },
+              };
             }
-            const material_gpu& material =
-              materials_gpu[ *primitive.material_index ];
-            return (material.has_texture_mask & 1U) != 0U
-              ? material.base_color_index
-              : fallback_slot;
-          };
+            const vkpp::mesh_streams_cpu& primitive =
+              asset.meshes.primitives[ item.primitive_index ];
+            const std::uint32_t material_index =
+              primitive.material_index.has_value() &&
+                *primitive.material_index < asset.materials.size()
+              ? *primitive.material_index
+              : default_material_index;
+            draws_gpu.push_back({
+              .world = item.world_transform,
+              .normal_matrix_columns = normal_matrix_of(item.world_transform),
+              .material_index = material_index,
+            });
+          }
+          auto uploaded_draws = vkpp::upload_device_local_buffer({
+            .device = device_,
+            .pool = upload_pool_,
+            .transfer_pool = transfer_upload_pool_,
+            .bytes = std::as_bytes(std::span<const draw_gpu> { draws_gpu }),
+            .gpu_usage = vk::BufferUsageFlagBits::eStorageBuffer,
+          });
+          if (!uploaded_draws)
+          {
+            return std::unexpected { std::move(uploaded_draws).error() };
+          }
+          draw_buffer_ = std::move(*uploaded_draws);
+
+          std::vector<vkpp::mesh_interleaved_cpu> packed;
+          std::vector<vkpp::gltf::alpha_mode> alpha_modes;
+          std::vector<std::uint8_t> double_sided;
+          packed.reserve(asset.meshes.primitives.size());
+          alpha_modes.reserve(asset.meshes.primitives.size());
+          double_sided.reserve(asset.meshes.primitives.size());
 
           for (const auto& primitive : asset.meshes.primitives)
           {
-            base_color_indices.push_back(
-              resolve_primitive_base_color(primitive));
             packed.push_back(vkpp::pack_interleaved_vertices(primitive));
             vkpp::gltf::alpha_mode mode { vkpp::gltf::alpha_mode::opaque };
-            float cutoff { 0.5F };
             bool two_sided { false };
-            std::array<float, 4> factor { 1.0F, 1.0F, 1.0F, 1.0F };
             if (primitive.material_index.has_value() &&
               *primitive.material_index < asset.materials.size())
             {
               const auto& material =
                 asset.materials[ *primitive.material_index ];
               mode = material.alpha_mode;
-              cutoff = material.alpha_cutoff;
               two_sided = material.double_sided;
-              factor = material.base_color_factor;
             }
             alpha_modes.push_back(mode);
-            alpha_cutoffs.push_back(cutoff);
-            double_sided.push_back(two_sided);
-            base_color_factors.push_back(factor);
+            double_sided.push_back(static_cast<std::uint8_t>(two_sided));
           }
 
           vk::DeviceSize arena_size { 0UZ };
@@ -739,10 +765,7 @@ private:
                     .index_slice = *index_slice,
                     .index_count = pack.index_count,
                     .index_type = pack.index_type,
-                    .base_color_index = base_color_indices[ index ],
                     .alpha_mode = alpha_modes[ index ],
-                    .alpha_cutoff = alpha_cutoffs[ index ],
-                    .base_color_factor = base_color_factors[ index ],
                     .double_sided = static_cast<bool>(double_sided[ index ]),
                   });
                 }
@@ -801,9 +824,9 @@ private:
     static constexpr auto target { glm::vec3 { 0.0F, 0.0F, 0.0F } };
     static constexpr auto up { glm::vec3 { 0.0F, 1.0F, 0.0F } };
     static constexpr auto fov_vertical { glm::radians(45.0F) };
-    static const auto aspect_ratio { //
-      static_cast<float>(swap_chain_.extent().width) /
-      static_cast<float>(swap_chain_.extent().height)
+    const auto aspect_ratio { //
+      static_cast<float>(std::max(1U, scene_extent_.width)) /
+      static_cast<float>(std::max(1U, scene_extent_.height))
     };
     static constexpr auto near_plane { 0.1F };
     static constexpr auto far_plane { 10.0F };
@@ -853,6 +876,11 @@ private:
               .offset = 0U,
               .range = material_buffer_.size(),
             };
+            const vk::DescriptorBufferInfo draw_buffer_info {
+              .buffer = draw_buffer_.buffer(),
+              .offset = 0U,
+              .range = draw_buffer_.size(),
+            };
             const std::array writes {
               vk::WriteDescriptorSet {
                 .dstSet = frames_[ index ].descriptor_set,
@@ -870,6 +898,14 @@ private:
                 .descriptorType = vk::DescriptorType::eStorageBuffer,
                 .pBufferInfo = &material_buffer_info,
               },
+              vk::WriteDescriptorSet {
+                .dstSet = frames_[ index ].descriptor_set,
+                .dstBinding = 3U,
+                .dstArrayElement = 0U,
+                .descriptorCount = 1U,
+                .descriptorType = vk::DescriptorType::eStorageBuffer,
+                .pBufferInfo = &draw_buffer_info,
+              },
             };
             vkpp::update_descriptor_sets(
               device_.device(), std::span { writes });
@@ -883,16 +919,16 @@ private:
     constexpr std::array pool_sizes {
       vk::DescriptorPoolSize {
         .type = vk::DescriptorType::eSampledImage,
-        .descriptorCount = 8U,
+        .descriptorCount = 16U,
       },
       vk::DescriptorPoolSize {
         .type = vk::DescriptorType::eSampler,
-        .descriptorCount = 2U,
+        .descriptorCount = 4U,
       },
     };
     const vk::DescriptorPoolCreateInfo create_info {
       .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-      .maxSets = 16U,
+      .maxSets = 32U,
       .poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size()),
       .pPoolSizes = pool_sizes.data(),
     };
@@ -954,10 +990,119 @@ private:
     return init_imgui_renderer();
   }
 
+  auto
+  create_scene_sampler() -> std::expected<void, vkpp::error_t>
+  {
+    const vk::SamplerCreateInfo create_info {
+      .magFilter = vk::Filter::eLinear,
+      .minFilter = vk::Filter::eLinear,
+      .mipmapMode = vk::SamplerMipmapMode::eNearest,
+      .addressModeU = vk::SamplerAddressMode::eClampToEdge,
+      .addressModeV = vk::SamplerAddressMode::eClampToEdge,
+      .addressModeW = vk::SamplerAddressMode::eClampToEdge,
+      .minLod = 0.0F,
+      .maxLod = 0.25F,
+    };
+    return UTILS_VK(device_.device().createSampler(create_info),
+      ^^vk::raii::Device::createSampler)
+      .transform([ this ](vk::raii::Sampler&& sampler) -> void
+        { scene_sampler_ = std::move(sampler); });
+  }
+
+  auto
+  rebuild_scene_targets(vk::Extent2D extent)
+    -> std::expected<void, vkpp::error_t>
+  {
+    if (scene_texture_id_ != VK_NULL_HANDLE)
+    {
+      ImGui_ImplVulkan_RemoveTexture(scene_texture_id_);
+      scene_texture_id_ = VK_NULL_HANDLE;
+    }
+    scene_msaa_color_ = {};
+    scene_depth_ = {};
+    scene_resolve_ = {};
+    scene_extent_ = vk::Extent2D {};
+
+    auto depth_format =
+      vkpp::find_depth_attachment_format(device_.physical_device());
+    if (!depth_format)
+    {
+      return std::unexpected { std::move(depth_format).error() };
+    }
+
+    auto color = vkpp::make_image_resource<vkpp::image_kind::color>(
+      device_.allocator(), device_.device(),
+      vkpp::image_runtime_args {
+        .extent = extent,
+        .format = swap_chain_.format(),
+        .samples = device_.msaa_samples(),
+      });
+    if (!color) { return std::unexpected { std::move(color).error() }; }
+
+    auto depth = vkpp::make_image_resource<vkpp::image_kind::depth>(
+      device_.allocator(), device_.device(),
+      vkpp::image_runtime_args {
+        .extent = extent,
+        .format = *depth_format,
+        .samples = device_.msaa_samples(),
+      });
+    if (!depth) { return std::unexpected { std::move(depth).error() }; }
+
+    auto resolve = vkpp::make_image_resource<vkpp::image_kind::color_sampled>(
+      device_.allocator(), device_.device(),
+      vkpp::image_runtime_args {
+        .extent = extent,
+        .format = swap_chain_.format(),
+        .samples = vk::SampleCountFlagBits::e1,
+      });
+    if (!resolve) { return std::unexpected { std::move(resolve).error() }; }
+
+    scene_msaa_color_ = std::move(*color);
+    scene_depth_ = std::move(*depth);
+    scene_resolve_ = std::move(*resolve);
+    scene_extent_ = extent;
+    scene_texture_id_ =
+      ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*scene_sampler_),
+        static_cast<VkImageView>(*scene_resolve_.view()),
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (scene_texture_id_ == VK_NULL_HANDLE)
+    {
+      return std::unexpected {
+        vkpp::app_error {
+          .kind = vkpp::app_error_kind::invalid_argument,
+          .detail = "ImGui_ImplVulkan_AddTexture returned null"sv,
+        },
+      };
+    }
+    return {};
+  }
+
+  auto
+  ensure_scene_targets() -> std::expected<void, vkpp::error_t>
+  {
+    vk::Extent2D extent = scene_desired_extent_;
+    if (extent.width == 0U) { extent.width = 1U; }
+    if (extent.height == 0U) { extent.height = 1U; }
+    if (extent.width == scene_extent_.width &&
+      extent.height == scene_extent_.height &&
+      scene_texture_id_ != VK_NULL_HANDLE)
+    {
+      return {};
+    }
+    return UTILS_VK(device_.device().waitIdle(), ^^vk::raii::Device::waitIdle)
+      .and_then([ this, extent ]() -> std::expected<void, vkpp::error_t>
+        { return rebuild_scene_targets(extent); });
+  }
+
   void
   shutdown_imgui_renderer()
   {
     if (!imgui_renderer_initialized_) { return; }
+    if (scene_texture_id_ != VK_NULL_HANDLE)
+    {
+      ImGui_ImplVulkan_RemoveTexture(scene_texture_id_);
+      scene_texture_id_ = {};
+    }
     ImGui_ImplVulkan_Shutdown();
     imgui_renderer_initialized_ = false;
   }
@@ -975,7 +1120,23 @@ private:
   }
 
   void
-  build_imgui()
+  begin_imgui_frame()
+  {
+    imgui_platform_new_frame(window_, imgui_frame_time_);
+    ImGui_ImplVulkan_NewFrame();
+    ImGui::NewFrame();
+    build_imgui_chrome();
+  }
+
+  void
+  finish_imgui_frame()
+  {
+    build_imgui_viewport_image();
+    ImGui::Render();
+  }
+
+  void
+  build_imgui_chrome()
   {
     const auto* viewport = ImGui::GetMainViewport();
     const auto dockspace_id = ImHashStr("f1st DockSpace");
@@ -999,11 +1160,14 @@ private:
       imgui_layout_built_ = true;
     }
 
-    ImGui::DockSpaceOverViewport(
-      dockspace_id, viewport, ImGuiDockNodeFlags_PassthruCentralNode);
+    ImGui::DockSpaceOverViewport(dockspace_id, viewport);
 
-    ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoBackground);
-    ImGui::TextUnformatted("3D swapchain view");
+    ImGui::Begin("Viewport");
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    scene_desired_extent_ = vk::Extent2D {
+      .width = static_cast<std::uint32_t>(std::max(1.0F, avail.x)),
+      .height = static_cast<std::uint32_t>(std::max(1.0F, avail.y)),
+    };
     ImGui::End();
 
     ImGui::Begin("Inspector");
@@ -1013,6 +1177,7 @@ private:
     ImGui::Text("Frames in flight: %zu", max_frames_in_flight);
     ImGui::Text("Swapchain: %u x %u", swap_chain_.extent().width,
       swap_chain_.extent().height);
+    ImGui::Text("Viewport: %u x %u", scene_extent_.width, scene_extent_.height);
     ImGui::End();
 
     ImGui::Begin("Log");
@@ -1021,22 +1186,47 @@ private:
   }
 
   void
-  prepare_imgui_frame()
+  build_imgui_viewport_image()
   {
-    imgui_platform_new_frame(window_, imgui_frame_time_);
-    ImGui_ImplVulkan_NewFrame();
-    ImGui::NewFrame();
-    build_imgui();
-    ImGui::Render();
+    ImGui::Begin("Viewport");
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    if (scene_texture_id_ != VK_NULL_HANDLE)
+    {
+      ImGui::Image(scene_texture_id_, avail);
+    }
+    ImGui::End();
   }
 
   [[nodiscard]] static auto
   is_mirrored(const std::array<float, 16>& world) -> bool
   {
     const glm::vec3 axis_x { world[ 0 ], world[ 1 ], world[ 2 ] };
-    const glm::vec3 axis_y { world[ 0 ], world[ 1 ], world[ 2 ] };
-    const glm::vec3 axis_z { world[ 0 ], world[ 1 ], world[ 2 ] };
+    const glm::vec3 axis_y { world[ 4 ], world[ 5 ], world[ 6 ] };
+    const glm::vec3 axis_z { world[ 8 ], world[ 9 ], world[ 10 ] };
     return glm::dot(glm::cross(axis_x, axis_y), axis_z) < 0.0F;
+  }
+
+  [[nodiscard]] static auto
+  normal_matrix_of(const std::array<float, 16>& world) -> std::array<float, 12>
+  {
+    const glm::mat4 world_matrix {
+      glm::vec4 { world[ 0 ], world[ 1 ], world[ 2 ], world[ 3 ] },
+      glm::vec4 { world[ 4 ], world[ 5 ], world[ 6 ], world[ 7 ] },
+      glm::vec4 { world[ 8 ], world[ 9 ], world[ 10 ], world[ 11 ] },
+      glm::vec4 { world[ 12 ], world[ 13 ], world[ 14 ], world[ 15 ] },
+    };
+    const glm::mat3 normal_matrix =
+      glm::transpose(glm::inverse(glm::mat3 { world_matrix }));
+
+    std::array<float, 12> columns {};
+    for (auto column : std::views::indices(3UZ))
+    {
+      for (auto row : std::views::indices(3UZ))
+      {
+        columns[ column * 4UZ + row ] = normal_matrix[ column ][ row ];
+      }
+    }
+    return columns;
   }
 
   auto
@@ -1052,12 +1242,11 @@ private:
           timestamps_.write(command_buffer, frame_index_, 0U,
             vk::PipelineStageFlagBits2::eNone);
 
-          image_uses_.transition(command_buffer,
-            swap_chain_.images()[ image_index ],
+          image_uses_.transition(command_buffer, scene_msaa_color_.image(),
             vkpp::image_use::color_attachment, vk::ImageAspectFlagBits::eColor);
-          image_uses_.transition(command_buffer, swap_chain_.color().image(),
+          image_uses_.transition(command_buffer, scene_resolve_.image(),
             vkpp::image_use::color_attachment, vk::ImageAspectFlagBits::eColor);
-          image_uses_.transition(command_buffer, swap_chain_.depth().image(),
+          image_uses_.transition(command_buffer, scene_depth_.image(),
             vkpp::image_use::depth_attachment, vk::ImageAspectFlagBits::eDepth);
 
           vk::ClearValue clear_color { vk::ClearColorValue {
@@ -1067,10 +1256,10 @@ private:
             1.0F,
           } };
           vk::RenderingAttachmentInfo color_attachment_info {
-            .imageView = *swap_chain_.color().view(),
+            .imageView = *scene_msaa_color_.view(),
             .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
             .resolveMode = vk::ResolveModeFlagBits::eAverage,
-            .resolveImageView = swap_chain_.image_view(image_index),
+            .resolveImageView = *scene_resolve_.view(),
             .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
             .loadOp = vk::AttachmentLoadOp::eClear,
             .storeOp = vk::AttachmentStoreOp::eStore,
@@ -1082,7 +1271,7 @@ private:
             .stencil = 0,
           } };
           vk::RenderingAttachmentInfo depth_attachment_info {
-            .imageView = *swap_chain_.depth().view(),
+            .imageView = *scene_depth_.view(),
             .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
             .loadOp = vk::AttachmentLoadOp::eClear,
             .storeOp = vk::AttachmentStoreOp::eDontCare,
@@ -1090,11 +1279,7 @@ private:
           };
 
           vk::RenderingInfo rendering_info {
-            .renderArea =
-              vk::Rect2D {
-                .offset = { .x = 0, .y = 0 },
-                .extent = swap_chain_.extent(),
-              },
+            .renderArea = { .extent = scene_extent_ },
             .layerCount = 1U,
             .colorAttachmentCount = 1U,
             .pColorAttachments = &color_attachment_info,
@@ -1107,15 +1292,14 @@ private:
             vk::Viewport {
               .x = 0.0F,
               .y = 0.0F,
-              .width = static_cast<float>(swap_chain_.extent().width),
-              .height = static_cast<float>(swap_chain_.extent().height),
+              .width = static_cast<float>(scene_extent_.width),
+              .height = static_cast<float>(scene_extent_.height),
               .minDepth = 0.0F,
               .maxDepth = 1.0F,
             });
           command_buffer.setScissor(0U,
             vk::Rect2D {
-              .offset = vk::Offset2D { .x = 0, .y = 0 },
-              .extent = swap_chain_.extent(),
+              .extent = scene_extent_,
             });
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
             *graphics_pipeline_.layout(), 0U,
@@ -1123,8 +1307,9 @@ private:
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
             *graphics_pipeline_.layout(), 1U, bindless_table_.set(), nullptr);
           skipped_blend_draws_ = 0U;
-          for (const auto& item : draw_list_)
+          for (auto draw_index : std::views::indices(draw_list_.size()))
           {
+            const auto& item = draw_list_[ draw_index ];
             const auto& draw = draws_[ item.primitive_index ];
             if (draw.alpha_mode == vkpp::gltf::alpha_mode::blend)
             {
@@ -1137,11 +1322,7 @@ private:
               draw.index_slice.offset, draw.index_type);
 
             const draw_push push_constants {
-              .world = item.world_transform,
-              .texture_index = draw.base_color_index,
-              .alpha_mode = static_cast<std::uint32_t>(draw.alpha_mode),
-              .alpha_cutoff = draw.alpha_cutoff,
-              .base_color_factor = draw.base_color_factor,
+              .draw_index = static_cast<std::uint32_t>(draw_index),
             };
             command_buffer.pushConstants(*graphics_pipeline_.layout(),
               vk::ShaderStageFlagBits::eVertex |
@@ -1157,23 +1338,33 @@ private:
           }
           command_buffer.endRendering();
 
-          image_uses_.transition(command_buffer,
-            swap_chain_.images()[ image_index ], vkpp::image_use::color_blend,
-            vk::ImageAspectFlagBits::eColor);
+          image_uses_.transition(command_buffer, scene_resolve_.image(),
+            vkpp::image_use::sampled_fragment, vk::ImageAspectFlagBits::eColor);
 
-          vk::RenderingAttachmentInfo overlay_color {
+          image_uses_.transition(command_buffer,
+            swap_chain_.images()[ image_index ],
+            vkpp::image_use::color_attachment, vk::ImageAspectFlagBits::eColor);
+
+          vk::ClearValue ui_clear { vk::ClearColorValue {
+            0.10F,
+            0.10F,
+            0.12F,
+            1.0F,
+          } };
+          vk::RenderingAttachmentInfo ui_color {
             .imageView = swap_chain_.image_view(image_index),
             .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp = vk::AttachmentLoadOp::eLoad,
+            .loadOp = vk::AttachmentLoadOp::eClear,
             .storeOp = vk::AttachmentStoreOp::eStore,
+            .clearValue = ui_clear,
           };
-          vk::RenderingInfo overlay_info {
+          vk::RenderingInfo ui_info {
             .renderArea = { .extent = swap_chain_.extent() },
             .layerCount = 1U,
             .colorAttachmentCount = 1U,
-            .pColorAttachments = &overlay_color,
+            .pColorAttachments = &ui_color,
           };
-          command_buffer.beginRendering(overlay_info);
+          command_buffer.beginRendering(ui_info);
           ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(),
             static_cast<VkCommandBuffer>(*command_buffer));
           command_buffer.endRendering();
@@ -1214,6 +1405,7 @@ private:
   reinitialize_imgui_renderer() -> std::expected<void, vkpp::error_t>
   {
     shutdown_imgui_renderer();
+    scene_extent_ = vk::Extent2D {};
     return init_imgui_renderer();
   }
 
@@ -1323,8 +1515,10 @@ private:
       };
     }
 
+    begin_imgui_frame();
+    if (auto result = ensure_scene_targets(); !result) { return result; }
+    finish_imgui_frame();
     update_uniform_buffer(frame_index_);
-    prepare_imgui_frame();
 
     return UTILS_VK(
       frame.command_buffer.reset(), ^^vk::raii::CommandBuffer::reset)
@@ -1440,6 +1634,13 @@ private:
   bool compute_smoke_ok_ { false };
   bool imgui_renderer_initialized_ { false };
   bool imgui_layout_built_ { false };
+  vkpp::image_resource<> scene_msaa_color_ {};
+  vkpp::image_resource<> scene_depth_ {};
+  vkpp::image_resource<> scene_resolve_ {};
+  vk::raii::Sampler scene_sampler_ { nullptr };
+  vk::Extent2D scene_extent_ {};
+  vk::Extent2D scene_desired_extent_ {};
+  VkDescriptorSet scene_texture_id_ { VK_NULL_HANDLE };
 
   vkpp::image_use_tracker image_uses_ {};
 
@@ -1459,15 +1660,23 @@ private:
   vkpp::timestamp_ring timestamps_ {};
   std::chrono::steady_clock::time_point last_gpu_print_ {};
 
-  struct draw_push
+  struct draw_gpu
   {
     std::array<float, 16> world {};
-    std::uint32_t texture_index {};
-    std::uint32_t alpha_mode {};
-    float alpha_cutoff { 0.5F };
-    float padding {};
-    std::array<float, 4> base_color_factor { 1.0F, 1.0F, 1.0F, 1.0F };
+    std::array<float, 12> normal_matrix_columns {};
+    std::uint32_t material_index {};
+    std::uint32_t _;
+    std::uint32_t _;
+    std::uint32_t _;
   };
+  static_assert(sizeof(draw_gpu) == 128UZ);
+
+  struct draw_push
+  {
+    std::uint32_t draw_index { 0U };
+  };
+  static_assert(sizeof(draw_push) == 4UZ);
+
   struct material_gpu
   {
     std::array<float, 4> base_color_factor { 1.0F, 1.0F, 1.0F, 1.0F };
@@ -1499,14 +1708,12 @@ private:
     vkpp::virtual_slice index_slice {};
     std::uint32_t index_count { 0U };
     vk::IndexType index_type { vk::IndexType::eUint16 };
-    std::uint32_t base_color_index { 0U };
     vkpp::gltf::alpha_mode alpha_mode { vkpp::gltf::alpha_mode::opaque };
-    float alpha_cutoff { 0.5F };
-    std::array<float, 4> base_color_factor { 1.0F, 1.0F, 1.0F, 1.0F };
     bool double_sided { false };
   };
   std::vector<primitive_draw> draws_ {};
   std::vector<vkpp::gltf::draw_item_cpu> draw_list_ {};
+  vkpp::buffer_resource<> draw_buffer_ {};
 
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {
