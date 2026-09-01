@@ -154,6 +154,29 @@ pack_interleaved_vertices(const mesh_streams_cpu& streams)
   return packed;
 }
 
+export enum class image_color_space : std::uint8_t {
+  srgb,
+  linear,
+};
+
+export [[nodiscard]] constexpr auto
+to_linear_format(vk::Format format) -> vk::Format
+{
+  switch (format)
+  {
+  case vk::Format::eR8G8B8A8Srgb:
+    return vk::Format::eR8G8B8A8Unorm;
+  case vk::Format::eBc7SrgbBlock:
+    return vk::Format::eBc7UnormBlock;
+  case vk::Format::eEtc2R8G8B8A8SrgbBlock:
+    return vk::Format::eEtc2R8G8B8A8UnormBlock;
+  case vk::Format::eAstc4x4SrgbBlock:
+    return vk::Format::eAstc4x4UnormBlock;
+  default:
+    return format;
+  }
+}
+
 export namespace gltf
 {
 
@@ -232,6 +255,7 @@ enum class image_kind : std::uint8_t
 struct image_source_cpu
 {
   image_kind kind {};
+  image_color_space color_space { image_color_space::srgb };
   std::vector<std::byte> encoded_bytes {};
   std::filesystem::path debug_uri {};
 };

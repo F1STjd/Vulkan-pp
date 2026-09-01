@@ -477,6 +477,28 @@ extract_image_source(const fastgltf::Asset& gltf, const fastgltf::Image& image,
     image.data);
 }
 
+void
+mark_linear_images(std::span<const gltf::material_cpu> materials,
+  std::span<const gltf::texture_ref_cpu> textures,
+  std::span<gltf::image_source_cpu> sources)
+{
+  const auto mark = [ & ](const std::optional<gltf::texture_ref_cpu>& ref)
+  {
+    if (!ref.has_value()) { return; }
+    const auto image_index = ref->basisu_image_index.has_value()
+      ? ref->basisu_image_index
+      : ref->image_index;
+    if (!image_index.has_value() || *image_index >= sources.size()) { return; }
+    sources[ *image_index ].color_space = image_color_space::linear;
+  };
+  for (const auto& material : materials)
+  {
+    mark(material.metallic_roughness_texture);
+    mark(material.normal_texture);
+    mark(material.occlusion_texture);
+  }
+}
+
 export [[nodiscard]] auto
 realize_gltf_host_images(std::span<const gltf::image_source_cpu> sources,
   const gltf::load_runtime_args& runtime_args)
@@ -512,6 +534,20 @@ realize_gltf_host_images(std::span<const gltf::image_source_cpu> sources,
           .detail = "unsupported glTF image mime for host realize"sv,
         },
       };
+    }
+
+    if (source.color_space == image_color_space::linear)
+    {
+      if (out[ index ].decoded.has_value())
+      {
+        out[ index ].decoded->format =
+          to_linear_format(out[ index ].decoded->format);
+      }
+      if (out[ index ].mip_chain.has_value())
+      {
+        out[ index ].mip_chain->format =
+          to_linear_format(out[ index ].mip_chain->format);
+      }
     }
   }
   return out;
@@ -614,6 +650,7 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
         if (!source) { return std::unexpected { std::move(source).error() }; }
         out.image_sources.push_back(std::move(*source));
       }
+      mark_linear_images(out.materials, out.textures, out.image_sources);
       return realize_gltf_host_images(out.image_sources, runtime_args)
         .transform(
           [ & ](std::vector<gltf::host_image_cpu>&& images) -> gltf::asset_cpu
