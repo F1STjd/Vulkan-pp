@@ -11,3 +11,4 @@ compile_commands.json
 /docs/library-development-policy.md
 /docs/*
 .gitignore
+imgui.ini
