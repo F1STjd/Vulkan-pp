@@ -18,6 +18,7 @@ include(ProjectDiagnostics)
 include(ProjectContracts)
 
 find_package(Vulkan REQUIRED)
+include(ImGui)
 find_package(SFML 3 REQUIRED COMPONENTS Window Graphics System)
 find_package(fastgltf CONFIG REQUIRED)
 find_package(Ktx CONFIG REQUIRED)

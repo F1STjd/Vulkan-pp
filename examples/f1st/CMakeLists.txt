@@ -1,19 +1,17 @@
-# The f1st application (namespace f1st). Successor to the old `src` executable
-# (`tutorial-final`) plus the renderer that used to live in the `lbn` target.
-#
-# app/app.cppm (module f1st.app) is the renderer monolith ported from the old
-# lbn.cppm; app/uniform_buffer.cppm (module f1st.uniform_buffer) and the
-# contracts files also moved here. Phase 1 splits the monolith into vkpp
-# subsystems. main.cpp must define main() and construct f1st::app.
-
 add_executable(f1st main.cpp)
 
 target_sources(f1st
   PUBLIC FILE_SET CXX_MODULES
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
     FILES
-      app.cppm             # module f1st.app        (the renderer wiring; Phase 1)
-      uniform_buffer.cppm) # module f1st.uniform_buffer (UBO layout matches shader)
+      app.cppm
+      uniform_buffer.cppm
+)
+
+target_sources(f1st PRIVATE
+  imgui_platform.cpp
+  imgui_platform.hpp
+)
 
 target_compile_features(f1st PRIVATE cxx_std_26)
 set_target_properties(f1st PROPERTIES
@@ -21,7 +19,7 @@ set_target_properties(f1st PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 target_link_libraries(f1st PRIVATE
-  vkpp SFML::Window glm::cppm Vulkan::cppm project_warnings)
+  vkpp SFML::Window glm::cppm Vulkan::cppm imgui project_warnings)
 target_link_libraries(f1st PRIVATE
   $<$<PLATFORM_ID:Windows>:stdc++exp>)
 

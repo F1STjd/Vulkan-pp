@@ -7,6 +7,12 @@ module;
 #include <SFML/Window/VideoMode.hpp>
 #include <vulkan/vk_platform.h>
 
+#include "imgui_platform.hpp"
+
+#include <backends/imgui_impl_vulkan.h>
+#include <imgui.h>
+#include <imgui_internal.h>
+
 export module f1st.app;
 
 import std;
@@ -101,6 +107,13 @@ static constexpr std::array k_set0_bindings {
       vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
     .pImmutableSamplers = nullptr,
   },
+  vk::DescriptorSetLayoutBinding {
+    .binding = 1U,
+    .descriptorType = vk::DescriptorType::eStorageBuffer,
+    .descriptorCount = 1U,
+    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+    .pImmutableSamplers = nullptr,
+  },
 };
 
 export class app
@@ -113,6 +126,7 @@ public:
       [ this ]() -> std::expected<void, vkpp::error_t> { return main_loop(); });
 
     (void)device_.device().waitIdle();
+    shutdown_imgui();
     if (!result) { std::println(stderr, "{}", vkpp::message(result.error())); }
     swap_chain_.release();
   }
@@ -137,21 +151,22 @@ private:
       .and_then(std::bind_front(&app::create_graphics_pipeline, this))
       .and_then(std::bind_front(&app::create_buffers, this))
       .and_then(std::bind_front(&app::create_descriptor_pool, this))
-      .and_then(std::bind_front(&app::create_descriptor_sets, this));
+      .and_then(std::bind_front(&app::create_descriptor_sets, this))
+      .and_then(std::bind_front(&app::create_imgui_descriptor_pool, this))
+      .and_then(std::bind_front(&app::init_imgui, this));
   }
 
   auto
   main_loop() -> std::expected<void, vkpp::error_t>
   {
-    const auto on_close = [ this ](const sf::Event::Closed&) -> void
-    { window_.close(); };
-
-    const auto on_resize = [ this ](const sf::Event::Resized&) -> void
-    { resized_ = true; };
-
     while (window_.isOpen())
     {
-      window_.handleEvents(on_close, on_resize);
+      while (const auto event = window_.pollEvent())
+      {
+        imgui_process_event(*event);
+        if (event->is<sf::Event::Closed>()) { window_.close(); }
+        if (event->is<sf::Event::Resized>()) { resized_ = true; }
+      }
       if (!window_.isOpen()) { break; }
       if (auto result = draw_frame(); !result) { return result; }
     }
@@ -446,6 +461,7 @@ private:
         };
       }
     }
+    compute_smoke_ok_ = true;
     return {};
   }
 
@@ -542,28 +558,77 @@ private:
           const std::uint32_t fallback_slot =
             image_to_slot.empty() ? 0U : image_to_slot.front();
 
-          auto resolve_base_color =
-            [ & ](const vkpp::mesh_streams_cpu& primitive) -> std::uint32_t
+          auto resolve_slot =
+            [ & ](const std::optional<vkpp::gltf::texture_ref_cpu>& ref,
+              std::uint32_t bit, std::uint32_t& mask) -> std::uint32_t
           {
-            if (!primitive.material_index.has_value()) { return fallback_slot; }
-            const auto material_i = *primitive.material_index;
-            if (material_i >= asset.materials.size()) { return fallback_slot; }
-            const auto& material = asset.materials[ material_i ];
-            if (!material.base_color_texture.has_value())
-            {
-              return fallback_slot;
-            }
-            const auto& ref = *material.base_color_texture;
-            const std::optional<std::uint32_t> image_index =
-              ref.basisu_image_index.has_value() ? ref.basisu_image_index
-                                                 : ref.image_index;
+            if (!ref.has_value()) { return 0U; }
+            const auto image_index = ref->basisu_image_index.has_value()
+              ? ref->basisu_image_index
+              : ref->image_index;
             if (!image_index.has_value() ||
               *image_index >= image_to_slot.size())
             {
-              return fallback_slot;
+              return 0U;
             }
+
+            mask |= bit;
             return image_to_slot[ *image_index ];
           };
+          std::vector<material_gpu> materials_gpu {};
+          materials_gpu.reserve(asset.materials.size() + 1UZ);
+          for (const auto& material : asset.materials)
+          {
+            std::uint32_t texture_mask { 0U };
+            const std::uint32_t base_color_index =
+              resolve_slot(material.base_color_texture, 1U, texture_mask);
+            const std::uint32_t metallic_roughness_index = resolve_slot(
+              material.metallic_roughness_texture, 2U, texture_mask);
+            const std::uint32_t normal_index =
+              resolve_slot(material.normal_texture, 4U, texture_mask);
+            const std::uint32_t occlusion_index =
+              resolve_slot(material.occlusion_texture, 8U, texture_mask);
+            const std::uint32_t emissive_index =
+              resolve_slot(material.emissive_texture, 16U, texture_mask);
+
+            materials_gpu.push_back({
+                .base_color_factor = material.base_color_factor,
+                .emissive_factor_and_metallic = {
+                  material.emissive_factor[0],
+                  material.emissive_factor[1],
+                  material.emissive_factor[2],
+                  material.metallic_factor,
+                },
+                .roughness_factor = material.roughness_factor,
+                .normal_scale = material.normal_scale,
+                .occlusion_strength = material.occlusion_strength,
+                .alpha_cutoff = material.alpha_cutoff,
+                .base_color_index = base_color_index,
+                .metallic_roughness_index = metallic_roughness_index,
+                .normal_index = normal_index,
+                .occlusion_index = occlusion_index,
+                .emissive_index = emissive_index,
+                .alpha_mode = static_cast<std::uint32_t>(material.alpha_mode),
+                .has_texture_mask = texture_mask,
+            });
+          }
+          materials_gpu.emplace_back();
+
+          auto uploaded_materials = vkpp::upload_device_local_buffer({
+            .device = device_,
+            .pool = upload_pool_,
+            .transfer_pool = transfer_upload_pool_,
+            .bytes =
+              std::as_bytes(std::span<const material_gpu> { materials_gpu }),
+            .gpu_usage = vk::BufferUsageFlagBits::eStorageBuffer,
+          });
+          if (!uploaded_materials)
+          {
+            return std::unexpected {
+              std::move(uploaded_materials).error(),
+            };
+          }
+          material_buffer_ = std::move(*uploaded_materials);
 
           std::vector<vkpp::mesh_interleaved_cpu> packed;
           std::vector<std::uint32_t> base_color_indices;
@@ -577,9 +642,26 @@ private:
           alpha_cutoffs.reserve(asset.meshes.primitives.size());
           double_sided.reserve(asset.meshes.primitives.size());
           base_color_factors.reserve(asset.meshes.primitives.size());
+
+          const auto resolve_primitive_base_color =
+            [ & ](const vkpp::mesh_streams_cpu& primitive) -> std::uint32_t
+          {
+            if (!primitive.material_index.has_value() ||
+              *primitive.material_index >= asset.materials.size())
+            {
+              return fallback_slot;
+            }
+            const material_gpu& material =
+              materials_gpu[ *primitive.material_index ];
+            return (material.has_texture_mask & 1U) != 0U
+              ? material.base_color_index
+              : fallback_slot;
+          };
+
           for (const auto& primitive : asset.meshes.primitives)
           {
-            base_color_indices.push_back(resolve_base_color(primitive));
+            base_color_indices.push_back(
+              resolve_primitive_base_color(primitive));
             packed.push_back(vkpp::pack_interleaved_vertices(primitive));
             vkpp::gltf::alpha_mode mode { vkpp::gltf::alpha_mode::opaque };
             float cutoff { 0.5F };
@@ -761,23 +843,191 @@ private:
           for (auto index : std::views::indices(max_frames_in_flight))
           {
             frames_[ index ].descriptor_set = sets[ index ];
-            const vk::DescriptorBufferInfo buffer_info {
+            const vk::DescriptorBufferInfo uniform_buffer_info {
               .buffer = frames_[ index ].uniform_buffer.buffer(),
               .offset = 0U,
               .range = sizeof(uniform_buffer_object),
             };
-            const vk::WriteDescriptorSet write {
-              .dstSet = frames_[ index ].descriptor_set,
-              .dstBinding = 0U,
-              .dstArrayElement = 0U,
-              .descriptorCount = 1U,
-              .descriptorType = vk::DescriptorType::eUniformBuffer,
-              .pBufferInfo = &buffer_info,
+            const vk::DescriptorBufferInfo material_buffer_info {
+              .buffer = material_buffer_.buffer(),
+              .offset = 0U,
+              .range = material_buffer_.size(),
+            };
+            const std::array writes {
+              vk::WriteDescriptorSet {
+                .dstSet = frames_[ index ].descriptor_set,
+                .dstBinding = 0U,
+                .dstArrayElement = 0U,
+                .descriptorCount = 1U,
+                .descriptorType = vk::DescriptorType::eUniformBuffer,
+                .pBufferInfo = &uniform_buffer_info,
+              },
+              vk::WriteDescriptorSet {
+                .dstSet = frames_[ index ].descriptor_set,
+                .dstBinding = 1U,
+                .dstArrayElement = 0U,
+                .descriptorCount = 1U,
+                .descriptorType = vk::DescriptorType::eStorageBuffer,
+                .pBufferInfo = &material_buffer_info,
+              },
             };
             vkpp::update_descriptor_sets(
-              device_.device(), std::span { &write, 1UZ });
+              device_.device(), std::span { writes });
           }
         });
+  }
+
+  auto
+  create_imgui_descriptor_pool() -> std::expected<void, vkpp::error_t>
+  {
+    constexpr std::array pool_sizes {
+      vk::DescriptorPoolSize {
+        .type = vk::DescriptorType::eSampledImage,
+        .descriptorCount = 8U,
+      },
+      vk::DescriptorPoolSize {
+        .type = vk::DescriptorType::eSampler,
+        .descriptorCount = 2U,
+      },
+    };
+    const vk::DescriptorPoolCreateInfo create_info {
+      .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+      .maxSets = 16U,
+      .poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size()),
+      .pPoolSizes = pool_sizes.data(),
+    };
+    return UTILS_VK(device_.device().createDescriptorPool(create_info),
+      ^^vk::raii::Device::createDescriptorPool)
+      .transform([ this ](vk::raii::DescriptorPool&& pool) -> void
+        { imgui_descriptor_pool_ = std::move(pool); });
+  }
+
+  auto
+  init_imgui_renderer() -> std::expected<void, vkpp::error_t>
+  {
+    const auto image_count =
+      static_cast<std::uint32_t>(swap_chain_.images().size());
+    auto color_format = static_cast<VkFormat>(swap_chain_.format());
+    VkPipelineRenderingCreateInfo pipeline_rendering_info {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+      .colorAttachmentCount = 1U,
+      .pColorAttachmentFormats = &color_format,
+    };
+
+    ImGui_ImplVulkan_InitInfo init_info {
+      .ApiVersion = VK_API_VERSION_1_4,
+      .Instance = static_cast<VkInstance>(*instance_.instance()),
+      .PhysicalDevice =
+        static_cast<VkPhysicalDevice>(*device_.physical_device()),
+      .Device = static_cast<VkDevice>(*device_.device()),
+      .QueueFamily = device_.graphics_qf_index(),
+      .Queue = static_cast<VkQueue>(*device_.graphics_queue()),
+      .DescriptorPool = static_cast<VkDescriptorPool>(*imgui_descriptor_pool_),
+      .MinImageCount = image_count,
+      .ImageCount = image_count,
+      .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
+      .UseDynamicRendering = true,
+      .PipelineRenderingCreateInfo = pipeline_rendering_info,
+    };
+
+    if (!ImGui_ImplVulkan_Init(&init_info))
+    {
+      return std::unexpected {
+        vkpp::app_error {
+          .kind = vkpp::app_error_kind::invalid_argument,
+          .detail = "ImGui Vulkan backend initialisation failed"sv,
+        },
+      };
+    }
+    imgui_renderer_initialized_ = true;
+    return {};
+  }
+
+  auto
+  init_imgui() -> std::expected<void, vkpp::error_t>
+  {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.BackendPlatformName = "f1st_imgui_platform_sfml3";
+    return init_imgui_renderer();
+  }
+
+  void
+  shutdown_imgui_renderer()
+  {
+    if (!imgui_renderer_initialized_) { return; }
+    ImGui_ImplVulkan_Shutdown();
+    imgui_renderer_initialized_ = false;
+  }
+
+  void
+  shutdown_imgui()
+  {
+    shutdown_imgui_renderer();
+    if (ImGui::GetCurrentContext() != nullptr)
+    {
+      ImGui::GetIO().BackendPlatformName = nullptr;
+      ImGui::DestroyContext();
+    }
+    imgui_descriptor_pool_ = nullptr;
+  }
+
+  void
+  build_imgui()
+  {
+    const auto* viewport = ImGui::GetMainViewport();
+    const auto dockspace_id = ImHashStr("f1st DockSpace");
+
+    if (!imgui_layout_built_)
+    {
+      ImGui::DockBuilderRemoveNode(dockspace_id);
+      ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+      ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->Size);
+
+      ImGuiID center = dockspace_id;
+      ImGuiID inspector {};
+      ImGuiID log {};
+      ImGui::DockBuilderSplitNode(
+        center, ImGuiDir_Left, 0.22F, &inspector, &center);
+      ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.18F, &log, &center);
+      ImGui::DockBuilderDockWindow("Inspector", inspector);
+      ImGui::DockBuilderDockWindow("Log", log);
+      ImGui::DockBuilderDockWindow("Viewport", center);
+      ImGui::DockBuilderFinish(dockspace_id);
+      imgui_layout_built_ = true;
+    }
+
+    ImGui::DockSpaceOverViewport(
+      dockspace_id, viewport, ImGuiDockNodeFlags_PassthruCentralNode);
+
+    ImGui::Begin("Viewport", nullptr, ImGuiWindowFlags_NoBackground);
+    ImGui::TextUnformatted("3D swapchain view");
+    ImGui::End();
+
+    ImGui::Begin("Inspector");
+    ImGui::Text("GPU: %.3f ms", gpu_ms_);
+    ImGui::Text("Compute smoke: %s", compute_smoke_ok_ ? "OK" : "not verified");
+    ImGui::Text("Skipped BLEND draws: %u", skipped_blend_draws_);
+    ImGui::Text("Frames in flight: %zu", max_frames_in_flight);
+    ImGui::Text("Swapchain: %u x %u", swap_chain_.extent().width,
+      swap_chain_.extent().height);
+    ImGui::End();
+
+    ImGui::Begin("Log");
+    ImGui::TextUnformatted("Validation and renderer messages remain on stderr");
+    ImGui::End();
+  }
+
+  void
+  prepare_imgui_frame()
+  {
+    imgui_platform_new_frame(window_, imgui_frame_time_);
+    ImGui_ImplVulkan_NewFrame();
+    ImGui::NewFrame();
+    build_imgui();
+    ImGui::Render();
   }
 
   [[nodiscard]] static auto
@@ -872,10 +1122,15 @@ private:
             frames_[ frame_index_ ].descriptor_set, nullptr);
           command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
             *graphics_pipeline_.layout(), 1U, bindless_table_.set(), nullptr);
+          skipped_blend_draws_ = 0U;
           for (const auto& item : draw_list_)
           {
             const auto& draw = draws_[ item.primitive_index ];
-            if (draw.alpha_mode == vkpp::gltf::alpha_mode::blend) { continue; }
+            if (draw.alpha_mode == vkpp::gltf::alpha_mode::blend)
+            {
+              ++skipped_blend_draws_;
+              continue;
+            }
             command_buffer.bindVertexBuffers(
               0U, geometry_arena_.buffer(), { draw.vertex_slice.offset });
             command_buffer.bindIndexBuffer(geometry_arena_.buffer(),
@@ -901,6 +1156,28 @@ private:
             command_buffer.drawIndexed(draw.index_count, 1U, 0U, 0U, 0U);
           }
           command_buffer.endRendering();
+
+          image_uses_.transition(command_buffer,
+            swap_chain_.images()[ image_index ], vkpp::image_use::color_blend,
+            vk::ImageAspectFlagBits::eColor);
+
+          vk::RenderingAttachmentInfo overlay_color {
+            .imageView = swap_chain_.image_view(image_index),
+            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .loadOp = vk::AttachmentLoadOp::eLoad,
+            .storeOp = vk::AttachmentStoreOp::eStore,
+          };
+          vk::RenderingInfo overlay_info {
+            .renderArea = { .extent = swap_chain_.extent() },
+            .layerCount = 1U,
+            .colorAttachmentCount = 1U,
+            .pColorAttachments = &overlay_color,
+          };
+          command_buffer.beginRendering(overlay_info);
+          ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(),
+            static_cast<VkCommandBuffer>(*command_buffer));
+          command_buffer.endRendering();
+
           timestamps_.write(command_buffer, frame_index_, 1U,
             vk::PipelineStageFlagBits2::eAllCommands);
 
@@ -934,13 +1211,21 @@ private:
   }
 
   auto
+  reinitialize_imgui_renderer() -> std::expected<void, vkpp::error_t>
+  {
+    shutdown_imgui_renderer();
+    return init_imgui_renderer();
+  }
+
+  auto
   recreate_swap_chain() -> std::expected<void, vkpp::error_t>
   {
-    return swap_chain_.recreate(device_, instance_.surface(),
-      framebuffer_extent_request(),
-      [ this ](const vk::SurfaceCapabilitiesKHR& capabilities,
-        vk::Extent2D framebuffer)
-      { return choose_swap_extent(capabilities, framebuffer); });
+    return swap_chain_
+      .recreate(device_, instance_.surface(), framebuffer_extent_request(),
+        [ this ](const vk::SurfaceCapabilitiesKHR& capabilities,
+          vk::Extent2D framebuffer) -> vk::Extent2D
+        { return choose_swap_extent(capabilities, framebuffer); })
+      .and_then(std::bind_front(&app::reinitialize_imgui_renderer, this));
   }
 
   auto
@@ -1008,15 +1293,13 @@ private:
 
     if (frame_counter_ >= max_frames_in_flight)
     {
-      // TODO (Konrad): shouldn't we use std::chrono for time? I believe it is
-      // one of the best written part of the stdlib
       if (auto ns = timestamps_.read_and_reset_frame_ns(frame_index_); ns)
       {
-        const double gpu_ms = ((*ns)[ 1 ] - (*ns)[ 0 ]) * 1e-6;
+        gpu_ms_ = ((*ns)[ 1 ] - (*ns)[ 0 ]) * 1e-6;
         const auto now = std::chrono::steady_clock::now();
         if (now - last_gpu_print_ >= std::chrono::seconds { 1 })
         {
-          std::println("GPU frame: {:.3f} ms", gpu_ms);
+          std::println("GPU frame: {:.3f} ms", gpu_ms_);
           last_gpu_print_ = now;
         }
       }
@@ -1041,6 +1324,7 @@ private:
     }
 
     update_uniform_buffer(frame_index_);
+    prepare_imgui_frame();
 
     return UTILS_VK(
       frame.command_buffer.reset(), ^^vk::raii::CommandBuffer::reset)
@@ -1149,6 +1433,14 @@ private:
   vkpp::device_context device_ {};
   vkpp::swapchain swap_chain_ {};
 
+  vk::raii::DescriptorPool imgui_descriptor_pool_ { nullptr };
+  std::chrono::steady_clock::time_point imgui_frame_time_ {};
+  double gpu_ms_ { 0.0 };
+  std::uint32_t skipped_blend_draws_ { 0U };
+  bool compute_smoke_ok_ { false };
+  bool imgui_renderer_initialized_ { false };
+  bool imgui_layout_built_ { false };
+
   vkpp::image_use_tracker image_uses_ {};
 
   vkpp::graphics_pipeline graphics_pipeline_;
@@ -1176,9 +1468,29 @@ private:
     float padding {};
     std::array<float, 4> base_color_factor { 1.0F, 1.0F, 1.0F, 1.0F };
   };
+  struct material_gpu
+  {
+    std::array<float, 4> base_color_factor { 1.0F, 1.0F, 1.0F, 1.0F };
+    std::array<float, 4> emissive_factor_and_metallic { 0.0F, 0.0F, 0.0F,
+      1.0F };
+    float roughness_factor { 1.0F };
+    float normal_scale { 1.0F };
+    float occlusion_strength { 1.0F };
+    float alpha_cutoff { 0.5F };
+    std::uint32_t base_color_index { 0U };
+    std::uint32_t metallic_roughness_index { 0U };
+    std::uint32_t normal_index { 0U };
+    std::uint32_t occlusion_index { 0U };
+    std::uint32_t emissive_index { 0U };
+    std::uint32_t alpha_mode { 0U };
+    std::uint32_t has_texture_mask { 0U };
+    std::uint32_t reserved { 0U };
+  };
+  static_assert(sizeof(material_gpu) == 80UZ);
 
   vkpp::bindless_table bindless_table_ {};
   std::vector<vkpp::texture<>> textures_ {};
+  vkpp::buffer_resource<> material_buffer_ {};
 
   vkpp::buffer_arena<> geometry_arena_ {};
   struct primitive_draw
