@@ -21,9 +21,17 @@ export struct graphics_pipeline_spec
   vk::CullModeFlagBits cull_mode { vk::CullModeFlagBits::eBack };
   vk::FrontFace front_face { vk::FrontFace::eCounterClockwise };
   vk::CompareOp depth_compare { vk::CompareOp::eLess };
+  // bools should be in some `options` struct, or whole blending options. To
+  // minimize the padding
   bool depth_test { true };
   bool depth_write { true };
   bool blend_enable { false };
+  vk::BlendFactor src_color_blend_factor { vk::BlendFactor::eSrcAlpha };
+  vk::BlendFactor dst_color_blend_factor { vk::BlendFactor::eOneMinusSrcAlpha };
+  vk::BlendOp color_blend_op { vk::BlendOp::eAdd };
+  vk::BlendFactor src_alpha_blend_factor { vk::BlendFactor::eOne };
+  vk::BlendFactor dst_alpha_blend_factor { vk::BlendFactor::eOneMinusSrcAlpha };
+  vk::BlendOp alpha_blend_op { vk::BlendOp::eAdd };
   bool sample_shading { false };
   float min_sample_shading { 1.0F };
 };
@@ -184,6 +192,12 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
               };
               const vk::PipelineColorBlendAttachmentState blend_attachment {
                 .blendEnable = vk::Bool32 { Spec.blend_enable },
+                .srcColorBlendFactor = Spec.src_color_blend_factor,
+                .dstColorBlendFactor = Spec.dst_color_blend_factor,
+                .colorBlendOp = Spec.color_blend_op,
+                .srcAlphaBlendFactor = Spec.src_alpha_blend_factor,
+                .dstAlphaBlendFactor = Spec.dst_alpha_blend_factor,
+                .alphaBlendOp = Spec.alpha_blend_op,
                 .colorWriteMask = vk::ColorComponentFlagBits::eR |
                   vk::ColorComponentFlagBits::eG |
                   vk::ColorComponentFlagBits::eB |
