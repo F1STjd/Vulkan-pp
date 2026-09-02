@@ -1,3 +1,7 @@
+module;
+
+#include <cstddef> // I need just offsetof, so importing std would be an overkill
+
 export module f1st.uniform_buffer;
 
 import glm;
@@ -27,6 +31,12 @@ export struct uniform_buffer_object
   alignas(alignment::vec3) glm::vec3 light_direction;
   alignas(alignment::vec3) glm::vec3 light_color;
   alignas(alignment::vec3) glm::vec3 camera_position;
+  alignas(alignment::scalar) float exposure { 1.0F };
 };
+static_assert(offsetof(uniform_buffer_object, light_direction) == 192UZ);
+static_assert(offsetof(uniform_buffer_object, light_color) == 208UZ);
+static_assert(offsetof(uniform_buffer_object, camera_position) == 224UZ);
+static_assert(offsetof(uniform_buffer_object, exposure) == 236UZ);
+static_assert(sizeof(uniform_buffer_object) == 240UZ);
 
 } // namespace f1st

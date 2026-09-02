@@ -840,6 +840,7 @@ private:
       .light_direction = glm::normalize(glm::vec3 { 0.4F, 1.0F, 0.3F }),
       .light_color = glm::vec3 { 1.0F, 0.98F, 0.92F },
       .camera_position = camera_position,
+      .exposure = 1.0F,
     };
     ubo.projection[ 1 ][ 1 ] *= -1;
     frames_[ current_frame ].uniform_buffer.write(&ubo, sizeof(ubo));
