@@ -263,7 +263,7 @@ float4 fragment_main(
   const float3 direct = (diffuse + specular) * ubo.light_color * normal_light_cosine;
   const float3 ambient = 0.03 * albedo * occlusion;
   const float3 color = direct + ambient + emissive;
-  const float3 display_linear = tonemap_reinhard_luminance(color + ubo.exposure);
+  const float3 display_linear = tonemap_reinhard_luminance(color * ubo.exposure);
   return float4(display_linear, opacity);
 }
 
