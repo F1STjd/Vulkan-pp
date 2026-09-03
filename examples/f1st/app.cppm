@@ -608,10 +608,9 @@ private:
                 },
               };
             }
-            bindless_table_.write(
-              device_.device(), *slot, *made->sampler(), *made->view());
-            image_to_slot[ index ] = *slot;
-            textures_.push_back(std::move(*made));
+            bindless_table_.write(device_.device(), *slot, *sampler,
+              *textures_[ *image_index ].view());
+            texture_to_slot[ texture_index ] = *slot;
           }
 
           auto resolve_slot =

@@ -30,9 +30,16 @@ class texture
 {
 public:
   texture() = default;
-  texture(image_resource<Alloc>&& image, vk::raii::Sampler&& sampler,
+
+  texture(image_resource<Alloc>&& image, vk::raii::Sampler&& owned_sampler,
     std::uint32_t mip_levels)
-  : image_ { std::move(image) }, sampler_ { std::move(sampler) },
+  : image_ { std::move(image) }, owned_sampler_ { std::move(owned_sampler) },
+    sampler_ { *owned_sampler }, mip_levels_ { mip_levels }
+  {}
+
+  texture(image_resource<Alloc>&& image, vk::Sampler borrowed_sampler,
+    std::uint32_t mip_levels)
+  : image_ { std::move(image) }, sampler_ { borrowed_sampler },
     mip_levels_ { mip_levels }
   {}
 
@@ -45,8 +52,8 @@ public:
   { return std::forward_like<decltype(self)>(self.image_.view()); }
 
   [[nodiscard]] auto
-  sampler(this auto&& self) -> decltype(auto)
-  { return std::forward_like<decltype(self)>(self.sampler_); }
+  sampler() -> vk::Sampler
+  { return sampler_; }
 
   [[nodiscard]] auto
   extent(this auto&& self) -> decltype(auto)
@@ -66,7 +73,8 @@ public:
 
 private:
   image_resource<Alloc> image_ {};
-  vk::raii::Sampler sampler_ { nullptr };
+  vk::raii::Sampler owned_sampler_ { nullptr };
+  vk::Sampler sampler_ {};
   std::uint32_t mip_levels_ { 1U };
 };
 
@@ -81,6 +89,7 @@ export struct texture_create_info
   std::uint32_t mip_levels { 1U };
   texture_mip_policy mip_policy { texture_mip_policy::generate_gpu_blit };
   sampler_create_info sampler {};
+  std::optional<vk::Sampler> borrowed_sampler {};
   std::span<const vk::DeviceSize> level_offsets {};
 };
 

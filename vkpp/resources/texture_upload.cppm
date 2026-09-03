@@ -267,6 +267,14 @@ make_texture(const texture_create_info& create_info)
                 .and_then(
                   [ & ]() -> std::expected<texture<>, error_t>
                   {
+                    if (create_info.borrowed_sampler.has_value())
+                    {
+                      return texture<> {
+                        std::move(image),
+                        *create_info.borrowed_sampler,
+                        create_info.mip_levels,
+                      };
+                    }
                     return make_sampler(create_info.device.device(),
                       create_info.device.physical_device(), create_info.sampler)
                       .transform(
