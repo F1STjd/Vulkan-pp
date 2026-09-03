@@ -153,6 +153,7 @@ private:
     return create_instance_context()
       .and_then(std::bind_front(&app::create_surface, this))
       .and_then(std::bind_front(&app::create_device_context, this))
+      .and_then(std::bind_front(&app::create_sampler_cache, this))
       .and_then(std::bind_front(&app::create_swap_chain, this))
       .and_then(std::bind_front(&app::create_command_pool, this))
       .and_then(std::bind_front(&app::create_upload_pool, this))
@@ -252,6 +253,15 @@ private:
       })
       .transform([ this ](vkpp::device_context&& device) -> void
         { device_ = std::move(device); });
+  }
+
+  auto
+  create_sampler_cache() -> std::expected<void, vkpp::error_t>
+  {
+    return vkpp::sampler_cache::create(
+      device_.device(), device_.physical_device())
+      .transform([ this ](vkpp::sampler_cache&& cache) -> void
+        { sampler_cache_.emplace(std::move(cache)); });
   }
 
   auto
@@ -546,16 +556,20 @@ private:
           blend_order_.clear();
           blend_order_.reserve(draw_list_.size());
 
+          auto default_sampler = sampler_cache_->get_or_create({});
+          if (!default_sampler)
+          {
+            return std::unexpected {
+              std::move(default_sampler).error(),
+            };
+          }
+
           textures_.clear();
           textures_.reserve(asset.host_images.size());
-          std::vector<std::uint32_t> image_to_slot(
-            asset.host_images.size(), 0U);
-
-          for (auto index : std::views::indices(asset.host_images.size()))
+          for (auto image_index : std::views::indices(asset.host_images.size()))
           {
-            const auto& host = asset.host_images[ index ];
+            const auto& host = asset.host_images[ image_index ];
             std::expected<vkpp::texture<>, vkpp::error_t> made;
-
             if (host.decoded.has_value())
             {
               const auto& image = *host.decoded;
@@ -569,6 +583,7 @@ private:
                 .mip_levels = image.mip_levels_present,
                 .mip_policy = image.suggested_mip_policy,
                 .sampler = {},
+                .borrowed_sampler = *default_sampler,
               });
             }
             else if (host.mip_chain.has_value())
@@ -584,6 +599,7 @@ private:
                 .mip_levels = chain.mip_levels_present,
                 .mip_policy = chain.suggested_mip_policy,
                 .sampler = {},
+                .borrowed_sampler = *default_sampler,
                 .level_offsets = chain.level_offsets,
               });
             }
@@ -597,7 +613,70 @@ private:
               };
             }
             if (!made) { return std::unexpected { std::move(made).error() }; }
+            textures_.push_back(std::move(*made));
+          }
 
+          const auto sampler_create_info_for =
+            [ & ](const vkpp::gltf::texture_ref_cpu& reference)
+            -> std::expected<vkpp::sampler_create_info, vkpp::error_t>
+          {
+            if (!reference.sampler_index.has_value())
+            {
+              return vkpp::sampler_create_info {};
+            }
+            if (*reference.sampler_index >= asset.samplers.size())
+            {
+              return std::unexpected {
+                vkpp::app_error {
+                  .kind = vkpp::app_error_kind::invalid_argument,
+                  .detail = "gltf sampler index out of range"sv,
+                },
+              };
+            }
+            const auto& source = asset.samplers[ *reference.sampler_index ];
+            return vkpp::sampler_create_info {
+              .mag_filter = source.mag_filter,
+              .min_filter = source.min_filter,
+              .mipmap_mode = source.mipmap_mode,
+              .address_mode_u = source.address_u,
+              .address_mode_v = source.address_v,
+              .address_mode_w = vk::SamplerAddressMode::eRepeat,
+              .anisotropy_enable = true,
+              .min_lod = 0.0F,
+              .max_lod = source.max_lod,
+            };
+          };
+
+          std::vector<std::optional<std::uint32_t>> texture_to_slot(
+            asset.textures.size(), std::nullopt);
+          for (auto texture_index : std::views::indices(asset.textures.size()))
+          {
+            const auto& reference = asset.textures[ texture_index ];
+            const std::optional<std::uint32_t> image_index =
+              reference.basisu_image_index.has_value()
+              ? reference.basisu_image_index
+              : reference.image_index;
+            if (!image_index.has_value()) { continue; }
+            if (*image_index >= textures_.size())
+            {
+              return std::unexpected {
+                vkpp::app_error {
+                  .kind = vkpp::app_error_kind::invalid_argument,
+                  .detail = "gltf texture image index out of range"sv,
+                },
+              };
+            }
+
+            auto sampler_create_info = sampler_create_info_for(reference);
+            if (!sampler_create_info)
+            {
+              return std::unexpected { std::move(sampler_create_info).error() };
+            }
+            auto sampler = sampler_cache_->get_or_create(*sampler_create_info);
+            if (!sampler)
+            {
+              return std::unexpected { std::move(sampler).error() };
+            }
             const auto slot = bindless_table_.acquire_index();
             if (!slot)
             {
@@ -613,37 +692,79 @@ private:
             texture_to_slot[ texture_index ] = *slot;
           }
 
-          auto resolve_slot =
+          const auto same_texture_reference =
+            [](const vkpp::gltf::texture_ref_cpu& lhs,
+              const vkpp::gltf::texture_ref_cpu& rhs) -> bool
+          {
+            return lhs.image_index == rhs.image_index &&
+              lhs.basisu_image_index == rhs.basisu_image_index &&
+              lhs.sampler_index == rhs.sampler_index;
+          };
+
+          const auto resolve_slot =
             [ & ](const std::optional<vkpp::gltf::texture_ref_cpu>& ref,
-              std::uint32_t bit, std::uint32_t& mask) -> std::uint32_t
+              std::uint32_t bit, std::uint32_t& mask)
+            -> std::expected<std::uint32_t, vkpp::error_t>
           {
             if (!ref.has_value()) { return 0U; }
-            const auto image_index = ref->basisu_image_index.has_value()
-              ? ref->basisu_image_index
-              : ref->image_index;
-            if (!image_index.has_value() ||
-              *image_index >= image_to_slot.size())
+            for (auto texture_index :
+              std::views::indices(asset.textures.size()))
             {
-              return 0U;
+              if (!same_texture_reference(
+                    *ref, asset.textures[ texture_index ]))
+              {
+                continue;
+              }
+              if (!texture_to_slot[ texture_index ].has_value()) { break; }
+              mask |= bit;
+              return *texture_to_slot[ texture_index ];
             }
-            mask |= bit;
-            return image_to_slot[ *image_index ];
+
+            return std::unexpected {
+              vkpp::app_error {
+                .kind = vkpp::app_error_kind::invalid_argument,
+                .detail = "material texture reference was not realized"sv,
+              },
+            };
           };
+
           std::vector<material_gpu> materials_gpu {};
           materials_gpu.reserve(asset.materials.size() + 1UZ);
           for (const auto& material : asset.materials)
           {
             std::uint32_t texture_mask { 0U };
-            const std::uint32_t base_color_index =
+            const auto base_color_index =
               resolve_slot(material.base_color_texture, 1U, texture_mask);
-            const std::uint32_t metallic_roughness_index = resolve_slot(
+            if (!base_color_index)
+            {
+              return std::unexpected { std::move(base_color_index).error() };
+            }
+            const auto metallic_roughness_index = resolve_slot(
               material.metallic_roughness_texture, 2U, texture_mask);
-            const std::uint32_t normal_index =
+            if (!metallic_roughness_index)
+            {
+              return std::unexpected {
+                std::move(metallic_roughness_index).error()
+              };
+            }
+            const auto normal_index =
               resolve_slot(material.normal_texture, 4U, texture_mask);
-            const std::uint32_t occlusion_index =
+            if (!normal_index)
+            {
+              return std::unexpected { std::move(normal_index).error() };
+            }
+            const auto occlusion_index =
               resolve_slot(material.occlusion_texture, 8U, texture_mask);
-            const std::uint32_t emissive_index =
+            if (!occlusion_index)
+            {
+              return std::unexpected { std::move(occlusion_index).error() };
+            }
+            const auto emissive_index =
               resolve_slot(material.emissive_texture, 16U, texture_mask);
+            if (!emissive_index)
+            {
+              return std::unexpected { std::move(emissive_index).error() };
+            }
 
             materials_gpu.push_back({
                 .base_color_factor = material.base_color_factor,
@@ -657,11 +778,11 @@ private:
                 .normal_scale = material.normal_scale,
                 .occlusion_strength = material.occlusion_strength,
                 .alpha_cutoff = material.alpha_cutoff,
-                .base_color_index = base_color_index,
-                .metallic_roughness_index = metallic_roughness_index,
-                .normal_index = normal_index,
-                .occlusion_index = occlusion_index,
-                .emissive_index = emissive_index,
+                .base_color_index = *base_color_index,
+                .metallic_roughness_index = *metallic_roughness_index,
+                .normal_index = *normal_index,
+                .occlusion_index = *occlusion_index,
+                .emissive_index = *emissive_index,
                 .alpha_mode = static_cast<std::uint32_t>(material.alpha_mode),
                 .has_texture_mask = texture_mask,
             });
@@ -1792,6 +1913,7 @@ private:
   };
   static_assert(sizeof(material_gpu) == 80UZ);
 
+  std::optional<vkpp::sampler_cache> sampler_cache_ {};
   vkpp::bindless_table bindless_table_ {};
   std::vector<vkpp::texture<>> textures_ {};
   vkpp::buffer_resource<> material_buffer_ {};

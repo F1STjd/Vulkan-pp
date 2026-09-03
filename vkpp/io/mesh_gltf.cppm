@@ -217,8 +217,7 @@ map_gltf_sampler(const fastgltf::Sampler& sampler) -> gltf::sampler_cpu
       return vk::SamplerAddressMode::eClampToEdge;
     case fastgltf::Wrap::MirroredRepeat:
       return vk::SamplerAddressMode::eMirroredRepeat;
-    case fastgltf::Wrap::Repeat:
-      return vk::SamplerAddressMode::eRepeat;
+    case fastgltf::Wrap::Repeat: return vk::SamplerAddressMode::eRepeat;
     }
     return vk::SamplerAddressMode::eRepeat;
   };
@@ -236,11 +235,19 @@ map_gltf_sampler(const fastgltf::Sampler& sampler) -> gltf::sampler_cpu
   switch (sampler.minFilter.value_or(fastgltf::Filter::LinearMipMapLinear))
   {
   case fastgltf::Filter::Nearest:
+    mapped.min_filter = vk::Filter::eNearest;
+    mapped.mipmap_mode = vk::SamplerMipmapMode::eNearest;
+    mapped.max_lod = 0.0F;
+    break;
+  case fastgltf::Filter::Linear:
+    mapped.min_filter = vk::Filter::eLinear;
+    mapped.mipmap_mode = vk::SamplerMipmapMode::eNearest;
+    mapped.max_lod = 0.0F;
+    break;
   case fastgltf::Filter::NearestMipMapNearest:
     mapped.min_filter = vk::Filter::eNearest;
     mapped.mipmap_mode = vk::SamplerMipmapMode::eNearest;
     break;
-  case fastgltf::Filter::Linear:
   case fastgltf::Filter::LinearMipMapNearest:
     mapped.min_filter = vk::Filter::eLinear;
     mapped.mipmap_mode = vk::SamplerMipmapMode::eNearest;
@@ -249,8 +256,10 @@ map_gltf_sampler(const fastgltf::Sampler& sampler) -> gltf::sampler_cpu
     mapped.min_filter = vk::Filter::eNearest;
     mapped.mipmap_mode = vk::SamplerMipmapMode::eLinear;
     break;
-  default:
-    break; // std::unreachable(); ?
+  case fastgltf::Filter::LinearMipMapLinear:
+    mapped.min_filter = vk::Filter::eLinear;
+    mapped.mipmap_mode = vk::SamplerMipmapMode::eLinear;
+    break;
   }
   return mapped;
 }
@@ -290,12 +299,9 @@ map_alpha_mode(fastgltf::AlphaMode mode) -> gltf::alpha_mode
 {
   switch (mode)
   {
-  case fastgltf::AlphaMode::Opaque:
-    return gltf::alpha_mode::opaque;
-  case fastgltf::AlphaMode::Mask:
-    return gltf::alpha_mode::mask;
-  case fastgltf::AlphaMode::Blend:
-    return gltf::alpha_mode::blend;
+  case fastgltf::AlphaMode::Opaque: return gltf::alpha_mode::opaque;
+  case fastgltf::AlphaMode::Mask  : return gltf::alpha_mode::mask;
+  case fastgltf::AlphaMode::Blend : return gltf::alpha_mode::blend;
   }
   return gltf::alpha_mode::opaque;
 }

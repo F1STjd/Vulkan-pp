@@ -164,16 +164,12 @@ to_linear_format(vk::Format format) -> vk::Format
 {
   switch (format)
   {
-  case vk::Format::eR8G8B8A8Srgb:
-    return vk::Format::eR8G8B8A8Unorm;
-  case vk::Format::eBc7SrgbBlock:
-    return vk::Format::eBc7UnormBlock;
+  case vk::Format::eR8G8B8A8Srgb: return vk::Format::eR8G8B8A8Unorm;
+  case vk::Format::eBc7SrgbBlock: return vk::Format::eBc7UnormBlock;
   case vk::Format::eEtc2R8G8B8A8SrgbBlock:
     return vk::Format::eEtc2R8G8B8A8UnormBlock;
-  case vk::Format::eAstc4x4SrgbBlock:
-    return vk::Format::eAstc4x4UnormBlock;
-  default:
-    return format;
+  case vk::Format::eAstc4x4SrgbBlock: return vk::Format::eAstc4x4UnormBlock;
+  default                           : return format;
   }
 }
 
@@ -236,6 +232,7 @@ struct sampler_cpu
   vk::SamplerMipmapMode mipmap_mode { vk::SamplerMipmapMode::eLinear };
   vk::SamplerAddressMode address_u { vk::SamplerAddressMode::eRepeat };
   vk::SamplerAddressMode address_v { vk::SamplerAddressMode::eRepeat };
+  float max_lod { vk::LodClampNone };
 };
 
 struct draw_item_cpu
