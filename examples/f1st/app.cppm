@@ -38,6 +38,7 @@ import vkpp.device;
 import vkpp.swapchain;
 import vkpp.command;
 import vkpp.frame;
+import vkpp.frame_attachments;
 import vkpp.texture;
 import vkpp.texture.upload;
 import vkpp.barrier;
@@ -267,12 +268,11 @@ private:
   auto
   create_swap_chain() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::swapchain::create(
-      device_, instance_.surface(), framebuffer_extent_request(),
+    return vkpp::swapchain::create(device_, instance_.surface(),
+      framebuffer_extent_request(),
       [ this ](const vk::SurfaceCapabilitiesKHR& capabilities,
         vk::Extent2D framebuffer)
-      { return choose_swap_extent(capabilities, framebuffer); },
-      vkpp::swapchain_scene_attachments::none)
+      { return choose_swap_extent(capabilities, framebuffer); })
       .transform([ this ](vkpp::swapchain&& swap_chain)
         { swap_chain_ = std::move(swap_chain); });
   }
@@ -336,7 +336,7 @@ private:
 
     const vkpp::graphics_pipeline_runtime_args runtime_args {
       .color_formats = color_formats,
-      .depth_format = swap_chain_.depth().format(),
+      .depth_format = scene_.depth().format(),
       .samples = device_.msaa_samples(),
       .set_layouts = set_layouts,
       .vertex_bindings = vertex_bindings,
@@ -1182,63 +1182,35 @@ private:
       ImGui_ImplVulkan_RemoveTexture(scene_texture_id_);
       scene_texture_id_ = VK_NULL_HANDLE;
     }
-    scene_msaa_color_ = {};
-    scene_depth_ = {};
-    scene_resolve_ = {};
+    scene_ = {};
     scene_extent_ = vk::Extent2D {};
 
-    auto depth_format =
-      vkpp::find_depth_attachment_format(device_.physical_device());
-    if (!depth_format)
-    {
-      return std::unexpected { std::move(depth_format).error() };
-    }
-
-    auto color = vkpp::make_image_resource<vkpp::image_kind::color>(
-      device_.allocator(), device_.device(),
-      vkpp::image_runtime_args {
-        .extent = extent,
-        .format = swap_chain_.format(),
+    return vkpp::frame_attachments::create(device_,
+      { .extent = extent,
+        .color_format = swap_chain_.format(),
         .samples = device_.msaa_samples(),
-      });
-    if (!color) { return std::unexpected { std::move(color).error() }; }
-
-    auto depth = vkpp::make_image_resource<vkpp::image_kind::depth>(
-      device_.allocator(), device_.device(),
-      vkpp::image_runtime_args {
-        .extent = extent,
-        .format = *depth_format,
-        .samples = device_.msaa_samples(),
-      });
-    if (!depth) { return std::unexpected { std::move(depth).error() }; }
-
-    auto resolve = vkpp::make_image_resource<vkpp::image_kind::color_sampled>(
-      device_.allocator(), device_.device(),
-      vkpp::image_runtime_args {
-        .extent = extent,
-        .format = swap_chain_.format(),
-        .samples = vk::SampleCountFlagBits::e1,
-      });
-    if (!resolve) { return std::unexpected { std::move(resolve).error() }; }
-
-    scene_msaa_color_ = std::move(*color);
-    scene_depth_ = std::move(*depth);
-    scene_resolve_ = std::move(*resolve);
-    scene_extent_ = extent;
-    scene_texture_id_ =
-      ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*scene_sampler_),
-        static_cast<VkImageView>(*scene_resolve_.view()),
-        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    if (scene_texture_id_ == VK_NULL_HANDLE)
-    {
-      return std::unexpected {
-        vkpp::app_error {
-          .kind = vkpp::app_error_kind::invalid_argument,
-          .detail = "ImGui_ImplVulkan_AddTexture returned null"sv,
-        },
-      };
-    }
-    return {};
+        .sink = vkpp::color_sink::sampled })
+      .and_then(
+        [ this, extent ](
+          vkpp::frame_attachments&& scene) -> std::expected<void, vkpp::error_t>
+        {
+          scene_ = std::move(scene);
+          scene_extent_ = extent;
+          scene_texture_id_ =
+            ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*scene_sampler_),
+              static_cast<VkImageView>(*scene_.resolve().view()),
+              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+          if (scene_texture_id_ == VK_NULL_HANDLE)
+          {
+            return std::unexpected {
+              vkpp::app_error {
+                .kind = vkpp::app_error_kind::invalid_argument,
+                .detail = "ImGui_ImplVulkan_AddTexture returned null"sv,
+              },
+            };
+          }
+          return {};
+        });
   }
 
   auto
@@ -1441,41 +1413,26 @@ private:
           timestamps_.write(command_buffer, frame_index_, 0U,
             vk::PipelineStageFlagBits2::eNone);
 
-          image_uses_.transition(command_buffer, scene_msaa_color_.image(),
-            vkpp::image_use::color_attachment, vk::ImageAspectFlagBits::eColor);
-          image_uses_.transition(command_buffer, scene_resolve_.image(),
-            vkpp::image_use::color_attachment, vk::ImageAspectFlagBits::eColor);
-          image_uses_.transition(command_buffer, scene_depth_.image(),
-            vkpp::image_use::depth_attachment, vk::ImageAspectFlagBits::eDepth);
+          scene_.record_begin_uses(image_uses_, command_buffer);
 
-          vk::ClearValue clear_color { vk::ClearColorValue {
-            0.0F,
-            0.0F,
-            0.0F,
-            1.0F,
-          } };
-          vk::RenderingAttachmentInfo color_attachment_info {
-            .imageView = *scene_msaa_color_.view(),
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .resolveMode = vk::ResolveModeFlagBits::eAverage,
-            .resolveImageView = *scene_resolve_.view(),
-            .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp = vk::AttachmentLoadOp::eClear,
-            .storeOp = vk::AttachmentStoreOp::eStore,
-            .clearValue = clear_color,
+          vk::ClearValue clear_color {
+            vk::ClearColorValue {
+              0.0F,
+              0.0F,
+              0.0F,
+              1.0F,
+            },
           };
-
-          vk::ClearValue clear_depth { vk::ClearDepthStencilValue {
-            .depth = 1.0F,
-            .stencil = 0,
-          } };
-          vk::RenderingAttachmentInfo depth_attachment_info {
-            .imageView = *scene_depth_.view(),
-            .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-            .loadOp = vk::AttachmentLoadOp::eClear,
-            .storeOp = vk::AttachmentStoreOp::eDontCare,
-            .clearValue = clear_depth,
+          vk::ClearValue clear_depth {
+            vk::ClearDepthStencilValue {
+              .depth = 0.0F,
+              .stencil = 0,
+            },
           };
+          vk::RenderingAttachmentInfo color_attachment_info =
+            scene_.color_attachment_info(clear_color);
+          vk::RenderingAttachmentInfo depth_attachment_info =
+            scene_.depth_attachment_info(clear_depth);
 
           vk::RenderingInfo rendering_info {
             .renderArea = { .extent = scene_extent_ },
@@ -1544,8 +1501,7 @@ private:
 
           command_buffer.endRendering();
 
-          image_uses_.transition(command_buffer, scene_resolve_.image(),
-            vkpp::image_use::sampled_fragment, vk::ImageAspectFlagBits::eColor);
+          scene_.record_after_store(image_uses_, command_buffer);
 
           image_uses_.transition(command_buffer,
             swap_chain_.images()[ image_index ],
@@ -1840,9 +1796,7 @@ private:
   bool compute_smoke_ok_ { false };
   bool imgui_renderer_initialized_ { false };
   bool imgui_layout_built_ { false };
-  vkpp::image_resource<> scene_msaa_color_ {};
-  vkpp::image_resource<> scene_depth_ {};
-  vkpp::image_resource<> scene_resolve_ {};
+  vkpp::frame_attachments scene_ {};
   vk::raii::Sampler scene_sampler_ { nullptr };
   vk::Extent2D scene_extent_ {};
   vk::Extent2D scene_desired_extent_ {};

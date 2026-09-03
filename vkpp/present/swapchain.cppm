@@ -67,11 +67,6 @@ find_depth_attachment_format(const vk::raii::PhysicalDevice& physical_device)
     vk::FormatFeatureFlagBits::eDepthStencilAttachment);
 }
 
-export enum class swapchain_scene_attachments : std::uint8_t {
-  msaa_color_and_depth,
-  none,
-};
-
 export class swapchain
 {
 public:
@@ -79,13 +74,9 @@ public:
   create(device_context& device, const vk::raii::SurfaceKHR& surface,
     extent_request window,
     std::invocable<const vk::SurfaceCapabilitiesKHR&, vk::Extent2D> auto&&
-      choose_extent,
-    swapchain_scene_attachments scene_attachments =
-      swapchain_scene_attachments::msaa_color_and_depth)
-    -> std::expected<swapchain, error_t>
+      choose_extent) -> std::expected<swapchain, error_t>
   {
     swapchain output {};
-    output.scene_attachments_ = scene_attachments;
     surface_build_info build {};
 
     return UTILS_VK(
@@ -193,47 +184,6 @@ public:
       .and_then(
         [ & ] -> std::expected<void, error_t>
         {
-          if (scene_attachments !=
-            swapchain_scene_attachments::msaa_color_and_depth)
-          {
-            return {};
-          }
-          return make_image_resource<image_kind::color>(device.allocator(),
-            device.device(),
-            image_runtime_args {
-              .extent = output.extent(),
-              .format = output.format(),
-              .samples = device.msaa_samples(),
-            })
-            .transform([ & ](image_resource<>&& color)
-              { output.color_ = std::move(color); });
-        })
-      .and_then(
-        [ & ] -> std::expected<void, error_t>
-        {
-          if (scene_attachments !=
-            swapchain_scene_attachments::msaa_color_and_depth)
-          {
-            return {};
-          }
-          return find_depth_attachment_format(device.physical_device())
-            .and_then(
-              [ & ](vk::Format format)
-              {
-                return make_image_resource<image_kind::depth>(
-                  device.allocator(), device.device(),
-                  image_runtime_args {
-                    .extent = output.extent(),
-                    .format = format,
-                    .samples = device.msaa_samples(),
-                  });
-              })
-            .transform([ & ](image_resource<>&& depth)
-              { output.depth_ = std::move(depth); });
-        })
-      .and_then(
-        [ & ] -> std::expected<void, error_t>
-        {
           output.render_finished_semaphores_.clear();
           output.render_finished_semaphores_.reserve(output.images_.size());
           for (auto _ : std::views::indices(output.images_.size()))
@@ -267,14 +217,12 @@ public:
     std::invocable<const vk::SurfaceCapabilitiesKHR&, vk::Extent2D> auto&&
       choose_extent) -> std::expected<void, error_t>
   {
-    const swapchain_scene_attachments scene_attachments = scene_attachments_;
     return UTILS_VK(device.device().waitIdle(), ^^vk::raii::Device::waitIdle)
       .and_then(
         [ & ]() -> std::expected<void, error_t>
         {
           release();
-          return create(
-            device, surface, window, choose_extent, scene_attachments)
+          return create(device, surface, window, choose_extent)
             .transform(
               [ & ](swapchain&& swapchain) { *this = std::move(swapchain); });
         });
@@ -307,8 +255,6 @@ public:
     image_views_.clear();
     images_.clear();
     swap_chain_ = nullptr;
-    color_ = {};
-    depth_ = {};
     render_finished_semaphores_.clear();
     extent_ = vk::Extent2D {};
     surface_format_ = vk::SurfaceFormatKHR {};
@@ -337,14 +283,6 @@ public:
   [[nodiscard]] auto
   image_view(std::size_t index) const -> const vk::raii::ImageView&
   { return image_views_[ index ]; }
-
-  [[nodiscard]] auto
-  color() -> image_resource<>&
-  { return color_; }
-
-  [[nodiscard]] auto
-  depth() -> image_resource<>&
-  { return depth_; }
 
   [[nodiscard]] auto
   render_finished(std::size_t image_index) const -> const vk::raii::Semaphore&
@@ -408,11 +346,6 @@ private:
   std::vector<vk::raii::ImageView> image_views_;
   vk::SurfaceFormatKHR surface_format_ {};
   vk::Extent2D extent_ {};
-  image_resource<> color_ {};
-  image_resource<> depth_ {};
-  swapchain_scene_attachments scene_attachments_ {
-    swapchain_scene_attachments::msaa_color_and_depth
-  };
   std::vector<vk::raii::Semaphore> render_finished_semaphores_;
 };
 
