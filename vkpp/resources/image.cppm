@@ -64,6 +64,7 @@ export enum class image_kind : std::uint8_t {
   depth,
   resolve,
   color_sampled,
+  color_transfer,
   sampled_texture,
   shadow_map
 };
@@ -118,6 +119,16 @@ struct image_traits<image_kind::color_sampled>
 };
 
 template<>
+struct image_traits<image_kind::color_transfer>
+{
+  static constexpr image_type_spec spec {
+    .usage = vk::ImageUsageFlagBits::eColorAttachment |
+      vk::ImageUsageFlagBits::eTransferSrc,
+    .aspect = vk::ImageAspectFlagBits::eColor,
+  };
+};
+
+template<>
 struct image_traits<image_kind::sampled_texture>
 {
   static constexpr image_type_spec spec {
@@ -161,6 +172,7 @@ validate(const image_type_spec& spec) -> bool
 
 static_assert(validate(image_traits<image_kind::sampled_texture>::spec));
 static_assert(validate(image_traits<image_kind::color_sampled>::spec));
+static_assert(validate(image_traits<image_kind::color_transfer>::spec));
 
 export template<image_kind Kind>
   requires(validate(image_traits<Kind>::spec))

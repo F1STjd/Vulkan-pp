@@ -50,6 +50,7 @@ target_sources(vkpp
 
       present/swapchain.cppm       # module vkpp.swapchain
       present/frame.cppm           # module vkpp.frame
+      present/frame_attachments.cppm # module vkpp.present.frame_attachments
 
       command/command.cppm         # module vkpp.command
 
