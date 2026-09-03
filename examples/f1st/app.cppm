@@ -98,6 +98,13 @@ static constexpr vkpp::graphics_pipeline_spec k_pipeline_spec {
   .min_sample_shading = 0.2F,
 };
 
+static constexpr vkpp::graphics_pipeline_spec k_blend_pipeline_spec {
+  .depth_write = false,
+  .blend_enable = true,
+  .sample_shading = false,
+  .min_sample_shading = 0.2F,
+};
+
 static constexpr std::array k_set0_bindings {
   vk::DescriptorSetLayoutBinding {
     .binding = 0U,
@@ -156,10 +163,10 @@ private:
       .and_then(std::bind_front(&app::create_timestamp_ring, this))
       .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
       .and_then(std::bind_front(&app::create_bindless_table, this))
-      .and_then(std::bind_front(&app::create_graphics_pipeline, this))
       .and_then(std::bind_front(&app::create_buffers, this))
       .and_then(std::bind_front(&app::create_descriptor_pool, this))
       .and_then(std::bind_front(&app::create_descriptor_sets, this))
+      .and_then(std::bind_front(&app::create_graphics_pipelines, this))
       .and_then(std::bind_front(&app::create_imgui_descriptor_pool, this))
       .and_then(std::bind_front(&app::init_imgui, this))
       .and_then(std::bind_front(&app::create_scene_sampler, this));
@@ -304,7 +311,7 @@ private:
   }
 
   auto
-  create_graphics_pipeline() -> std::expected<void, vkpp::error_t>
+  create_graphics_pipelines() -> std::expected<void, vkpp::error_t>
   {
     constexpr std::array vertex_bindings {
       vkpp::vertex::get_binding_description(),
@@ -316,34 +323,66 @@ private:
       *descriptor_set_layout_,
       *bindless_table_.layout(),
     };
+
+    const vkpp::graphics_pipeline_runtime_args runtime_args {
+      .color_formats = color_formats,
+      .depth_format = swap_chain_.depth().format(),
+      .samples = device_.msaa_samples(),
+      .set_layouts = set_layouts,
+      .vertex_bindings = vertex_bindings,
+      .vertex_attributes = vertex_attributes,
+      .push_constant_size = static_cast<std::uint32_t>(sizeof(draw_push)),
+      .push_constant_stages =
+        vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+    };
+
+    // Again we nest +1 every time dependency is left up behind (here spirv).
+    // Maybe we should create helper about creating more than one
+    // graphics_pipeline, so spirv could be shared as one nesting level. Also
+    // like I wrote earlier: there should be some utils function that calls some
+    // function and the initialises the passed object with resulting value. <- I
+    // do not know if this is good idea. It chould be called `do_and_init`, or
+    // `dai` if it is too long. What about function with a lot of arguments,
+    // this API then could look bad. In perfect world API should look like this:
+    // return load_shader()
+    //   .and_then(create_first_pipeline)  // <- also initialises the data
+    //   member .and_then(create_second_pipeline);
+
     return vkpp::find_depth_attachment_format(device_.physical_device())
       .and_then(
         [ &, this ](
           vk::Format depth_format) -> std::expected<void, vkpp::error_t>
         {
+          const vkpp::graphics_pipeline_runtime_args runtime_args {
+            .color_formats = color_formats,
+            .depth_format = depth_format,
+            .samples = device_.msaa_samples(),
+            .set_layouts = set_layouts,
+            .vertex_bindings = vertex_bindings,
+            .vertex_attributes = vertex_attributes,
+            .push_constant_size = static_cast<std::uint32_t>(sizeof(draw_push)),
+            .push_constant_stages = vk::ShaderStageFlagBits::eVertex |
+              vk::ShaderStageFlagBits::eFragment,
+          };
           return vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv")
             .and_then(
-              [ &, this, depth_format ](const std::vector<char>& spirv)
+              [ &, this ](const std::vector<char>& spirv)
                 -> std::expected<void, vkpp::error_t>
               {
                 return vkpp::make_graphics_pipeline<k_pipeline_spec>(
-                  device_.device(),
-                  vkpp::graphics_pipeline_runtime_args {
-                    .color_formats = color_formats,
-                    .depth_format = depth_format,
-                    .samples = device_.msaa_samples(),
-                    .set_layouts = set_layouts,
-                    .vertex_bindings = vertex_bindings,
-                    .vertex_attributes = vertex_attributes,
-                    .push_constant_size =
-                      static_cast<std::uint32_t>(sizeof(draw_push)),
-                    .push_constant_stages = vk::ShaderStageFlagBits::eVertex |
-                      vk::ShaderStageFlagBits::eFragment,
-                  },
-                  { .spirv = spirv })
-                  .transform(
-                    [ this ](vkpp::graphics_pipeline&& pipeline) -> void
-                    { graphics_pipeline_ = std::move(pipeline); });
+                  device_.device(), runtime_args, { .spirv = spirv })
+                  .and_then(
+                    [ &, this ](vkpp::graphics_pipeline&& opaque)
+                      -> std::expected<void, vkpp::error_t>
+                    {
+                      graphics_pipeline_ = std::move(opaque);
+                      return vkpp::make_graphics_pipeline<
+                        k_blend_pipeline_spec>(
+                        device_.device(), runtime_args, { .spirv = spirv })
+                        .transform(
+                          [ this ](vkpp::graphics_pipeline&& blend) -> void
+                          { blend_pipeline_ = std::move(blend); });
+                    });
               });
         });
   }
@@ -504,6 +543,8 @@ private:
           vkpp::gltf::asset_cpu&& asset) -> std::expected<void, vkpp::error_t>
         {
           draw_list_ = std::move(asset.draw_list);
+          blend_order_.clear();
+          blend_order_.reserve(draw_list_.size());
 
           textures_.clear();
           textures_.reserve(asset.host_images.size());
@@ -831,10 +872,12 @@ private:
     static constexpr auto near_plane { 0.1F };
     static constexpr auto far_plane { 10.0F };
 
+    model_matrix_ = glm::gtc::rotate(
+      glm::mat4 { 1.0F }, time * degrees, glm::vec3 { 0.0F, 1.0F, 0.0F });
+    view_matrix_ = glm::gtc::lookAt(camera_position, target, up);
     uniform_buffer_object ubo {
-      .model = glm::gtc::rotate(
-        glm::mat4 { 1.0F }, time * degrees, glm::vec3 { 0.0F, 1.0F, 0.0F }),
-      .view = glm::gtc::lookAt(camera_position, target, up),
+      .model = model_matrix_,
+      .view = view_matrix_,
       .projection = glm::gtc::perspective(
         fov_vertical, aspect_ratio, near_plane, far_plane),
       .light_direction = glm::normalize(glm::vec3 { 0.4F, 1.0F, 0.3F }),
@@ -1230,6 +1273,41 @@ private:
     return columns;
   }
 
+  void
+  bind_graphics_pass(vk::raii::CommandBuffer& command_buffer,
+    const vkpp::graphics_pipeline& pipeline)
+  {
+    command_buffer.bindPipeline(
+      vk::PipelineBindPoint::eGraphics, *pipeline.pipeline());
+    command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+      *pipeline.layout(), 0U, frames_[ frame_index_ ].descriptor_set, nullptr);
+    command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+      *pipeline.layout(), 1U, bindless_table_.set(), nullptr);
+  }
+
+  void
+  record_draw_item(vk::raii::CommandBuffer& command_buffer,
+    std::uint32_t draw_index, const vkpp::graphics_pipeline& pipeline)
+  {
+    const auto& item = draw_list_[ draw_index ];
+    const auto& draw = draws_[ item.primitive_index ];
+    command_buffer.bindVertexBuffers(
+      0U, geometry_arena_.buffer(), { draw.vertex_slice.offset });
+    command_buffer.bindIndexBuffer(
+      geometry_arena_.buffer(), draw.index_slice.offset, draw.index_type);
+    const draw_push push_constants { .draw_index = draw_index };
+    command_buffer.pushConstants(*pipeline.layout(),
+      vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0U,
+      sizeof(push_constants), &push_constants);
+    command_buffer.setCullMode(draw.double_sided //
+        ? vk::CullModeFlagBits::eNone
+        : vk::CullModeFlagBits::eBack);
+    command_buffer.setFrontFace(is_mirrored(item.world_transform)
+        ? vk::FrontFace::eClockwise
+        : vk::FrontFace::eCounterClockwise);
+    command_buffer.drawIndexed(draw.index_count, 1U, 0U, 0U, 0U);
+  }
+
   auto
   record_command_buffer(std::uint32_t image_index)
     -> std::expected<void, vkpp::error_t>
@@ -1287,8 +1365,6 @@ private:
             .pDepthAttachment = &depth_attachment_info,
           };
           command_buffer.beginRendering(rendering_info);
-          command_buffer.bindPipeline(
-            vk::PipelineBindPoint::eGraphics, *graphics_pipeline_.pipeline());
           command_buffer.setViewport(0U,
             vk::Viewport {
               .x = 0.0F,
@@ -1302,41 +1378,50 @@ private:
             vk::Rect2D {
               .extent = scene_extent_,
             });
-          command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-            *graphics_pipeline_.layout(), 0U,
-            frames_[ frame_index_ ].descriptor_set, nullptr);
-          command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-            *graphics_pipeline_.layout(), 1U, bindless_table_.set(), nullptr);
           skipped_blend_draws_ = 0U;
+          bind_graphics_pass(command_buffer, graphics_pipeline_);
           for (auto draw_index : std::views::indices(draw_list_.size()))
           {
             const auto& item = draw_list_[ draw_index ];
-            const auto& draw = draws_[ item.primitive_index ];
-            if (draw.alpha_mode == vkpp::gltf::alpha_mode::blend)
+            if (draws_[ item.primitive_index ].alpha_mode ==
+              vkpp::gltf::alpha_mode::blend)
             {
-              ++skipped_blend_draws_;
               continue;
             }
-            command_buffer.bindVertexBuffers(
-              0U, geometry_arena_.buffer(), { draw.vertex_slice.offset });
-            command_buffer.bindIndexBuffer(geometry_arena_.buffer(),
-              draw.index_slice.offset, draw.index_type);
-
-            const draw_push push_constants {
-              .draw_index = static_cast<std::uint32_t>(draw_index),
-            };
-            command_buffer.pushConstants(*graphics_pipeline_.layout(),
-              vk::ShaderStageFlagBits::eVertex |
-                vk::ShaderStageFlagBits::eFragment,
-              0U, sizeof(push_constants), &push_constants);
-            command_buffer.setCullMode(draw.double_sided
-                ? vk::CullModeFlagBits::eNone
-                : vk::CullModeFlagBits::eBack);
-            command_buffer.setFrontFace(is_mirrored(item.world_transform)
-                ? vk::FrontFace::eClockwise
-                : vk::FrontFace::eCounterClockwise);
-            command_buffer.drawIndexed(draw.index_count, 1U, 0U, 0U, 0U);
+            record_draw_item(command_buffer,
+              static_cast<std::uint32_t>(draw_index), graphics_pipeline_);
           }
+
+          blend_order_.clear();
+          for (auto draw_index : std::views::indices(draw_list_.size()))
+          {
+            const auto& item = draw_list_[ draw_index ];
+            if (draws_[ item.primitive_index ].alpha_mode !=
+              vkpp::gltf::alpha_mode::blend)
+            {
+              continue;
+            }
+            const glm::vec4 world_origin {
+              item.world_transform[ 12 ],
+              item.world_transform[ 13 ],
+              item.world_transform[ 14 ],
+              1.0F,
+            };
+            const glm::vec4 view_origin =
+              view_matrix_ * model_matrix_ * world_origin;
+            blend_order_.push_back({
+              .draw_index = static_cast<std::uint32_t>(draw_index),
+              .view_depth = view_origin.z,
+            });
+          }
+          std::ranges::sort(blend_order_, {}, &blend_entry::view_depth);
+
+          bind_graphics_pass(command_buffer, blend_pipeline_);
+          for (const auto& entry : blend_order_)
+          {
+            record_draw_item(command_buffer, entry.draw_index, blend_pipeline_);
+          }
+
           command_buffer.endRendering();
 
           image_uses_.transition(command_buffer, scene_resolve_.image(),
@@ -1646,6 +1731,16 @@ private:
   vkpp::image_use_tracker image_uses_ {};
 
   vkpp::graphics_pipeline graphics_pipeline_;
+  vkpp::graphics_pipeline blend_pipeline_;
+
+  struct blend_entry
+  {
+    std::uint32_t draw_index { 0U };
+    float view_depth { 0.0F };
+  };
+  std::vector<blend_entry> blend_order_ {};
+  glm::mat4 model_matrix_ { 1.0F };
+  glm::mat4 view_matrix_ { 1.0F };
 
   vk::raii::DescriptorSetLayout descriptor_set_layout_ { nullptr };
   vkpp::descriptor_pool descriptor_pool_ {};
