@@ -31,7 +31,7 @@ struct material_gpu {
   uint emissive_index;
   uint alpha_mode;
   uint has_texture_mask;
-  uint reserved;
+  float transmission_factor;
 };
 [[vk::binding(1, 0)]]
 StructuredBuffer<material_gpu> materials;
@@ -189,10 +189,14 @@ float4 fragment_main(
     ].Sample(input.texture_coordinates);
   }
 
-  const float opacity = base_color_sample.a * material.base_color_factor.a;
+  float opacity = base_color_sample.a * material.base_color_factor.a;
   if (material.alpha_mode == 1U && opacity < material.alpha_cutoff)
   {
     discard;
+  }
+  if (material.transmission_factor > 0.0)
+  {
+    opacity *= saturate(1.0 - material.transmission_factor);
   }
   const float3 albedo =
     base_color_sample.rgb * material.base_color_factor.rgb * input.color;

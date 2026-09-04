@@ -38,6 +38,7 @@ make_gltf_parser(const gltf::load_runtime_args& runtime_args)
   {
     extensions |= fastgltf::Extensions::KHR_texture_basisu;
   }
+  extensions |= fastgltf::Extensions::KHR_materials_transmission;
   return fastgltf::Parser { extensions };
 }
 
@@ -629,6 +630,11 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
         {
           mapped.emissive_texture =
             map_texture_ref(gltf, material.emissiveTexture->textureIndex);
+        }
+        if (material.transmission)
+        {
+          mapped.transmission_factor =
+            static_cast<float>(material.transmission->transmissionFactor);
         }
         out.materials.push_back(std::move(mapped));
       }

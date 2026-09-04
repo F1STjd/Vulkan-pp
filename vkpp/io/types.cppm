@@ -212,6 +212,7 @@ struct material_cpu
   std::array<float, 4> base_color_factor { 1.0F, 1.0F, 1.0F, 1.0F };
   float metallic_factor { 1.0F };
   float roughness_factor { 1.0F };
+  float transmission_factor { 0.0F };
   std::optional<texture_ref_cpu> base_color_texture {};
   std::optional<texture_ref_cpu> metallic_roughness_texture {};
   std::optional<texture_ref_cpu> normal_texture {};

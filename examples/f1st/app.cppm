@@ -785,6 +785,7 @@ private:
                 .emissive_index = *emissive_index,
                 .alpha_mode = static_cast<std::uint32_t>(material.alpha_mode),
                 .has_texture_mask = texture_mask,
+                .transmission_factor = material.transmission_factor,
             });
           }
           materials_gpu.emplace_back();
@@ -864,7 +865,13 @@ private:
               const auto& material =
                 asset.materials[ *primitive.material_index ];
               mode = material.alpha_mode;
-              two_sided = material.double_sided;
+              if (material.transmission_factor > 0.0F &&
+                mode == vkpp::gltf::alpha_mode::opaque)
+              {
+                mode = vkpp::gltf::alpha_mode::blend;
+              }
+              two_sided =
+                material.double_sided || material.transmission_factor > 0.0F;
             }
             alpha_modes.push_back(mode);
             double_sided.push_back(static_cast<std::uint8_t>(two_sided));
@@ -1863,7 +1870,7 @@ private:
     std::uint32_t emissive_index { 0U };
     std::uint32_t alpha_mode { 0U };
     std::uint32_t has_texture_mask { 0U };
-    std::uint32_t reserved { 0U };
+    float transmission_factor { 0.0F };
   };
   static_assert(sizeof(material_gpu) == 80UZ);
 
