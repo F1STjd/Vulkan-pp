@@ -3,7 +3,7 @@ include(FetchContent)
 
 FetchContent_Declare(imgui_upstream
   GIT_REPOSITORY https://github.com/ocornut/imgui.git
-  GIT_TAG v1.92.0-docking
+  GIT_TAG v1.92.9-docking
   GIT_SHALLOW TRUE
   GIT_SUBMODULES ""
   SOURCE_SUBDIR _do_not_configure_imgui
