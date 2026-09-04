@@ -145,7 +145,7 @@ extract_mesh_cpu(const fastgltf::Asset& gltf)
           [ & ](glm::vec2 uv, std::size_t index)
           {
             streams.texcoords[ index * 2U ] = uv.x;
-            streams.texcoords[ index * 2U + 1U ] = 1.0F - uv.y;
+            streams.texcoords[ index * 2U + 1U ] = uv.y;
           });
       }
 
