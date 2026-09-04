@@ -334,18 +334,6 @@ private:
       *bindless_table_.layout(),
     };
 
-    const vkpp::graphics_pipeline_runtime_args runtime_args {
-      .color_formats = color_formats,
-      .depth_format = scene_.depth().format(),
-      .samples = device_.msaa_samples(),
-      .set_layouts = set_layouts,
-      .vertex_bindings = vertex_bindings,
-      .vertex_attributes = vertex_attributes,
-      .push_constant_size = static_cast<std::uint32_t>(sizeof(draw_push)),
-      .push_constant_stages =
-        vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
-    };
-
     // Again we nest +1 every time dependency is left up behind (here spirv).
     // Maybe we should create helper about creating more than one
     // graphics_pipeline, so spirv could be shared as one nesting level. Also
@@ -1132,9 +1120,12 @@ private:
       .DescriptorPool = static_cast<VkDescriptorPool>(*imgui_descriptor_pool_),
       .MinImageCount = image_count,
       .ImageCount = image_count,
-      .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
+      .PipelineInfoMain = {
+        .MSAASamples = VK_SAMPLE_COUNT_1_BIT,
+        .PipelineRenderingCreateInfo = pipeline_rendering_info,
+      },
       .UseDynamicRendering = true,
-      .PipelineRenderingCreateInfo = pipeline_rendering_info,
+      .MinAllocationSize = 1024U * 1024U,
     };
 
     if (!ImGui_ImplVulkan_Init(&init_info))
@@ -1203,10 +1194,9 @@ private:
         {
           scene_ = std::move(scene);
           scene_extent_ = extent;
-          scene_texture_id_ =
-            ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(*scene_sampler_),
-              static_cast<VkImageView>(*scene_.resolve().view()),
-              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+          scene_texture_id_ = ImGui_ImplVulkan_AddTexture(
+            static_cast<VkImageView>(*scene_.resolve().view()),
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
           if (scene_texture_id_ == VK_NULL_HANDLE)
           {
             return std::unexpected {
