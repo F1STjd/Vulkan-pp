@@ -1007,8 +1007,8 @@ private:
       .view = view_matrix_,
       .projection = glm::gtc::perspective(
         fov_vertical, aspect_ratio, near_plane, far_plane),
-      .light_direction = glm::normalize(glm::vec3 { 0.4F, 1.0F, 0.3F }),
-      .light_color = glm::vec3 { 1.0F, 0.98F, 0.92F },
+      .light_direction = glm::normalize(glm::vec3 { 0.35F, 0.85F, 0.40F }),
+      .light_color = glm::vec3 { 4.0F, 3.85F, 3.6F },
       .camera_position = camera_position,
       .exposure = 1.0F,
     };

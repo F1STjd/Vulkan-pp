@@ -265,7 +265,10 @@ float4 fragment_main(
     max(4.0 * normal_view_cosine *  normal_light_cosine, 1e-4);
   const float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / pi;
   const float3 direct = (diffuse + specular) * ubo.light_color * normal_light_cosine;
-  const float3 ambient = 0.03 * albedo * occlusion;
+  const float3 sky = float3(0.22, 0.25, 0.30);
+  const float3 ground = float3(0.04, 0.035, 0.03);
+  const float hemi = normal.y * 0.5 + 0.5;
+  const float3 ambient = albedo * occlusion * lerp(ground, sky, hemi);
   const float3 color = direct + ambient + emissive;
   const float3 display_linear = tonemap_reinhard_luminance(color * ubo.exposure);
   return float4(display_linear, opacity);
