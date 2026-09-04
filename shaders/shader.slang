@@ -90,7 +90,7 @@ vertex_shader_output vertex_main(vertex_shader_input input)
 
   const float3 node_normal =
     transform_normal_columns(draw.normal_matrix_columns, input.normal);
-  output.world_normal = normalize(mul((float3x3)ubo.model, input.normal));
+  output.world_normal = normalize(mul((float3x3)ubo.model, node_normal));
   output.texture_coordinates = input.texture_coordinates;
   output.color = input.color;
   output.material_index = draw.material_index;
@@ -228,7 +228,7 @@ float4 fragment_main(
   if((material.has_texture_mask & 16U) != 0U)
   {
     emissive *= textures[
-      NonUniformResourceIndex(material.occlusion_index)
+      NonUniformResourceIndex(material.emissive_index)
     ].Sample(input.texture_coordinates).rgb;
   }
 
@@ -238,7 +238,7 @@ float4 fragment_main(
   if((material.has_texture_mask & 4U) != 0U)
   {
     const float3 encoded_normal = textures[
-      NonUniformResourceIndex(material.occlusion_index)
+      NonUniformResourceIndex(material.normal_index)
     ].Sample(input.texture_coordinates).rgb;
     normal = apply_normal_map(
       normal, input.world_position, input.texture_coordinates, encoded_normal,

@@ -1432,7 +1432,7 @@ private:
           };
           vk::ClearValue clear_depth {
             vk::ClearDepthStencilValue {
-              .depth = 0.0F,
+              .depth = 1.0F,
               .stencil = 0,
             },
           };
