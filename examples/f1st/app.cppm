@@ -778,14 +778,14 @@ private:
           }
           materials_gpu.emplace_back();
 
-          auto uploaded_materials = vkpp::upload_device_local_buffer({
-            .device = device_,
-            .pool = upload_pool_,
-            .transfer_pool = transfer_upload_pool_,
-            .bytes =
-              std::as_bytes(std::span<const material_gpu> { materials_gpu }),
-            .gpu_usage = vk::BufferUsageFlagBits::eStorageBuffer,
-          });
+          auto uploaded_materials =
+            vkpp::upload_device_local_buffer<vkpp::buffer_kind::storage>({
+              .device = device_,
+              .pool = upload_pool_,
+              .transfer_pool = transfer_upload_pool_,
+              .bytes =
+                std::as_bytes(std::span<const material_gpu> { materials_gpu }),
+            });
           if (!uploaded_materials)
           {
             return std::unexpected {
