@@ -68,6 +68,15 @@ export struct buffer_upload_create_info
   vk::BufferUsageFlags gpu_usage {};
 };
 
+export template<buffer_kind Kind>
+struct buffer_upload_create_info_for
+{
+  device_context& device;
+  command_pool& pool;
+  std::optional<command_pool&> transfer_pool {};
+  std::span<const std::byte> bytes {};
+};
+
 [[nodiscard]] auto
 submit_single_queue_buffer_copy(const buffer_upload_create_info& create_info,
   vk::Buffer source_buffer, vk::Buffer destination_buffer,
@@ -250,6 +259,22 @@ upload_device_local_buffer(const buffer_upload_create_info& create_info)
     .and_then([](pending_upload<buffer_resource<>>&& pending)
                 -> std::expected<buffer_resource<>, error_t>
       { return std::move(pending).join(); });
+}
+
+export template<buffer_kind Kind>
+auto
+upload_device_local_buffer(
+  const buffer_upload_create_info_for<Kind>& create_info)
+  -> std::expected<buffer_resource<>, error_t>
+{
+  constexpr auto usage = buffer_traits<Kind>::spec.usage;
+  return upload_device_local_buffer(buffer_upload_create_info {
+    .device = create_info.device,
+    .pool = create_info.pool,
+    .transfer_pool = create_info.transfer_pool,
+    .bytes = create_info.bytes,
+    .gpu_usage = usage,
+  });
 }
 
 } // namespace vkpp
