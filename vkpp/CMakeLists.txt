@@ -42,6 +42,7 @@ target_sources(vkpp
       resources/image.cppm    # module vkpp.image
       resources/buffer.cppm   # module vkpp.buffer
       resources/buffer_upload.cppm  # module vkpp.buffer.upload
+      resources/buffer_download.cppm  # module vkpp.buffer.download
       resources/buffer_arena.cppm # module vkpp.buffer.arena
       resources/buffer_arena_upload.cppm # module vkpp.buffer.arena.upload
 
