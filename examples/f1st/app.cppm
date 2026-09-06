@@ -163,10 +163,9 @@ private:
       .and_then(std::bind_front(&app::create_frames, this))
       .and_then(std::bind_front(&app::create_frame_timeline, this))
       .and_then(std::bind_front(&app::create_timestamp_ring, this))
-      .and_then(std::bind_front(&app::create_descriptor_set_layout, this))
       .and_then(std::bind_front(&app::create_bindless_table, this))
       .and_then(std::bind_front(&app::create_buffers, this))
-      .and_then(std::bind_front(&app::create_descriptor_pool, this))
+      .and_then(std::bind_front(&app::create_set0_arena, this))
       .and_then(std::bind_front(&app::create_descriptor_sets, this))
       .and_then(std::bind_front(&app::create_graphics_pipelines, this))
       .and_then(std::bind_front(&app::create_imgui_descriptor_pool, this))
@@ -304,14 +303,6 @@ private:
   }
 
   auto
-  create_descriptor_set_layout() -> std::expected<void, vkpp::error_t>
-  {
-    return vkpp::make_descriptor_set_layout(device_.device(), k_set0_bindings)
-      .transform([ this ](vk::raii::DescriptorSetLayout&& layout) -> void
-        { descriptor_set_layout_ = std::move(layout); });
-  }
-
-  auto
   create_bindless_table() -> std::expected<void, vkpp::error_t>
   {
     return vkpp::bindless_table::create(device_.device(),
@@ -330,7 +321,7 @@ private:
       vkpp::vertex::get_attribute_descriptions();
     const std::array color_formats { swap_chain_.format() };
     const std::array set_layouts {
-      *descriptor_set_layout_,
+      *set0_arena_.layout(),
       *bindless_table_.layout(),
     };
 
@@ -1005,71 +996,38 @@ private:
   }
 
   auto
-  create_descriptor_pool() -> std::expected<void, vkpp::error_t>
+  create_set0_arena() -> std::expected<void, vkpp::error_t>
   {
-    auto sizes = vkpp::pool_sizes_for(k_set0_bindings, max_frames_in_flight);
-    return vkpp::descriptor_pool::create(
-      device_.device(), max_frames_in_flight, sizes)
-      .transform([ this ](vkpp::descriptor_pool&& pool) -> void
-        { descriptor_pool_ = std::move(pool); });
+    return vkpp::descriptor_set_arena::create(
+      {
+        .device = device_.device(),
+        .bindings = k_set0_bindings,
+        .set_count = max_frames_in_flight,
+      })
+      .transform([ this ](vkpp::descriptor_set_arena&& arena) -> void
+        { set0_arena_ = std::move(arena); });
   }
 
   auto
   create_descriptor_sets() -> std::expected<void, vkpp::error_t>
   {
-    return descriptor_pool_
-      .allocate(device_.device(), descriptor_set_layout_, max_frames_in_flight)
-      .transform(
-        [ this ](std::vector<vk::DescriptorSet>&& sets) -> void
-        {
-          for (auto index : std::views::indices(max_frames_in_flight))
-          {
-            frames_[ index ].descriptor_set = sets[ index ];
-            const vk::DescriptorBufferInfo uniform_buffer_info {
-              .buffer = frames_[ index ].uniform_buffer.buffer(),
-              .offset = 0U,
-              .range = sizeof(uniform_buffer_object),
-            };
-            const vk::DescriptorBufferInfo material_buffer_info {
-              .buffer = material_buffer_.buffer(),
-              .offset = 0U,
-              .range = material_buffer_.size(),
-            };
-            const vk::DescriptorBufferInfo draw_buffer_info {
-              .buffer = draw_buffer_.buffer(),
-              .offset = 0U,
-              .range = draw_buffer_.size(),
-            };
-            const std::array writes {
-              vk::WriteDescriptorSet {
-                .dstSet = frames_[ index ].descriptor_set,
-                .dstBinding = 0U,
-                .dstArrayElement = 0U,
-                .descriptorCount = 1U,
-                .descriptorType = vk::DescriptorType::eUniformBuffer,
-                .pBufferInfo = &uniform_buffer_info,
-              },
-              vk::WriteDescriptorSet {
-                .dstSet = frames_[ index ].descriptor_set,
-                .dstBinding = 1U,
-                .dstArrayElement = 0U,
-                .descriptorCount = 1U,
-                .descriptorType = vk::DescriptorType::eStorageBuffer,
-                .pBufferInfo = &material_buffer_info,
-              },
-              vk::WriteDescriptorSet {
-                .dstSet = frames_[ index ].descriptor_set,
-                .dstBinding = 3U,
-                .dstArrayElement = 0U,
-                .descriptorCount = 1U,
-                .descriptorType = vk::DescriptorType::eStorageBuffer,
-                .pBufferInfo = &draw_buffer_info,
-              },
-            };
-            vkpp::update_descriptor_sets(
-              device_.device(), std::span { writes });
-          }
-        });
+    for (auto index : std::views::indices(max_frames_in_flight))
+    {
+      frames_[ index ].descriptor_set =
+        set0_arena_.set(static_cast<std::uint32_t>(index));
+      const vk::DescriptorSet set = frames_[ index ].descriptor_set;
+
+      vkpp::write_uniform_buffer(device_.device(), set, 0U,
+        frames_[ index ].uniform_buffer.buffer(),
+        sizeof(uniform_buffer_object));
+
+      vkpp::write_storage_buffer(device_.device(), set, 1U,
+        material_buffer_.buffer(), material_buffer_.size());
+
+      vkpp::write_storage_buffer(
+        device_.device(), set, 3U, draw_buffer_.buffer(), draw_buffer_.size());
+    }
+    return {};
   }
 
   auto
@@ -1813,8 +1771,7 @@ private:
   glm::mat4 model_matrix_ { 1.0F };
   glm::mat4 view_matrix_ { 1.0F };
 
-  vk::raii::DescriptorSetLayout descriptor_set_layout_ { nullptr };
-  vkpp::descriptor_pool descriptor_pool_ {};
+  vkpp::descriptor_set_arena set0_arena_ {};
 
   vkpp::command_pool command_pool_ {};
   vkpp::command_pool upload_pool_ {};
