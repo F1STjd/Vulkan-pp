@@ -37,6 +37,7 @@ import vkpp.instance;
 import vkpp.device;
 import vkpp.swapchain;
 import vkpp.command;
+import vkpp.command.record;
 import vkpp.frame;
 import vkpp.frame_attachments;
 import vkpp.texture;
@@ -1324,12 +1325,12 @@ private:
   bind_graphics_pass(vk::raii::CommandBuffer& command_buffer,
     const vkpp::graphics_pipeline& pipeline)
   {
-    command_buffer.bindPipeline(
-      vk::PipelineBindPoint::eGraphics, *pipeline.pipeline());
-    command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-      *pipeline.layout(), 0U, frames_[ frame_index_ ].descriptor_set, nullptr);
-    command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-      *pipeline.layout(), 1U, bindless_table_.set(), nullptr);
+    const std::array sets {
+      frames_[ frame_index_ ].descriptor_set,
+      bindless_table_.set(),
+    };
+    vkpp::bind_graphics(
+      command_buffer, *pipeline.pipeline(), *pipeline.layout(), sets);
   }
 
   void

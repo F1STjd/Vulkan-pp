@@ -54,6 +54,7 @@ target_sources(vkpp
       present/frame_attachments.cppm # module vkpp.present.frame_attachments
 
       command/command.cppm         # module vkpp.command
+      command/record.cppm         # module vkpp.command.record
 
       resources/texture.cppm  # module vkpp.texture
       resources/texture_upload.cppm  # module vkpp.texture.upload
