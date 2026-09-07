@@ -124,9 +124,12 @@ public:
         [ & ](std::span<const vk::raii::PhysicalDevice> devices)
           -> std::expected<device_context, error_t>
         {
+          const auto surface_ref = requirements.require_present
+            ? std::optional { std::cref(instance.surface()) }
+            : std::nullopt;
           const auto suitable_device_it = std::ranges::find_if(devices,
             [ & ](const vk::raii::PhysicalDevice& device)
-            { return is_suitable(device, instance.surface(), requirements); });
+            { return is_suitable(device, surface_ref, requirements); });
           if (suitable_device_it == devices.end())
           {
             return std::unexpected {
@@ -432,7 +435,7 @@ private:
 
   [[nodiscard]] static auto
   is_suitable(const vk::raii::PhysicalDevice& physical_device,
-    const vk::raii::SurfaceKHR& surface,
+    std::optional<std::reference_wrapper<const vk::raii::SurfaceKHR>> surface,
     const device_requirements& requirements) -> bool
   {
     if (physical_device.getProperties().apiVersion <
@@ -449,12 +452,12 @@ private:
     {
       return false;
     }
-
     if (requirements.require_present)
     {
-      return find_graphics_present_qf(physical_device, surface).has_value();
+      if (!surface.has_value()) { return false; }
+      return find_graphics_present_qf(physical_device, surface->get())
+        .has_value();
     }
-
     return find_graphics_qf(physical_device).has_value();
   }
 

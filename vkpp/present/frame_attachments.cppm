@@ -159,14 +159,29 @@ public:
   [[nodiscard]] auto
   color_attachment_info(vk::ClearValue clear_value,
     std::optional<vk::ImageView> presentable_view = {}) const
-    -> vk::RenderingAttachmentInfo
+    -> std::expected<vk::RenderingAttachmentInfo, error_t>
   {
     const bool msaa = create_info_.samples != vk::SampleCountFlagBits::e1;
-    const vk::ImageView one_x = create_info_.sink == color_sink::presentable
-      ? presentable_view.value_or(vk::ImageView {})
-      : *resolve_.view();
+    vk::ImageView one_x = {};
+    if (create_info_.sink == color_sink::presentable)
+    {
+      if (!presentable_view.has_value() || !*presentable_view)
+      {
+        return std::unexpected {
+          app_error {
+            .kind = app_error_kind::invalid_argument,
+            .detail = "color_sink::presentable requires a non-null swaphcain"sv,
+          },
+        };
+      }
+      one_x = *presentable_view;
+    }
+    else
+    {
+      one_x = *resolve_.view();
+    }
     const vk::ImageView color_view = msaa ? *color_.view() : one_x;
-    return {
+    return vk::RenderingAttachmentInfo {
       .imageView = color_view,
       .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
       .resolveMode = msaa ? vk::ResolveModeFlagBits::eAverage

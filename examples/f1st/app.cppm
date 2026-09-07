@@ -1349,7 +1349,9 @@ private:
               .stencil = 0,
             },
           };
-          vk::RenderingAttachmentInfo color_attachment_info =
+          // I do not check if this has value, because in non-headless option it
+          // has to work
+          auto color_attachment_info =
             scene_.color_attachment_info(clear_color);
           vk::RenderingAttachmentInfo depth_attachment_info =
             scene_.depth_attachment_info(clear_depth);
@@ -1358,7 +1360,7 @@ private:
             .renderArea = { .extent = scene_extent_ },
             .layerCount = 1U,
             .colorAttachmentCount = 1U,
-            .pColorAttachments = &color_attachment_info,
+            .pColorAttachments = &*color_attachment_info,
             .pDepthAttachment = &depth_attachment_info,
           };
           command_buffer.beginRendering(rendering_info);
