@@ -714,12 +714,13 @@ private:
               .material_index = material_index,
             });
           }
-          auto uploaded_draws = vkpp::upload_device_local_buffer<vkpp::buffer_kind::storage>({
-            .device = device_,
-            .pool = upload_pool_,
-            .transfer_pool = transfer_upload_pool_,
-            .bytes = std::as_bytes(std::span<const draw_gpu> { draws_gpu })
-          });
+          auto uploaded_draws =
+            vkpp::upload_device_local_buffer<vkpp::buffer_kind::storage>(
+              { .device = device_,
+                .pool = upload_pool_,
+                .transfer_pool = transfer_upload_pool_,
+                .bytes =
+                  std::as_bytes(std::span<const draw_gpu> { draws_gpu }) });
           if (!uploaded_draws)
           {
             return std::unexpected { std::move(uploaded_draws).error() };
@@ -835,7 +836,9 @@ private:
       {
         .device = device_,
         .pool = command_pool_,
-        .min_ubo_alignment = device_.physical_device().getProperties().limits.minUniformBufferOffsetAlignment,
+        .min_ubo_alignment = device_.physical_device()
+          .getProperties()
+          .limits.minUniformBufferOffsetAlignment,
       })
       .transform(
         [ this ](std::array<vkpp::frame, max_frames_in_flight>&& frames) -> void
@@ -1614,19 +1617,11 @@ private:
 
     if (frame_counter_ >= max_frames_in_flight)
     {
+      if (auto copied = histogram_readbacks_[ frame_index_ ].copy_mapped_into(
+            std::span<std::uint32_t> { histogram_cpu_ });
+        !copied)
       {
-        void* const mapped = histogram_readbacks_[ frame_index_ ].mapped();
-        if (mapped == nullptr)
-        {
-          return std::unexpected {
-            vkpp::app_error {
-              .kind = vkpp::app_error_kind::mapping_failed,
-              .detail = "histogram readback not mapped"sv,
-            },
-          };
-        }
-        std::memcpy(histogram_cpu_.data(), mapped,
-          k_histogram_bins * sizeof(std::uint32_t));
+        return std::unexpected { std::move(copied).error() };
       }
 
       if (auto ns = timestamps_.read_and_reset_frame_ns(frame_index_); ns)

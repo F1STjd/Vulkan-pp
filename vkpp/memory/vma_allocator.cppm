@@ -10,6 +10,7 @@ import vkpp.memory;
 
 namespace vkpp
 {
+using namespace std::string_view_literals;
 
 [[nodiscard]]
 constexpr auto
@@ -26,6 +27,7 @@ export class gpu_image
 {
 public:
   gpu_image() = default;
+
   gpu_image(VmaAllocator allocator, vk::Image image, VmaAllocation allocation)
   : allocator_ { allocator }, image_ { image }, allocation_ { allocation }
   {}
@@ -83,6 +85,7 @@ export class gpu_buffer
 {
 public:
   gpu_buffer() = default;
+
   gpu_buffer(VmaAllocator allocator, vk::Buffer buffer,
     VmaAllocation allocation, void* mapped)
   : allocator_ { allocator }, buffer_ { buffer }, allocation_ { allocation },
@@ -129,6 +132,28 @@ public:
   auto
   mapped() const -> void*
   { return mapped_p; }
+
+  [[nodiscard]] auto
+  invalidate_mapped(vk::DeviceSize offset, vk::DeviceSize size) const
+    -> std::expected<void, error_t>
+  {
+    if (allocation_ == nullptr)
+    {
+      return std::unexpected {
+        app_error {
+          .kind = app_error_kind::invalid_argument,
+          .detail = "invalidate_mapped: no allocation"sv,
+        },
+      };
+    }
+    if (const auto result =
+          vmaInvalidateAllocation(allocator_, allocation_, offset, size);
+      result != VK_SUCCESS)
+    {
+      return std::unexpected { vma_error("vmaInvalidateAllocation", result) };
+    }
+    return {};
+  }
 
 private:
   auto
@@ -266,8 +291,7 @@ private:
   {
     switch (intent)
     {
-    case memory_intent::gpu_only:
-      return { .usage = VMA_MEMORY_USAGE_AUTO };
+    case memory_intent::gpu_only: return { .usage = VMA_MEMORY_USAGE_AUTO };
     case memory_intent::staging:
       return {
         .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |

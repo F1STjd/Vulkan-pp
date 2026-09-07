@@ -149,6 +149,67 @@ public:
   mapped() const -> void*
   { return handle_.mapped(); }
 
+  template<typename T>
+    requires host_visible_buffer_kind<Kind>
+  [[nodiscard]] auto
+  mapped_span() const -> std::expected<std::span<T>, error_t>
+  {
+    static_assert(std::is_trivially_copyable_v<T>);
+    auto* const ptr = mapped();
+    if (ptr == nullptr)
+    {
+      return std::unexpected {
+        app_error {
+          .kind = app_error_kind::mapping_failed,
+          .detail = "mapped_span: map returned nullptr"sv,
+        },
+      };
+    }
+    if (size_ % sizeof(T) != 0UZ)
+    {
+      return std::unexpected {
+        app_error {
+          .kind = app_error_kind::invalid_argument,
+          .detail = "mapped_span: buffer size not a multiple of sizeof(T)"sv,
+        },
+      };
+    }
+    if (auto inv = handle_.invalidate_mapped(0UZ, size_); !inv)
+    {
+      return std::unexpected { std::move(inv).error() };
+    }
+    return std::span<T> {
+      static_cast<T*>(ptr),
+      static_cast<std::size_t>(size_ / sizeof(T)),
+    };
+  }
+
+  template<typename T>
+    requires host_visible_buffer_kind<Kind>
+  [[nodiscard]] auto
+  copy_mapped_into(std::span<T> destination) const
+    -> std::expected<void, error_t>
+  {
+    static_assert(std::is_trivially_copyable_v<T>);
+    return mapped_span<T>().and_then(
+      [ destination ](std::span<T> source) -> std::expected<void, error_t>
+      {
+        if (destination.size() > source.size())
+        {
+          return std::unexpected {
+            app_error {
+              .kind = app_error_kind::invalid_argument,
+              .detail =
+                "copy_mapped_into: destination larger than mapped buffer"sv,
+            },
+          };
+        }
+        std::ranges::copy_n(
+          source.data(), destination.size(), destination.data());
+        return {};
+      });
+  }
+
   explicit buffer_resource(
     typename Alloc::buffer_handle&& handle, vk::DeviceSize size)
   : handle_ { std::move(handle) }, size_ { size }
@@ -236,6 +297,17 @@ public:
   [[nodiscard]] auto
   resource() && -> buffer_resource<Kind, Alloc>&&
   { return std::move(resource_); }
+
+  template<typename T>
+  [[nodiscard]] auto
+  mapped_span() const -> std::expected<std::span<T>, error_t>
+  { return resource_.template mapped_span<T>(); }
+
+  template<typename T>
+  [[nodiscard]] auto
+  copy_mapped_into(std::span<T> destination) const
+    -> std::expected<void, error_t>
+  { return resource_.copy_mapped_into(destination); }
 
 private:
   buffer_resource<Kind, Alloc> resource_ {};

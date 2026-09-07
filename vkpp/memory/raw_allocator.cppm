@@ -38,6 +38,11 @@ export struct raw_buffer_handle
   auto
   mapped() const -> void*
   { return mapped_p; }
+
+  [[nodiscard]] auto
+  invalidate_mapped(vk::DeviceSize, vk::DeviceSize) const
+    -> std::expected<void, error_t>
+  { return {}; }
 };
 
 export class raw_policy
