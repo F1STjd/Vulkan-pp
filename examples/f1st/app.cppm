@@ -133,6 +133,22 @@ static constexpr std::array k_set0_bindings {
   },
 };
 
+static constexpr std::uint32_t k_histogram_bins { 256U };
+static constexpr std::array k_histogram_bindings {
+  vk::DescriptorSetLayoutBinding {
+    .binding = 2U,
+    .descriptorType = vk::DescriptorType::eStorageBuffer,
+    .descriptorCount = 1U,
+    .stageFlags = vk::ShaderStageFlagBits::eCompute,
+  },
+  vk::DescriptorSetLayoutBinding {
+    .binding = 4U,
+    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+    .descriptorCount = 1U,
+    .stageFlags = vk::ShaderStageFlagBits::eCompute,
+  },
+};
+
 export class app
 {
 public:
@@ -159,7 +175,6 @@ private:
       .and_then(std::bind_front(&app::create_swap_chain, this))
       .and_then(std::bind_front(&app::create_command_pool, this))
       .and_then(std::bind_front(&app::create_upload_pool, this))
-      .and_then(std::bind_front(&app::run_compute_smoke, this))
       .and_then(std::bind_front(&app::create_transfer_upload_pool, this))
       .and_then(std::bind_front(&app::create_frames, this))
       .and_then(std::bind_front(&app::create_frame_timeline, this))
@@ -171,7 +186,8 @@ private:
       .and_then(std::bind_front(&app::create_graphics_pipelines, this))
       .and_then(std::bind_front(&app::create_imgui_descriptor_pool, this))
       .and_then(std::bind_front(&app::init_imgui, this))
-      .and_then(std::bind_front(&app::create_scene_sampler, this));
+      .and_then(std::bind_front(&app::create_scene_sampler, this))
+      .and_then(std::bind_front(&app::create_histogram, this));
   }
 
   auto
@@ -394,122 +410,6 @@ private:
       device_.graphics_qf_index(), vk::CommandPoolCreateFlagBits::eTransient)
       .transform([ this ](vkpp::command_pool&& pool) -> void
         { upload_pool_ = std::move(pool); });
-  }
-
-  auto
-  run_compute_smoke() -> std::expected<void, vkpp::error_t>
-  {
-    constexpr vk::DeviceSize byte_size { 64UZ * sizeof(std::uint32_t) };
-    constexpr std::array compute_bindings {
-      vk::DescriptorSetLayoutBinding {
-        .binding = 2U,
-        .descriptorType = vk::DescriptorType::eStorageBuffer,
-        .descriptorCount = 1U,
-        .stageFlags = vk::ShaderStageFlagBits::eCompute,
-      },
-    };
-
-    auto ssbo = vkpp::make_buffer_resource(device_.allocator(), byte_size,
-      vk::BufferUsageFlagBits::eStorageBuffer |
-        vk::BufferUsageFlagBits::eTransferSrc,
-      vkpp::memory_intent::gpu_only);
-    if (!ssbo) { return std::unexpected { std::move(ssbo).error() }; }
-
-    auto staging = vkpp::make_buffer_resource(device_.allocator(), byte_size,
-      vk::BufferUsageFlagBits::eTransferDst, vkpp::memory_intent::gpu_to_cpu);
-    if (!staging) { return std::unexpected { std::move(staging).error() }; }
-    if (staging->mapped() == nullptr)
-    {
-      return std::unexpected {
-        vkpp::app_error {
-          .kind = vkpp::app_error_kind::mapping_failed,
-          .detail = "compute smoke staging buffer not mapped"sv,
-        },
-      };
-    }
-
-    auto set_layout =
-      vkpp::make_descriptor_set_layout(device_.device(), compute_bindings);
-    if (!set_layout)
-    {
-      return std::unexpected { std::move(set_layout).error() };
-    }
-
-    auto pool_sizes = vkpp::pool_sizes_for(compute_bindings, 1U);
-    auto pool = vkpp::descriptor_pool::create(device_.device(), 1U, pool_sizes);
-    if (!pool) { return std::unexpected { std::move(pool).error() }; }
-
-    auto sets = pool->allocate(device_.device(), *set_layout, 1U);
-    if (!sets) { return std::unexpected { std::move(sets).error() }; }
-
-    const vk::DescriptorBufferInfo buffer_info {
-      .buffer = ssbo->buffer(),
-      .offset = 0UZ,
-      .range = byte_size,
-    };
-    const vk::WriteDescriptorSet write {
-      .dstSet = (*sets)[ 0 ],
-      .dstBinding = 2U,
-      .dstArrayElement = 0U,
-      .descriptorCount = 1U,
-      .descriptorType = vk::DescriptorType::eStorageBuffer,
-      .pBufferInfo = &buffer_info,
-    };
-    vkpp::update_descriptor_sets(device_.device(), std::span { &write, 1UZ });
-
-    auto spirv = vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
-    if (!spirv) { return std::unexpected { std::move(spirv).error() }; }
-
-    auto pipeline = vkpp::make_compute_pipeline(device_.device(),
-      vkpp::compute_pipeline_runtime_args {
-        .set_layout = *set_layout,
-      },
-      vkpp::compute_shader {
-        .spirv = *spirv,
-      });
-
-    vkpp::single_time_submit submit {
-      upload_pool_,
-      device_.device(),
-      device_.graphics_queue(),
-    };
-    if (auto begun = submit.begin(); !begun) { return begun; }
-    auto& command_buffer = submit.command_buffer();
-    command_buffer.bindPipeline(
-      vk::PipelineBindPoint::eCompute, *pipeline->pipeline());
-    command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
-      *pipeline->layout(), 0U, (*sets)[ 0 ], nullptr);
-    command_buffer.dispatch(1U, 1U, 1U);
-    const vkpp::buffer_use_transition after_compute {
-      .buffer = ssbo->buffer(),
-      .from = vkpp::buffer_use::storage_compute_write,
-      .to = vkpp::buffer_use::transfer_src,
-    };
-    vkpp::record_buffer_use_transitions(
-      command_buffer, std::span { &after_compute, 1UZ });
-    command_buffer.copyBuffer(
-      ssbo->buffer(), staging->buffer(), vk::BufferCopy { .size = byte_size });
-    auto submitted = submit.end_and_submit(vkpp::upload::deferred);
-    if (!submitted) { return std::unexpected { submitted.error() }; }
-    if (auto waited = submitted->wait(); !waited)
-    {
-      return std::unexpected { waited.error() };
-    }
-    const auto* words = static_cast<const std::uint32_t*>(staging->mapped());
-    for (std::uint32_t i = 0U; i < 64U; ++i)
-    {
-      if (words[ i ] != i)
-      {
-        return std::unexpected {
-          vkpp::app_error {
-            .kind = vkpp::app_error_kind::invalid_argument,
-            .detail = "compute smoke SSBO contents mismatch"sv,
-          },
-        };
-      }
-    }
-    compute_smoke_ok_ = true;
-    return {};
   }
 
   auto
@@ -1131,6 +1031,55 @@ private:
   }
 
   auto
+  create_histogram() -> std::expected<void, vkpp::error_t>
+  {
+    auto ssbo = vkpp::make_storage_buffer(
+      device_.allocator(), k_histogram_bins * sizeof(std::uint32_t));
+    if (!ssbo) { return std::unexpected { std::move(ssbo).error() }; }
+    histogram_ssbo_ = std::move(*ssbo);
+
+    for (auto index : std::views::indices(max_frames_in_flight))
+    {
+      auto readback = vkpp::make_readback_buffer(
+        device_.allocator(), k_histogram_bins * sizeof(std::uint32_t));
+      if (!readback) { return std::unexpected { std::move(readback).error() }; }
+      histogram_readbacks_[ index ] = std::move(*readback);
+    }
+
+    auto arena = vkpp::descriptor_set_arena::create({
+      .device = device_.device(),
+      .bindings = k_histogram_bindings,
+      .set_count = 1U,
+    });
+    if (!arena) { return std::unexpected { std::move(arena).error() }; }
+    histogram_arena_ = std::move(*arena);
+
+    vkpp::write_storage_buffer(device_.device(), histogram_arena_.set(0), 2U,
+      histogram_ssbo_.buffer(), histogram_ssbo_.size());
+
+    struct histogram_push_cpu
+    {
+      std::uint32_t extent_x;
+      std::uint32_t extent_y;
+      std::uint32_t bin_count;
+    };
+    auto spirv = vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
+    if (!spirv) { return std::unexpected { std::move(spirv).error() }; }
+
+    return vkpp::make_compute_pipeline(device_.device(),
+      {
+        .set_layout = histogram_arena_.layout(),
+        .push_constant_size = sizeof(histogram_push_cpu),
+      },
+      {
+        .spirv = *spirv,
+        .entry = "histogram_main",
+      })
+      .transform([ this ](vkpp::compute_pipeline&& pipeline) -> void
+        { histogram_pipeline_ = std::move(pipeline); });
+  }
+
+  auto
   rebuild_scene_targets(vk::Extent2D extent)
     -> std::expected<void, vkpp::error_t>
   {
@@ -1165,6 +1114,9 @@ private:
               },
             };
           }
+          vkpp::write_combined_image_sampler(device_.device(),
+            histogram_arena_.set(0), 4U, *scene_sampler_,
+            *scene_.resolve().view());
           return {};
         });
   }
@@ -1264,7 +1216,16 @@ private:
 
     ImGui::Begin("Inspector");
     ImGui::Text("GPU: %.3f ms", gpu_ms_);
-    ImGui::Text("Compute smoke: %s", compute_smoke_ok_ ? "OK" : "not verified");
+    ImGui::Text("Luminance histogram");
+    ImGui::PlotHistogram(
+      "##hist",
+      [](void* data, int index) -> float
+      {
+        return static_cast<float>(
+          static_cast<const std::uint32_t*>(data)[ index ]);
+      },
+      histogram_cpu_.data(), static_cast<std::int32_t>(k_histogram_bins), 0,
+      nullptr, 0.0F, FLT_MAX, ImVec2 { 0.0F, 80.0F });
     ImGui::Text("Skipped BLEND draws: %u", skipped_blend_draws_);
     ImGui::Text("Frames in flight: %zu", max_frames_in_flight);
     ImGui::Text("Swapchain: %u x %u", swap_chain_.extent().width,
@@ -1459,6 +1420,57 @@ private:
 
           scene_.record_after_store(image_uses_, command_buffer);
 
+          // histogram code begin
+          image_uses_.transition(command_buffer, scene_.resolve().image(),
+            vkpp::image_use::sampled_compute, vk::ImageAspectFlagBits::eColor);
+
+          command_buffer.fillBuffer(
+            histogram_ssbo_.buffer(), 0UZ, vk::WholeSize, 0U);
+          const vkpp::buffer_use_transition after_fill {
+            .buffer = histogram_ssbo_.buffer(),
+            .from = vkpp::buffer_use::transfer_dst,
+            .to = vkpp::buffer_use::storage_compute_write,
+          };
+          vkpp::record_buffer_use_transitions(
+            command_buffer, std::span { &after_fill, 1UZ });
+
+          const std::array hist_sets { histogram_arena_.set(0) };
+          vkpp::bind_compute(command_buffer, *histogram_pipeline_.pipeline(),
+            *histogram_pipeline_.layout(), hist_sets);
+          struct histogram_push_cpu
+          {
+            std::uint32_t extent_x;
+            std::uint32_t extent_y;
+            std::uint32_t bin_count;
+          };
+          vkpp::push_compute_constants(command_buffer,
+            *histogram_pipeline_.layout(),
+            histogram_push_cpu {
+              scene_extent_.width,
+              scene_extent_.height,
+              k_histogram_bins,
+            });
+          vkpp::dispatch(command_buffer, (scene_extent_.width + 7U) / 8U,
+            (scene_extent_.height + 7U) / 8U, 1U);
+
+          const vkpp::buffer_use_transition to_copy {
+            .buffer = histogram_ssbo_.buffer(),
+            .from = vkpp::buffer_use::storage_compute_write,
+            .to = vkpp::buffer_use::transfer_src,
+          };
+          vkpp::record_buffer_use_transitions(
+            command_buffer, std::span { &to_copy, 1UZ });
+          command_buffer.copyBuffer(histogram_ssbo_.buffer(),
+            histogram_readbacks_[ frame_index_ ].buffer(),
+            vk::BufferCopy {
+              .size = k_histogram_bins * sizeof(std::uint32_t),
+            });
+
+          image_uses_.transition(command_buffer, scene_.resolve().image(),
+            vkpp::image_use::sampled_fragment, vk::ImageAspectFlagBits::eColor);
+
+          // histogram code end
+
           image_uses_.transition(command_buffer,
             swap_chain_.images()[ image_index ],
             vkpp::image_use::color_attachment, vk::ImageAspectFlagBits::eColor);
@@ -1603,6 +1615,21 @@ private:
 
     if (frame_counter_ >= max_frames_in_flight)
     {
+      {
+        void* const mapped = histogram_readbacks_[ frame_index_ ].mapped();
+        if (mapped == nullptr)
+        {
+          return std::unexpected {
+            vkpp::app_error {
+              .kind = vkpp::app_error_kind::mapping_failed,
+              .detail = "histogram readback not mapped"sv,
+            },
+          };
+        }
+        std::memcpy(histogram_cpu_.data(), mapped,
+          k_histogram_bins * sizeof(std::uint32_t));
+      }
+
       if (auto ns = timestamps_.read_and_reset_frame_ns(frame_index_); ns)
       {
         gpu_ms_ = ((*ns)[ 1 ] - (*ns)[ 0 ]) * 1e-6;
@@ -1749,7 +1776,6 @@ private:
   std::chrono::steady_clock::time_point imgui_frame_time_ {};
   double gpu_ms_ { 0.0 };
   std::uint32_t skipped_blend_draws_ { 0U };
-  bool compute_smoke_ok_ { false };
   bool imgui_renderer_initialized_ { false };
   bool imgui_layout_built_ { false };
   vkpp::frame_attachments scene_ {};
@@ -1841,6 +1867,16 @@ private:
   std::vector<vkpp::gltf::draw_item_cpu> draw_list_ {};
   vkpp::buffer_resource<> draw_buffer_ {};
 
+  // histogram
+  vkpp::buffer_resource<> histogram_ssbo_ {};
+  std::array<vkpp::buffer_resource<>, max_frames_in_flight>
+    histogram_readbacks_ {};
+  vkpp::descriptor_set_arena histogram_arena_ {};
+  vkpp::compute_pipeline histogram_pipeline_ {};
+  vk::raii::Sampler histogram_sampler_ { nullptr };
+  std::array<std::uint32_t, k_histogram_bins> histogram_cpu_ {};
+
+  // the rest with small size
   bool resized_ { false };
   frame_rendering_state frame_rendering_state_ {
     frame_rendering_state::active

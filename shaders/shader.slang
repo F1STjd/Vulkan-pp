@@ -275,11 +275,31 @@ float4 fragment_main(
 }
 
 [[vk::binding(2, 0)]]
-RWStructuredBuffer<uint> smoke_out;
+RWStructuredBuffer<uint> histogram_bins;
+
+[[vk::binding(4, 0)]]
+Texture2D scene_color;
+[[vk::binding(4, 0)]]
+SamplerState scene_sampler;
+
+struct histogram_push
+{
+  uint2 extent;
+  uint bin_count;
+};
+
+[[vk::push_constant]]
+histogram_push hist_pc;
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void compute_main(uint3 id : SV_DispatchThreadID)
+[numthreads(8, 8, 1)]
+void histogram_main(uint3 id : SV_DispatchThreadID)
 {
-  smoke_out[id.x] = id.x;
+  if (id.x >= hist_pc.extent.x || id.y >= hist_pc.extent.y) { return; }
+  const float3 rgb =
+    scene_color.SampleLevel(
+      scene_sampler, (float2(id.xy) + 0.5) / float2(hist_pc.extent), 0).rgb;
+  const float y = dot(rgb, float3(0.2126, 0.7152, 0.0722));
+  const uint bin = min(uint(y * hist_pc.bin_count), hist_pc.bin_count - 1);
+  InterlockedAdd(histogram_bins[bin], 1U);
 }

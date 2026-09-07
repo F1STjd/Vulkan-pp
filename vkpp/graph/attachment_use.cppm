@@ -19,6 +19,7 @@ export enum class image_use : std::uint8_t {
   depth_attachment,
   present,
   sampled_fragment,
+  sampled_compute,
   transfer_src,
 };
 
@@ -69,6 +70,12 @@ fields_for(image_use use) -> image_use_fields
   case image_use::sampled_fragment:
     return {
       .stage = vk::PipelineStageFlagBits2::eFragmentShader,
+      .access = vk::AccessFlagBits2::eShaderSampledRead,
+      .layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+    };
+  case image_use::sampled_compute:
+    return {
+      .stage = vk::PipelineStageFlagBits2::eComputeShader,
       .access = vk::AccessFlagBits2::eShaderSampledRead,
       .layout = vk::ImageLayout::eShaderReadOnlyOptimal,
     };

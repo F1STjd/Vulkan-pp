@@ -235,7 +235,7 @@ export template<device_allocator Alloc = vma_policy>
 auto
 make_storage_buffer(Alloc& allocator, vk::DeviceSize size,
   std::span<const std::uint32_t> sharing_families = {})
-  -> std::expected<mapped_buffer<Alloc>, error_t>
+  -> std::expected<buffer_resource<Alloc>, error_t>
 {
   return make_buffer_resource<buffer_kind::storage>(
     allocator, size, sharing_families);
@@ -245,7 +245,7 @@ export template<device_allocator Alloc = vma_policy>
 auto
 make_staging_buffer(Alloc& allocator, vk::DeviceSize size,
   std::span<const std::uint32_t> sharing_families = {})
-  -> std::expected<mapped_buffer<Alloc>, error_t>
+  -> std::expected<buffer_resource<Alloc>, error_t>
 {
   return make_buffer_resource<buffer_kind::staging>(
     allocator, size, sharing_families);
@@ -255,7 +255,7 @@ export template<device_allocator Alloc = vma_policy>
 auto
 make_readback_buffer(Alloc& allocator, vk::DeviceSize size,
   std::span<const std::uint32_t> sharing_families = {})
-  -> std::expected<mapped_buffer<Alloc>, error_t>
+  -> std::expected<buffer_resource<Alloc>, error_t>
 {
   return make_buffer_resource<buffer_kind::readback>(
     allocator, size, sharing_families);
