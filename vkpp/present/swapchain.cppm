@@ -67,6 +67,12 @@ find_depth_attachment_format(const vk::raii::PhysicalDevice& physical_device)
     vk::FormatFeatureFlagBits::eDepthStencilAttachment);
 }
 
+export struct recreate_wait_idle_t
+{
+  explicit recreate_wait_idle_t() = default;
+};
+export inline constexpr recreate_wait_idle_t recreate_wait_idle {};
+
 export class swapchain
 {
 public:
@@ -74,7 +80,8 @@ public:
   create(device_context& device, const vk::raii::SurfaceKHR& surface,
     extent_request window,
     std::invocable<const vk::SurfaceCapabilitiesKHR&, vk::Extent2D> auto&&
-      choose_extent) -> std::expected<swapchain, error_t>
+      choose_extent,
+    vk::SwapchainKHR old_swapchain = {}) -> std::expected<swapchain, error_t>
   {
     swapchain output {};
     surface_build_info build {};
@@ -150,7 +157,7 @@ public:
             .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
             .presentMode = build.present_mode,
             .clipped = vk::True,
-            .oldSwapchain = nullptr,
+            .oldSwapchain = old_swapchain,
           };
 
           return UTILS_VK(
@@ -206,26 +213,34 @@ public:
       .transform([ & ] -> swapchain { return std::move(output); });
   }
 
-  // It is possible to create a new swap chain while drawing commands on an
-  // image from the old swap chain are still in-flight. You need to pass the
-  // previous swap chain to the oldSwapchain field in the
-  // vk::SwapchainCreateInfoKHR struct and destroy the old swap chain as soon as
-  // you’ve finished using it.
   [[nodiscard]] auto
   recreate(device_context& device, const vk::raii::SurfaceKHR& surface,
     extent_request window,
     std::invocable<const vk::SurfaceCapabilitiesKHR&, vk::Extent2D> auto&&
       choose_extent) -> std::expected<void, error_t>
   {
+    vk::raii::SwapchainKHR previous = std::move(swap_chain_);
+    image_views_.clear();
+    images_.clear();
+    render_finished_semaphores_.clear();
+    extent_ = vk::Extent2D {};
+    surface_format_ = vk::SurfaceFormatKHR {};
+
+    return create(device, surface, window, choose_extent, *previous)
+      .transform(
+        [ & ](swapchain&& swapchain) { *this = std::move(swapchain); });
+  }
+
+  [[nodiscard]] auto
+  recreate(device_context& device, const vk::raii::SurfaceKHR& surface,
+    extent_request window,
+    std::invocable<const vk::SurfaceCapabilitiesKHR&, vk::Extent2D> auto&&
+      choose_extent,
+    recreate_wait_idle_t) -> std::expected<void, error_t>
+  {
     return UTILS_VK(device.device().waitIdle(), ^^vk::raii::Device::waitIdle)
-      .and_then(
-        [ & ]() -> std::expected<void, error_t>
-        {
-          release();
-          return create(device, surface, window, choose_extent)
-            .transform(
-              [ & ](swapchain&& swapchain) { *this = std::move(swapchain); });
-        });
+      .and_then([ & ]() -> std::expected<void, error_t>
+        { return recreate(device, surface, window, choose_extent); });
   }
 
   [[nodiscard]] static auto
