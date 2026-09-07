@@ -25,12 +25,86 @@ export struct device_feature_requests
   bool timeline_semaphore { false };
   bool host_query_reset { false };
   bool descriptor_indexing { false };
+  bool buffer_device_address { false };
+};
+
+// clang-format off
+export struct feature_tag
+{
+  struct sampler_anisotropy {};
+  struct sample_rate_shading {};
+  struct dynamic_rendering {};
+  struct synchronization2 {};
+  struct extended_dynamic_state {};
+  struct timeline_semaphore {};
+  struct host_query_reset {};
+  struct descriptor_indexing {};
+  struct buffer_device_address {};
+};
+// clang-format on
+
+export template<typename Tag>
+struct feature_traits;
+
+template<>
+struct feature_traits<feature_tag::sampler_anisotropy>
+{
+  static constexpr auto member = &device_feature_requests::sampler_anisotropy;
+};
+
+template<>
+struct feature_traits<feature_tag::sample_rate_shading>
+{
+  static constexpr auto member = &device_feature_requests::sample_rate_shading;
+};
+
+template<>
+struct feature_traits<feature_tag::dynamic_rendering>
+{
+  static constexpr auto member = &device_feature_requests::dynamic_rendering;
+};
+
+template<>
+struct feature_traits<feature_tag::synchronization2>
+{
+  static constexpr auto member = &device_feature_requests::synchronization2;
+};
+
+template<>
+struct feature_traits<feature_tag::extended_dynamic_state>
+{
+  static constexpr auto member =
+    &device_feature_requests::extended_dynamic_state;
+};
+
+template<>
+struct feature_traits<feature_tag::timeline_semaphore>
+{
+  static constexpr auto member = &device_feature_requests::timeline_semaphore;
+};
+
+template<>
+struct feature_traits<feature_tag::host_query_reset>
+{
+  static constexpr auto member = &device_feature_requests::host_query_reset;
+};
+
+template<>
+struct feature_traits<feature_tag::descriptor_indexing>
+{
+  static constexpr auto member = &device_feature_requests::descriptor_indexing;
+};
+
+template<>
+struct feature_traits<feature_tag::buffer_device_address>
+{
+  static constexpr auto member = &device_feature_requests::sampler_anisotropy;
 };
 
 export struct device_requirements
 {
   std::span<const char* const> extensions {};
-  std::uint32_t min_api_version { vk::ApiVersion13 };
+  std::uint32_t min_api_version { vk::ApiVersion14 };
   device_feature_requests features {};
   bool require_present { true };
   bool request_dedicated_transfer { false };
@@ -200,6 +274,7 @@ private:
       vk::Bool32 { requests.descriptor_indexing };
     v12.descriptorBindingVariableDescriptorCount =
       vk::Bool32 { requests.descriptor_indexing };
+    v12.bufferDeviceAddress = vk::Bool32 { requests.buffer_device_address };
 
     auto& v13 = chain.get<vk::PhysicalDeviceVulkan13Features>();
     v13.dynamicRendering = vk::Bool32 { requests.dynamic_rendering };
@@ -254,6 +329,10 @@ private:
       {
         return false;
       }
+    }
+    if (requests.buffer_device_address && !v12.bufferDeviceAddress)
+    {
+      return false;
     }
     {
       if (requests.dynamic_rendering && v13.dynamicRendering != vk::True)

@@ -264,6 +264,7 @@ private:
           .timeline_semaphore = true,
           .host_query_reset = true,
           .descriptor_indexing = true,
+          //.buffer_device_address = true,
         },
         .require_present = true,
         .request_dedicated_transfer = true,
