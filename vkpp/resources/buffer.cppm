@@ -19,12 +19,14 @@ namespace vkpp
 using namespace std::string_view_literals;
 
 export enum class buffer_kind : std::uint8_t {
-  uniform, // FIF UBO
-  storage, // ssbo
+  uniform,
+  storage,
   vertex,
   index,
   staging,
-  readback, // gpu_to_cpu
+  readback,
+  indirect,
+  device_address,
 };
 
 export struct buffer_type_spec
@@ -91,6 +93,28 @@ struct buffer_traits<buffer_kind::readback>
   static constexpr buffer_type_spec spec {
     .usage = vk::BufferUsageFlagBits::eTransferDst,
     .intent = memory_intent::gpu_to_cpu,
+  };
+};
+
+template<>
+struct buffer_traits<buffer_kind::indirect>
+{
+  static constexpr buffer_type_spec spec {
+    .usage = vk::BufferUsageFlagBits::eIndirectBuffer |
+      vk::BufferUsageFlagBits::eStorageBuffer |
+      vk::BufferUsageFlagBits::eTransferDst,
+    .intent = memory_intent::gpu_only,
+  };
+};
+
+template<>
+struct buffer_traits<buffer_kind::device_address>
+{
+  static constexpr buffer_type_spec spec {
+    .usage = vk::BufferUsageFlagBits::eShaderDeviceAddress |
+      vk::BufferUsageFlagBits::eStorageBuffer |
+      vk::BufferUsageFlagBits::eTransferDst,
+    .intent = memory_intent::gpu_only,
   };
 };
 
@@ -319,6 +343,9 @@ export using vertex_buffer = buffer_resource<buffer_kind::vertex>;
 export using index_buffer = buffer_resource<buffer_kind::index>;
 export using staging_buffer = buffer_resource<buffer_kind::staging>;
 export using readback_buffer = buffer_resource<buffer_kind::readback>;
+export using indirect_buffer = buffer_resource<buffer_kind::indirect>;
+export using device_address_buffer =
+  buffer_resource<buffer_kind::device_address>;
 
 export template<device_allocator Alloc = vma_policy>
 class buffer_resource_custom
@@ -432,5 +459,19 @@ make_readback_buffer(Alloc& allocator, vk::DeviceSize size,
   std::span<const std::uint32_t> sharing_families = {})
   -> std::expected<readback_buffer, error_t>
 { return readback_buffer::create(allocator, size, sharing_families); }
+
+export template<device_allocator Alloc = vma_policy>
+auto
+make_indirect_buffer(Alloc& allocator, vk::DeviceSize size,
+  std::span<const std::uint32_t> sharing_families = {})
+  -> std::expected<indirect_buffer, error_t>
+{ return indirect_buffer::create(allocator, size, sharing_families); }
+
+export template<device_allocator Alloc = vma_policy>
+auto
+make_device_address_buffer(Alloc& allocator, vk::DeviceSize size,
+  std::span<const std::uint32_t> sharing_families = {})
+  -> std::expected<device_address_buffer, error_t>
+{ return device_address_buffer::create(allocator, size, sharing_families); }
 
 }; // namespace vkpp
