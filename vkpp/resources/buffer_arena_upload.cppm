@@ -36,7 +36,7 @@ export struct arena_upload_create_info
 
 [[nodiscard]] auto
 fill_staging_and_regions(const arena_upload_create_info& create_info,
-  buffer_resource<>& staging) -> std::vector<vk::BufferCopy>
+  staging_buffer& staging) -> std::vector<vk::BufferCopy>
 {
   std::vector<vk::BufferCopy> regions {};
   regions.reserve(create_info.slices.size());
@@ -173,10 +173,10 @@ upload_arena_slices(const arena_upload_create_info& create_info)
     total += slice.bytes.size_bytes();
   }
 
-  return make_buffer_resource(create_info.device.allocator(), total,
-    vk::BufferUsageFlagBits::eTransferSrc, memory_intent::staging)
+  return staging_buffer::create(
+    create_info.device.allocator(), create_info.slices)
     .and_then(
-      [ & ](vkpp::buffer_resource<>&& staging) -> std::expected<void, error_t>
+      [ & ](staging_buffer&& staging) -> std::expected<void, error_t>
       {
         if (staging.mapped() == nullptr)
         {

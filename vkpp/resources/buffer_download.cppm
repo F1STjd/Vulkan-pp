@@ -25,14 +25,14 @@ export class pending_download
 public:
   pending_download() = default;
 
-  pending_download(buffer_resource<>&& staging, submission&& copy_sobmitted)
+  pending_download(readback_buffer&& staging, submission&& copy_sobmitted)
   : staging_ { std::move(staging) },
     submissions_ { { std::move(copy_sobmitted), submission {} } },
     submission_count_ { 1U }
   {}
 
   [[nodiscard]] auto
-  join() && -> std::expected<buffer_resource<>, error_t>
+  join() && -> std::expected<readback_buffer, error_t>
   {
     // TODO (Konrad): Check if there are more wrong usecases of
     // std::views::indeices in the codebase.
@@ -54,7 +54,7 @@ public:
   }
 
 private:
-  buffer_resource<> staging_ {};
+  readback_buffer staging_ {};
   std::array<submission, 2> submissions_ {};
   std::uint32_t submission_count_ { 0U };
 };
@@ -74,11 +74,10 @@ download_device_local_buffer(const buffer_download_create_info& create_info)
   -> std::expected<pending_download, error_t>
 {
   const vk::DeviceSize byte_size = create_info.size;
-  return make_buffer_resource<buffer_kind::readback>(
-    create_info.device.allocator(), byte_size)
+  return readback_buffer::create(create_info.device.allocator(), byte_size)
     .and_then(
       [ & ](
-        buffer_resource<>&& staging) -> std::expected<pending_download, error_t>
+        readback_buffer&& staging) -> std::expected<pending_download, error_t>
       {
         if (staging.mapped() == nullptr)
         {
@@ -122,12 +121,11 @@ download_device_local_buffer(const buffer_download_create_info& create_info)
 export auto
 download_device_local_buffer_and_join(
   const buffer_download_create_info& create_info)
-  -> std::expected<buffer_resource<>, error_t>
+  -> std::expected<readback_buffer, error_t>
 {
   return download_device_local_buffer(create_info)
     .and_then(
-      [](
-        pending_download&& pending) -> std::expected<buffer_resource<>, error_t>
+      [](pending_download&& pending) -> std::expected<readback_buffer, error_t>
       { return std::move(pending).join(); });
 }
 

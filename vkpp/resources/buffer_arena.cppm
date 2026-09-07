@@ -20,7 +20,7 @@ class buffer_arena
 public:
   buffer_arena() = default;
 
-  buffer_arena(buffer_resource<Alloc>&& buffer, virtual_block&& block)
+  buffer_arena(buffer_resource_custom<Alloc>&& buffer, virtual_block&& block)
   : buffer_ { std::move(buffer) }, block_ { std::move(block) }
   {}
 
@@ -38,7 +38,7 @@ public:
   { block_.free(slice); }
 
 private:
-  buffer_resource<Alloc> buffer_ {};
+  buffer_resource_custom<Alloc> buffer_ {};
   virtual_block block_;
 };
 
@@ -51,7 +51,7 @@ make_buffer_arena(Alloc& allocator, vk::DeviceSize size,
   return make_buffer_resource(
     allocator, size, usgae | vk::BufferUsageFlagBits::eTransferDst, intent)
     .and_then(
-      [ & ](vkpp::buffer_resource<Alloc>&& buffer)
+      [ & ](buffer_resource_custom<Alloc> buffer)
         -> std::expected<buffer_arena<Alloc>, error_t>
       {
         return virtual_block::create(size).transform(

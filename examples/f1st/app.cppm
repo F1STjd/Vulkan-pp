@@ -714,12 +714,11 @@ private:
               .material_index = material_index,
             });
           }
-          auto uploaded_draws = vkpp::upload_device_local_buffer({
+          auto uploaded_draws = vkpp::upload_device_local_buffer<vkpp::buffer_kind::storage>({
             .device = device_,
             .pool = upload_pool_,
             .transfer_pool = transfer_upload_pool_,
-            .bytes = std::as_bytes(std::span<const draw_gpu> { draws_gpu }),
-            .gpu_usage = vk::BufferUsageFlagBits::eStorageBuffer,
+            .bytes = std::as_bytes(std::span<const draw_gpu> { draws_gpu })
           });
           if (!uploaded_draws)
           {
@@ -832,11 +831,11 @@ private:
   auto
   create_frames() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::create_frames<max_frames_in_flight>(
+    return vkpp::create_frames<max_frames_in_flight, uniform_buffer_object>(
       {
         .device = device_,
         .pool = command_pool_,
-        .ubo_size = sizeof(uniform_buffer_object),
+        .min_ubo_alignment = device_.physical_device().getProperties().limits.minUniformBufferOffsetAlignment,
       })
       .transform(
         [ this ](std::array<vkpp::frame, max_frames_in_flight>&& frames) -> void
@@ -1033,14 +1032,14 @@ private:
   auto
   create_histogram() -> std::expected<void, vkpp::error_t>
   {
-    auto ssbo = vkpp::make_storage_buffer(
+    auto ssbo = vkpp::storage_buffer::create(
       device_.allocator(), k_histogram_bins * sizeof(std::uint32_t));
     if (!ssbo) { return std::unexpected { std::move(ssbo).error() }; }
     histogram_ssbo_ = std::move(*ssbo);
 
     for (auto index : std::views::indices(max_frames_in_flight))
     {
-      auto readback = vkpp::make_readback_buffer(
+      auto readback = vkpp::readback_buffer::create(
         device_.allocator(), k_histogram_bins * sizeof(std::uint32_t));
       if (!readback) { return std::unexpected { std::move(readback).error() }; }
       histogram_readbacks_[ index ] = std::move(*readback);
@@ -1851,7 +1850,7 @@ private:
   std::optional<vkpp::sampler_cache> sampler_cache_ {};
   vkpp::bindless_table bindless_table_ {};
   std::vector<vkpp::texture<>> textures_ {};
-  vkpp::buffer_resource<> material_buffer_ {};
+  vkpp::storage_buffer material_buffer_ {};
 
   vkpp::buffer_arena<> geometry_arena_ {};
   struct primitive_draw
@@ -1865,11 +1864,11 @@ private:
   };
   std::vector<primitive_draw> draws_ {};
   std::vector<vkpp::gltf::draw_item_cpu> draw_list_ {};
-  vkpp::buffer_resource<> draw_buffer_ {};
+  vkpp::storage_buffer draw_buffer_ {};
 
   // histogram
-  vkpp::buffer_resource<> histogram_ssbo_ {};
-  std::array<vkpp::buffer_resource<>, max_frames_in_flight>
+  vkpp::storage_buffer histogram_ssbo_ {};
+  std::array<vkpp::readback_buffer, max_frames_in_flight>
     histogram_readbacks_ {};
   vkpp::descriptor_set_arena histogram_arena_ {};
   vkpp::compute_pipeline histogram_pipeline_ {};

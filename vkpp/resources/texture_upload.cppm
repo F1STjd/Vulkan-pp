@@ -223,11 +223,11 @@ make_texture(const texture_create_info& create_info)
 
   const vk::DeviceSize byte_size = create_info.pixels.size_bytes();
 
-  return make_buffer_resource(create_info.device.allocator(), byte_size,
-    vk::BufferUsageFlagBits::eTransferSrc, memory_intent::staging)
+  return staging_buffer::create(
+    create_info.device.allocator(), create_info.pixels)
     .and_then(
       [ & ](
-        buffer_resource<>&& staging_buffer) -> std::expected<texture<>, error_t>
+        staging_buffer&& staging_buffer) -> std::expected<texture<>, error_t>
       {
         if (staging_buffer.mapped() == nullptr)
         {

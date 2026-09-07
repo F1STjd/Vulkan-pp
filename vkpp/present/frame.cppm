@@ -21,7 +21,7 @@ export struct frame
 {
   vk::raii::Semaphore present_complete { nullptr };
   vk::raii::CommandBuffer command_buffer { nullptr };
-  mapped_buffer<> uniform_buffer {};
+  uniform_buffer uniform_buffer {};
   vk::DescriptorSet descriptor_set {};
 };
 
@@ -29,10 +29,10 @@ export struct frames_create_info
 {
   device_context& device;
   command_pool& pool;
-  vk::DeviceSize ubo_size {};
+  vk::DeviceSize min_ubo_alignment { 1UZ };
 };
 
-export template<std::size_t N>
+export template<std::size_t N, typename UniformType>
 [[nodiscard]] auto
 create_frames(const frames_create_info& info)
   -> std::expected<std::array<frame, N>, error_t>
@@ -68,9 +68,8 @@ create_frames(const frames_create_info& info)
       {
         for (std::size_t index : std::views::indices(N))
         {
-          auto ubo = make_buffer_resource(info.device.allocator(),
-            info.ubo_size, vk::BufferUsageFlagBits::eUniformBuffer,
-            memory_intent::cpu_to_gpu);
+          auto ubo = uniform_buffer::create<UniformType>(
+            info.device.allocator(), info.min_ubo_alignment);
           if (!ubo) { return std::unexpected { std::move(ubo).error() }; }
           if (ubo->mapped() == nullptr)
           {
@@ -81,7 +80,7 @@ create_frames(const frames_create_info& info)
               },
             };
           }
-          frames[ index ].uniform_buffer = mapped_buffer<> { std::move(*ubo) };
+          frames[ index ].uniform_buffer = std::move(*ubo);
         }
         return {};
       })
