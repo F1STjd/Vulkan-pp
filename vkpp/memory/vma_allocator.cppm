@@ -205,10 +205,16 @@ public:
   [[nodiscard]]
   static auto
   create(vk::Instance instance, vk::PhysicalDevice physical_device,
-    vk::Device device, std::uint32_t api_version)
-    -> std::expected<vma_policy, error_t>
+    vk::Device device, std::uint32_t api_version,
+    bool buffer_device_address = false) -> std::expected<vma_policy, error_t>
   {
+    VmaAllocatorCreateFlags flags {};
+    if (buffer_device_address)
+    {
+      flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    }
     const VmaAllocatorCreateInfo create_info {
+      .flags = flags,
       .physicalDevice = static_cast<VkPhysicalDevice>(physical_device),
       .device = static_cast<VkDevice>(device),
       .instance = static_cast<VkInstance>(instance),

@@ -203,11 +203,12 @@ public:
                   get_max_usable_msaa_count(output.physical_device_);
               })
             .and_then(
-              [ & ]()
+              [ & ]() -> std::expected<void, error_t>
               {
                 return vma_policy::create(*instance.instance(),
                   output.physical_device_, output.device_,
-                  requirements.min_api_version)
+                  requirements.min_api_version,
+                  requirements.features.buffer_device_address)
                   .transform([ & ](vma_policy&& policy) -> void
                     { output.allocator_ = std::move(policy); });
               })
@@ -265,6 +266,7 @@ private:
     auto& core = chain.get<vk::PhysicalDeviceFeatures2>().features;
     core.samplerAnisotropy = vk::Bool32 { requests.sampler_anisotropy };
     core.sampleRateShading = vk::Bool32 { requests.sample_rate_shading };
+    core.shaderInt64 = vk::Bool32 { requests.buffer_device_address };
 
     auto& v12 = chain.get<vk::PhysicalDeviceVulkan12Features>();
     v12.timelineSemaphore = vk::Bool32 { requests.timeline_semaphore };
@@ -337,9 +339,10 @@ private:
         return false;
       }
     }
-    if (requests.buffer_device_address && !v12.bufferDeviceAddress)
+    if (requests.buffer_device_address)
     {
-      return false;
+      if (v12.bufferDeviceAddress != vk::True) { return false; }
+      if (core.shaderInt64 != vk::True) { return false; }
     }
     {
       if (requests.dynamic_rendering && v13.dynamicRendering != vk::True)

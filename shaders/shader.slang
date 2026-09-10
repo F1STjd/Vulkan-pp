@@ -274,9 +274,6 @@ float4 fragment_main(
   return float4(display_linear, opacity);
 }
 
-[[vk::binding(2, 0)]]
-RWStructuredBuffer<uint> histogram_bins;
-
 [[vk::binding(4, 0)]]
 Texture2D scene_color;
 [[vk::binding(4, 0)]]
@@ -286,6 +283,8 @@ struct histogram_push
 {
   uint2 extent;
   uint bin_count;
+  uint _;
+  uint64_t device_address;
 };
 
 [[vk::push_constant]]
@@ -301,5 +300,6 @@ void histogram_main(uint3 id : SV_DispatchThreadID)
       scene_sampler, (float2(id.xy) + 0.5) / float2(hist_pc.extent), 0).rgb;
   const float y = dot(rgb, float3(0.2126, 0.7152, 0.0722));
   const uint bin = min(uint(y * hist_pc.bin_count), hist_pc.bin_count - 1);
+  uint* histogram_bins = (uint*)hist_pc.device_address;
   InterlockedAdd(histogram_bins[bin], 1U);
 }

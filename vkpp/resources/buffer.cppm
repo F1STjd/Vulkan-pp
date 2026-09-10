@@ -474,4 +474,13 @@ make_device_address_buffer(Alloc& allocator, vk::DeviceSize size,
   -> std::expected<device_address_buffer, error_t>
 { return device_address_buffer::create(allocator, size, sharing_families); }
 
+export [[nodiscard]] auto
+get_buffer_device_address(const vk::raii::Device& device, vk::Buffer buffer)
+  -> vk::DeviceAddress
+{
+  return device.getBufferAddress({
+    .buffer = buffer,
+  });
+}
+
 }; // namespace vkpp

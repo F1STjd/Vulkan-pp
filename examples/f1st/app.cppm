@@ -136,18 +136,23 @@ static constexpr std::array k_set0_bindings {
 static constexpr std::uint32_t k_histogram_bins { 256U };
 static constexpr std::array k_histogram_bindings {
   vk::DescriptorSetLayoutBinding {
-    .binding = 2U,
-    .descriptorType = vk::DescriptorType::eStorageBuffer,
-    .descriptorCount = 1U,
-    .stageFlags = vk::ShaderStageFlagBits::eCompute,
-  },
-  vk::DescriptorSetLayoutBinding {
     .binding = 4U,
     .descriptorType = vk::DescriptorType::eCombinedImageSampler,
     .descriptorCount = 1U,
     .stageFlags = vk::ShaderStageFlagBits::eCompute,
   },
 };
+
+struct histogram_push_cpu
+{
+  std::uint32_t extent_x;
+  std::uint32_t extent_y;
+  std::uint32_t bin_count;
+  std::uint32_t _;
+  std::uint64_t device_address;
+};
+static_assert(sizeof(histogram_push_cpu) == 24UZ);
+static_assert(offsetof(histogram_push_cpu, device_address) == 16UZ);
 
 export class app
 {
@@ -264,7 +269,7 @@ private:
           .timeline_semaphore = true,
           .host_query_reset = true,
           .descriptor_indexing = true,
-          //.buffer_device_address = true,
+          .buffer_device_address = true,
         },
         .require_present = true,
         .request_dedicated_transfer = true,
@@ -1036,10 +1041,12 @@ private:
   auto
   create_histogram() -> std::expected<void, vkpp::error_t>
   {
-    auto ssbo = vkpp::storage_buffer::create(
+    auto bins = vkpp::device_address_buffer::create(
       device_.allocator(), k_histogram_bins * sizeof(std::uint32_t));
-    if (!ssbo) { return std::unexpected { std::move(ssbo).error() }; }
-    histogram_ssbo_ = std::move(*ssbo);
+    if (!bins) { return std::unexpected { std::move(bins).error() }; }
+    histogram_bins_ = std::move(*bins);
+    histogram_device_address_ = vkpp::get_buffer_device_address(
+      device_.device(), histogram_bins_.buffer());
 
     for (auto index : std::views::indices(max_frames_in_flight))
     {
@@ -1057,15 +1064,6 @@ private:
     if (!arena) { return std::unexpected { std::move(arena).error() }; }
     histogram_arena_ = std::move(*arena);
 
-    vkpp::write_storage_buffer(device_.device(), histogram_arena_.set(0), 2U,
-      histogram_ssbo_.buffer(), histogram_ssbo_.size());
-
-    struct histogram_push_cpu
-    {
-      std::uint32_t extent_x;
-      std::uint32_t extent_y;
-      std::uint32_t bin_count;
-    };
     auto spirv = vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
     if (!spirv) { return std::unexpected { std::move(spirv).error() }; }
 
@@ -1430,9 +1428,9 @@ private:
             vkpp::image_use::sampled_compute, vk::ImageAspectFlagBits::eColor);
 
           command_buffer.fillBuffer(
-            histogram_ssbo_.buffer(), 0UZ, vk::WholeSize, 0U);
+            histogram_bins_.buffer(), 0UZ, vk::WholeSize, 0U);
           const vkpp::buffer_use_transition after_fill {
-            .buffer = histogram_ssbo_.buffer(),
+            .buffer = histogram_bins_.buffer(),
             .from = vkpp::buffer_use::transfer_dst,
             .to = vkpp::buffer_use::storage_compute_write,
           };
@@ -1442,30 +1440,27 @@ private:
           const std::array hist_sets { histogram_arena_.set(0) };
           vkpp::bind_compute(command_buffer, *histogram_pipeline_.pipeline(),
             *histogram_pipeline_.layout(), hist_sets);
-          struct histogram_push_cpu
-          {
-            std::uint32_t extent_x;
-            std::uint32_t extent_y;
-            std::uint32_t bin_count;
-          };
+
           vkpp::push_compute_constants(command_buffer,
             *histogram_pipeline_.layout(),
             histogram_push_cpu {
-              scene_extent_.width,
-              scene_extent_.height,
-              k_histogram_bins,
+              .extent_x = scene_extent_.width,
+              .extent_y = scene_extent_.height,
+              .bin_count = k_histogram_bins,
+              .device_address =
+                static_cast<std::uint64_t>(histogram_device_address_),
             });
           vkpp::dispatch(command_buffer, (scene_extent_.width + 7U) / 8U,
             (scene_extent_.height + 7U) / 8U, 1U);
 
           const vkpp::buffer_use_transition to_copy {
-            .buffer = histogram_ssbo_.buffer(),
+            .buffer = histogram_bins_.buffer(),
             .from = vkpp::buffer_use::storage_compute_write,
             .to = vkpp::buffer_use::transfer_src,
           };
           vkpp::record_buffer_use_transitions(
             command_buffer, std::span { &to_copy, 1UZ });
-          command_buffer.copyBuffer(histogram_ssbo_.buffer(),
+          command_buffer.copyBuffer(histogram_bins_.buffer(),
             histogram_readbacks_[ frame_index_ ].buffer(),
             vk::BufferCopy {
               .size = k_histogram_bins * sizeof(std::uint32_t),
@@ -1865,7 +1860,8 @@ private:
   vkpp::storage_buffer draw_buffer_ {};
 
   // histogram
-  vkpp::storage_buffer histogram_ssbo_ {};
+  vkpp::device_address_buffer histogram_bins_ {};
+  vk::DeviceAddress histogram_device_address_ {};
   std::array<vkpp::readback_buffer, max_frames_in_flight>
     histogram_readbacks_ {};
   vkpp::descriptor_set_arena histogram_arena_ {};
