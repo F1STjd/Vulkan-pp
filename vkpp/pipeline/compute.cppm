@@ -51,7 +51,9 @@ private:
 export [[nodiscard]] auto
 make_compute_pipeline(const vk::raii::Device& device,
   const compute_pipeline_runtime_args& runtime_args,
-  const compute_shader& shader) -> std::expected<compute_pipeline, error_t>
+  const compute_shader& shader,
+  const vk::raii::PipelineCache& cache = { nullptr })
+  -> std::expected<compute_pipeline, error_t>
 {
   if (runtime_args.set_layout == nullptr || shader.spirv.empty())
   {
@@ -104,7 +106,7 @@ make_compute_pipeline(const vk::raii::Device& device,
               };
 
               return UTILS_VK(
-                device.createComputePipeline(nullptr, compute_pipeline_info),
+                device.createComputePipeline(cache, compute_pipeline_info),
                 ^^vk::raii::Device::createComputePipeline)
                 .transform(
                   [ &layout ](

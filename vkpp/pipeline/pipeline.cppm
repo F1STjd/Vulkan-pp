@@ -92,7 +92,8 @@ export template<graphics_pipeline_spec Spec = graphics_pipeline_spec {}>
   requires(validate(Spec))
 auto make_graphics_pipeline(const vk::raii::Device& device,
   const graphics_pipeline_runtime_args& runtime_args,
-  const graphics_pipeline_shaders& shaders)
+  const graphics_pipeline_shaders& shaders,
+  const vk::raii::PipelineCache& cache = { nullptr })
   -> std::expected<graphics_pipeline, error_t>
 {
   if (runtime_args.set_layouts.empty() || runtime_args.color_formats.empty())
@@ -243,7 +244,7 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
                 },
               };
 
-              return UTILS_VK(device.createGraphicsPipeline(nullptr,
+              return UTILS_VK(device.createGraphicsPipeline(cache,
                                 chain.get<vk::GraphicsPipelineCreateInfo>()),
                 ^^vk::raii::Device::createGraphicsPipeline)
                 .transform(

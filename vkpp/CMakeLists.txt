@@ -70,6 +70,7 @@ target_sources(vkpp
 
       pipeline/pipeline.cppm       # module vkpp.pipeline
       pipeline/compute.cppm       # module vkpp.pipeline.compute
+      pipeline/pipeline_cache.cppm # module vkpp.pipeline.cache
 
       query/timestamp.cppm # module vkpp.query
 )

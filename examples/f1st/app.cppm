@@ -45,6 +45,7 @@ import vkpp.texture.upload;
 import vkpp.barrier;
 import vkpp.pipeline;
 import vkpp.pipeline.compute;
+import vkpp.pipeline.cache;
 import vkpp.descriptor;
 import vkpp.descriptor.indexing;
 import vkpp.semaphore;
@@ -154,6 +155,8 @@ struct histogram_push_cpu
 static_assert(sizeof(histogram_push_cpu) == 24UZ);
 static_assert(offsetof(histogram_push_cpu, device_address) == 16UZ);
 
+static constexpr auto k_pipeline_cache_path = "f1st_pipeline_cache.bin"sv;
+
 export class app
 {
 public:
@@ -164,6 +167,16 @@ public:
       [ this ]() -> std::expected<void, vkpp::error_t> { return main_loop(); });
 
     (void)device_.device().waitIdle();
+    if (auto blob = pipeline_cache_.data(); blob)
+    {
+      auto blob_byes = std::as_bytes(std::span { *blob });
+      (void)vkpp::save_pipeline_cache_file(k_pipeline_cache_path, blob_byes);
+    }
+    else
+    {
+      std::println(
+        std::cerr, "pipeline cache data: {}", vkpp::message(blob.error()));
+    }
     shutdown_imgui();
     if (!result) { std::println(stderr, "{}", vkpp::message(result.error())); }
     swap_chain_.release();
@@ -176,6 +189,7 @@ private:
     return create_instance_context()
       .and_then(std::bind_front(&app::create_surface, this))
       .and_then(std::bind_front(&app::create_device_context, this))
+      .and_then(std::bind_front(&app::create_pipeline_cache, this))
       .and_then(std::bind_front(&app::create_sampler_cache, this))
       .and_then(std::bind_front(&app::create_swap_chain, this))
       .and_then(std::bind_front(&app::create_command_pool, this))
@@ -276,6 +290,27 @@ private:
       })
       .transform([ this ](vkpp::device_context&& device) -> void
         { device_ = std::move(device); });
+  }
+
+  auto
+  create_pipeline_cache() -> std::expected<void, vkpp::error_t>
+  {
+    return vkpp::load_pipeline_cache_file(k_pipeline_cache_path)
+      .and_then(
+        [ this ](
+          std::vector<std::byte>&& bytes) -> std::expected<void, vkpp::error_t>
+        {
+          std::span<const std::byte> initial = bytes;
+          if (!bytes.empty() &&
+            !vkpp::pipeline_cache_header_matches(
+              bytes, device_.physical_device().getProperties()))
+          {
+            initial = {};
+          }
+          return vkpp::pipeline_cache::create(device_.device(), initial)
+            .transform([ this ](vkpp::pipeline_cache&& cache) -> void
+              { pipeline_cache_ = std::move(cache); });
+        });
   }
 
   auto
@@ -382,15 +417,16 @@ private:
                 -> std::expected<void, vkpp::error_t>
               {
                 return vkpp::make_graphics_pipeline<k_pipeline_spec>(
-                  device_.device(), runtime_args, { .spirv = spirv })
+                  device_.device(), runtime_args, { .spirv = spirv },
+                  pipeline_cache_.get())
                   .and_then(
                     [ &, this ](vkpp::graphics_pipeline&& opaque)
                       -> std::expected<void, vkpp::error_t>
                     {
                       graphics_pipeline_ = std::move(opaque);
                       return vkpp::make_graphics_pipeline<
-                        k_blend_pipeline_spec>(
-                        device_.device(), runtime_args, { .spirv = spirv })
+                        k_blend_pipeline_spec>(device_.device(), runtime_args,
+                        { .spirv = spirv }, pipeline_cache_.get())
                         .transform(
                           [ this ](vkpp::graphics_pipeline&& blend) -> void
                           { blend_pipeline_ = std::move(blend); });
@@ -1075,7 +1111,8 @@ private:
       {
         .spirv = *spirv,
         .entry = "histogram_main",
-      })
+      },
+      pipeline_cache_.get())
       .transform([ this ](vkpp::compute_pipeline&& pipeline) -> void
         { histogram_pipeline_ = std::move(pipeline); });
   }
@@ -1778,8 +1815,10 @@ private:
 
   vkpp::image_use_tracker image_uses_ {};
 
-  vkpp::graphics_pipeline graphics_pipeline_;
-  vkpp::graphics_pipeline blend_pipeline_;
+  vkpp::pipeline_cache pipeline_cache_ {};
+
+  vkpp::graphics_pipeline graphics_pipeline_ {};
+  vkpp::graphics_pipeline blend_pipeline_ {};
 
   struct blend_entry
   {
