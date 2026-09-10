@@ -254,7 +254,7 @@ private:
     return vkpp::device_context::create(instance_,
       {
         .extensions = required_device_extensions,
-        .min_api_version = vk::ApiVersion13,
+        .min_api_version = vk::ApiVersion14,
         .features = {
           .sampler_anisotropy = true,
           .sample_rate_shading = true,

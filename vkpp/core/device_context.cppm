@@ -98,9 +98,13 @@ struct feature_traits<feature_tag::descriptor_indexing>
 template<>
 struct feature_traits<feature_tag::buffer_device_address>
 {
-  static constexpr auto member = &device_feature_requests::sampler_anisotropy;
+  static constexpr auto member =
+    &device_feature_requests::buffer_device_address;
 };
 
+// require Vulkan 1.4 and every feature vkpp needs to construct/run today
+// if gpu is limitted then some workarounds should be searched for
+// ^^ will be done in far future
 export struct device_requirements
 {
   std::span<const char* const> extensions {};
