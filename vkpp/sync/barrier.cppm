@@ -194,10 +194,11 @@ transfer_src_to_shader_read(vk::Image image, std::uint32_t mip,
 
 export void
 record_copy_buffer_to_image(vk::raii::CommandBuffer& command_buffer,
-  vk::Buffer buffer, vk::Image image, vk::Extent2D extent)
+  vk::Buffer buffer, vk::Image image, vk::Extent2D extent,
+  vk::DeviceSize buffer_offset)
 {
   vk::BufferImageCopy region {
-    .bufferOffset = 0UZ,
+    .bufferOffset = buffer_offset,
     .bufferRowLength = 0U,
     .bufferImageHeight = 0U,
     .imageSubresource = {
@@ -300,12 +301,14 @@ export auto
 record_upload_sampled_texture(vk::raii::CommandBuffer& command_buffer,
   const vk::raii::PhysicalDevice& physical, vk::Buffer staging_buffer,
   vk::Image image, vk::Format format, vk::Extent2D extent,
-  std::uint32_t mip_levels) -> std::expected<void, error_t>
+  std::uint32_t mip_levels, vk::DeviceSize buffer_offset)
+    -> std::expected<void, error_t>
 {
   const image_barrier to_transfer_dst =
     undefined_dst_to_transfer_dst(image, mip_levels);
   record_barriers(command_buffer, std::span { &to_transfer_dst, 1UZ });
-  record_copy_buffer_to_image(command_buffer, staging_buffer, image, extent);
+  record_copy_buffer_to_image(
+    command_buffer, staging_buffer, image, extent, buffer_offset);
 
   if (mip_levels > 1U)
   {

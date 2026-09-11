@@ -33,6 +33,7 @@ import vkpp.buffer;
 import vkpp.buffer.upload;
 import vkpp.buffer.arena;
 import vkpp.buffer.arena.upload;
+import vkpp.buffer.stage_pool;
 import vkpp.instance;
 import vkpp.device;
 import vkpp.swapchain;
@@ -157,6 +158,9 @@ static_assert(offsetof(histogram_push_cpu, device_address) == 16UZ);
 
 static constexpr auto k_pipeline_cache_path = "f1st_pipeline_cache.bin"sv;
 
+static constexpr vk::DeviceSize k_stage_pool_capacity =
+  64ULL * 1024ULL * 1024ULL;
+
 export class app
 {
 public:
@@ -195,6 +199,7 @@ private:
       .and_then(std::bind_front(&app::create_command_pool, this))
       .and_then(std::bind_front(&app::create_upload_pool, this))
       .and_then(std::bind_front(&app::create_transfer_upload_pool, this))
+      .and_then(std::bind_front(&app::create_stage_pool, this))
       .and_then(std::bind_front(&app::create_frames, this))
       .and_then(std::bind_front(&app::create_uniform_ring, this))
       .and_then(std::bind_front(&app::create_frame_timeline, this))
@@ -475,6 +480,14 @@ private:
   }
 
   auto
+  create_stage_pool() -> std::expected<void, vkpp::error_t>
+  {
+    return vkpp::stage_pool::create(device_.allocator(), k_stage_pool_capacity)
+      .transform([this](vkpp::stage_pool&& pool) -> void
+      { stage_pool_ = std::move(pool); });
+  }
+
+  auto
   create_buffers() -> std::expected<void, vkpp::error_t>
   {
     return vkpp::load_gltf_asset_cpu(model_path,
@@ -517,6 +530,7 @@ private:
                 .mip_policy = image.suggested_mip_policy,
                 .sampler = {},
                 .borrowed_sampler = *default_sampler,
+                .stage_pool = stage_pool_,
               });
             }
             else if (host.mip_chain.has_value())
@@ -534,6 +548,7 @@ private:
                 .sampler = {},
                 .borrowed_sampler = *default_sampler,
                 .level_offsets = chain.level_offsets,
+                .stage_pool = stage_pool_,
               });
             }
             else
@@ -730,6 +745,7 @@ private:
               .transfer_pool = transfer_upload_pool_,
               .bytes =
                 std::as_bytes(std::span<const material_gpu> { materials_gpu }),
+              .stage_pool = stage_pool_,
             });
           if (!uploaded_materials)
           {
@@ -773,7 +789,9 @@ private:
                 .pool = upload_pool_,
                 .transfer_pool = transfer_upload_pool_,
                 .bytes =
-                  std::as_bytes(std::span<const draw_gpu> { draws_gpu }) });
+                  std::as_bytes(std::span<const draw_gpu> { draws_gpu }),
+                .stage_pool = stage_pool_,
+                });
           if (!uploaded_draws)
           {
             return std::unexpected { std::move(uploaded_draws).error() };
@@ -877,6 +895,7 @@ private:
                   .transfer_pool = transfer_upload_pool_,
                   .arena = geometry_arena_.buffer(),
                   .slices = slices,
+                  .stage_pool = stage_pool_,
                 });
               });
         });
@@ -1863,6 +1882,7 @@ private:
   vkpp::command_pool command_pool_ {};
   vkpp::command_pool upload_pool_ {};
   vkpp::command_pool transfer_upload_pool_ {};
+  vkpp::stage_pool stage_pool_ {};
   std::array<vkpp::frame, max_frames_in_flight> frames_ {};
   std::uint32_t frame_index_ {};
   vk::raii::Semaphore frame_timeline_ { nullptr };

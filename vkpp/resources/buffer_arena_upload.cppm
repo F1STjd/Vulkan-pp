@@ -14,6 +14,7 @@ import vkpp.error;
 import vkpp.device;
 import vkpp.command;
 import vkpp.barrier;
+import vkpp.buffer.stage_pool;
 
 namespace vkpp
 {
@@ -32,26 +33,27 @@ export struct arena_upload_create_info
   std::optional<command_pool&> transfer_pool {};
   vk::Buffer arena {};
   std::span<const arena_slice_upload> slices {};
+  std::optional<stage_pool&> stage_pool {};
 };
 
 [[nodiscard]] auto
 fill_staging_and_regions(const arena_upload_create_info& create_info,
-  staging_buffer& staging) -> std::vector<vk::BufferCopy>
+  void* mapped, vk::DeviceSize base_offset) -> std::vector<vk::BufferCopy>
 {
   std::vector<vk::BufferCopy> regions {};
   regions.reserve(create_info.slices.size());
-  vk::DeviceSize src_offset { 0UZ };
-  auto* mapped = static_cast<std::byte*>(staging.mapped());
+  vk::DeviceSize relative { 0UZ };
+  auto* dst = static_cast<std::byte*>(mapped);
   for (const auto& slice : create_info.slices)
   {
     std::memcpy(
-      mapped + src_offset, slice.bytes.data(), slice.bytes.size_bytes());
+      dst + relative, slice.bytes.data(), slice.bytes.size_bytes());
     regions.push_back({
-      .srcOffset = src_offset,
+      .srcOffset = base_offset + relative,
       .dstOffset = slice.dst_offset,
       .size = slice.bytes.size_bytes(),
     });
-    src_offset += slice.bytes.size_bytes();
+    relative += slice.bytes.size_bytes();
   }
   return regions;
 }
@@ -173,6 +175,42 @@ upload_arena_slices(const arena_upload_create_info& create_info)
     total += slice.bytes.size_bytes();
   }
 
+  auto submit_regions =
+    [&](vk::Buffer staging_handle, std::span<const vk::BufferCopy> regions)
+      -> std::expected<void, error_t>
+      {
+        const bool dual_queue = create_info.device.has_dedicated_transfer() &&
+          create_info.transfer_pool.has_value();
+        if (dual_queue)
+        {
+          return submit_arena_copy_dual_queue(
+            create_info, staging_handle, regions);
+        }
+        return submit_arena_copy_single_queue(
+          create_info, staging_handle, regions)
+          .and_then([](submission&& done) -> std::expected<void, error_t>
+            { return done.wait(); });
+      };
+
+  if (create_info.stage_pool.has_value())
+  {
+    return create_info.stage_pool->allocate(total, 4UZ)
+      .and_then(
+        [ & ](stage_allocation&& allocation) -> std::expected<void, error_t>
+        {
+          const std::vector<vk::BufferCopy> regions = fill_staging_and_regions(
+            create_info, allocation.mapped, allocation.offset);
+          return submit_regions(create_info.stage_pool->buffer(), regions)
+            .and_then(
+              [ &, allocation = std::move(allocation) ] mutable
+                -> std::expected<void, error_t>
+              {
+                create_info.stage_pool->free(allocation);
+                return {};
+              });
+        });
+  }
+
   return staging_buffer::create(
     create_info.device.allocator(), create_info.slices)
     .and_then(
@@ -186,18 +224,8 @@ upload_arena_slices(const arena_upload_create_info& create_info)
           };
         }
         const std::vector<vk::BufferCopy> regions =
-          fill_staging_and_regions(create_info, staging);
-        const bool dual_queue = create_info.device.has_dedicated_transfer() &&
-          create_info.transfer_pool.has_value();
-        if (dual_queue)
-        {
-          return submit_arena_copy_dual_queue(
-            create_info, staging.buffer(), regions);
-        }
-        return submit_arena_copy_single_queue(
-          create_info, staging.buffer(), regions)
-          .and_then([](submission&& done) -> std::expected<void, error_t>
-            { return done.wait(); });
+          fill_staging_and_regions(create_info, staging.mapped(), 0UZ);
+        return submit_regions(staging.buffer(), regions);
       });
 }
 

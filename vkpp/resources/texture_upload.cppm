@@ -17,6 +17,7 @@ import vkpp.command;
 import vkpp.buffer;
 import vkpp.barrier;
 import vkpp.sampler;
+import vkpp.buffer.stage_pool;
 
 namespace vkpp
 {
@@ -24,15 +25,15 @@ using namespace std::string_view_literals;
 
 [[nodiscard]] inline auto
 make_precomputed_copy_regions(vk::Extent2D base_extent,
-  std::uint32_t mip_levels, std::span<const vk::DeviceSize> level_offsets)
-  -> std::vector<vk::BufferImageCopy>
+  std::uint32_t mip_levels, std::span<const vk::DeviceSize> level_offsets,
+  vk::DeviceSize buffer_base_offset) -> std::vector<vk::BufferImageCopy>
 {
   std::vector<vk::BufferImageCopy> regions {};
   regions.reserve(mip_levels);
   for (auto level : std::views::indices(mip_levels))
   {
     regions.push_back({
-      .bufferOffset = level_offsets[level],
+      .bufferOffset = buffer_base_offset + level_offsets[level],
       .bufferRowLength= 0U,
       .bufferImageHeight = 0U,
       .imageSubresource = {
@@ -55,18 +56,18 @@ make_precomputed_copy_regions(vk::Extent2D base_extent,
 inline void
 record_copy_precomputed_chain(vk::raii::CommandBuffer& command_buffer,
   vk::Buffer staging_buffer, vk::Image image,
-  const texture_create_info& create_info)
+  const texture_create_info& create_info, vk::DeviceSize src_offset)
 {
   const std::vector<vk::BufferImageCopy> regions =
-    make_precomputed_copy_regions(
-      create_info.extent, create_info.mip_levels, create_info.level_offsets);
+    make_precomputed_copy_regions(create_info.extent, create_info.mip_levels,
+      create_info.level_offsets, src_offset);
   command_buffer.copyBufferToImage(
     staging_buffer, image, vk::ImageLayout::eTransferDstOptimal, regions);
 }
 
 [[nodiscard]] inline auto
 upload_texture_via_graphics_queue(const texture_create_info& create_info,
-  vk::Buffer staging_buffer, vk::Image image_handle)
+  vk::Buffer staging_buffer, vk::Image image_handle, vk::DeviceSize src_offset)
   -> std::expected<void, error_t>
 {
   single_time_submit single_time {
@@ -87,7 +88,8 @@ upload_texture_via_graphics_queue(const texture_create_info& create_info,
             undefined_dst_to_transfer_dst(image_handle, create_info.mip_levels);
           record_barriers(command_buffer, std::span { &to_transfer_dst, 1UZ });
           record_copy_precomputed_chain(
-            command_buffer, staging_buffer, image_handle, create_info);
+            command_buffer, staging_buffer, image_handle, create_info,
+            src_offset);
           const image_barrier to_shader_read = transfer_dst_to_shader_read(
             image_handle, 0U, create_info.mip_levels);
           record_barriers(command_buffer, std::span { &to_shader_read, 1UZ });
@@ -95,7 +97,8 @@ upload_texture_via_graphics_queue(const texture_create_info& create_info,
         }
         return record_upload_sampled_texture(command_buffer,
           create_info.device.physical_device(), staging_buffer, image_handle,
-          create_info.format, create_info.extent, create_info.mip_levels);
+          create_info.format, create_info.extent, create_info.mip_levels,
+          src_offset);
       })
     .and_then([ & ] -> std::expected<submission, error_t>
       { return single_time.end_and_submit(upload::deferred); })
@@ -105,7 +108,7 @@ upload_texture_via_graphics_queue(const texture_create_info& create_info,
 
 [[nodiscard]] inline auto
 upload_texture_via_tranfer_queue(const texture_create_info& create_info,
-  vk::Buffer staging_buffer, vk::Image image_handle)
+  vk::Buffer staging_buffer, vk::Image image_handle, vk::DeviceSize src_offset)
   -> std::expected<void, error_t>
 {
   const ownership_transfer transfer {
@@ -136,13 +139,13 @@ upload_texture_via_tranfer_queue(const texture_create_info& create_info,
               if (create_info.mip_policy ==
                 texture_mip_policy::upload_precomputed_chain)
               {
-                record_copy_precomputed_chain(
-                  command_buffer, staging_buffer, image_handle, create_info);
+                record_copy_precomputed_chain(command_buffer, staging_buffer,
+                  image_handle, create_info, src_offset);
               }
               else
               {
                 record_copy_buffer_to_image(command_buffer, staging_buffer,
-                  image_handle, create_info.extent);
+                  image_handle, create_info.extent, src_offset);
               }
               const image_barrier release = release_image_ownership(
                 image_handle, transfer, vk::ImageLayout::eTransferDstOptimal,
@@ -223,6 +226,82 @@ make_texture(const texture_create_info& create_info)
 
   const vk::DeviceSize byte_size = create_info.pixels.size_bytes();
 
+  auto finish_texture =
+    [&](image_resource<>&& image, vk::Buffer staging_handle,
+      vk::DeviceSize src_offset) -> std::expected<texture<>, error_t>
+    {
+      const vk::Image image_handle = image.image();
+      const bool dual_queue = create_info.device.has_dedicated_transfer() &&
+        create_info.transfer_pool.has_value() &&
+        create_info.mip_policy != texture_mip_policy::generate_gpu_blit;
+      return (dual_queue
+          ? upload_texture_via_tranfer_queue(
+              create_info, staging_handle, image_handle, src_offset)
+          : upload_texture_via_graphics_queue(
+              create_info, staging_handle, image_handle, src_offset))
+        .and_then(
+          [ & ]() -> std::expected<texture<>, error_t>
+          {
+            if (create_info.borrowed_sampler.has_value())
+            {
+              return texture<> {
+                std::move(image),
+                *create_info.borrowed_sampler,
+                create_info.mip_levels,
+              };
+            }
+            return make_sampler(create_info.device.device(),
+              create_info.device.physical_device(), create_info.sampler)
+              .transform(
+                [ &, image = std::move(image) ](
+                  vk::raii::Sampler&& sampler) mutable -> texture<>
+                {
+                  return texture<> {
+                    std::move(image),
+                    std::move(sampler),
+                    create_info.mip_levels,
+                  };
+                });
+          });
+    };
+
+  if (create_info.stage_pool.has_value())
+  {
+    return create_info.stage_pool->allocate(byte_size, 4UZ)
+      .and_then(
+        [ & ](stage_allocation&& allocation)
+          -> std::expected<texture<>, error_t>
+        {
+          std::memcpy(
+            allocation.mapped, create_info.pixels.data(), byte_size);
+          const auto src_offset = allocation.offset;
+          return make_image_resource<image_kind::sampled_texture>(
+            create_info.device.allocator(), create_info.device.device(),
+            image_runtime_args {
+              .extent = create_info.extent,
+              .format = create_info.format,
+              .samples = vk::SampleCountFlagBits::e1,
+              .mip_levels = create_info.mip_levels,
+            })
+            .and_then(
+              [ &, allocation = std::move(allocation), src_offset ](
+                image_resource<>&& image) mutable
+                -> std::expected<texture<>, error_t>
+              {
+                return finish_texture(
+                  std::move(image), create_info.stage_pool->buffer(),
+                  src_offset)
+                  .and_then(
+                    [&, allocation = std::move(allocation)](texture<>&& tex)
+                    mutable -> std::expected<texture<>, error_t>
+                    {
+                      create_info.stage_pool->free(allocation);
+                      return std::move(tex);
+                    });
+              });
+        });
+  }
+
   return staging_buffer::create(
     create_info.device.allocator(), create_info.pixels)
     .and_then(
@@ -254,40 +333,8 @@ make_texture(const texture_create_info& create_info)
               image_resource<>&& image) mutable
               -> std::expected<texture<>, error_t>
             {
-              const vk::Image image_handle = image.image();
-              const bool dual_queue =
-                create_info.device.has_dedicated_transfer() &&
-                create_info.transfer_pool.has_value() &&
-                create_info.mip_policy != texture_mip_policy::generate_gpu_blit;
-              return (dual_queue
-                  ? upload_texture_via_tranfer_queue(
-                      create_info, staging_buffer.buffer(), image_handle)
-                  : upload_texture_via_graphics_queue(
-                      create_info, staging_buffer.buffer(), image_handle))
-                .and_then(
-                  [ & ]() -> std::expected<texture<>, error_t>
-                  {
-                    if (create_info.borrowed_sampler.has_value())
-                    {
-                      return texture<> {
-                        std::move(image),
-                        *create_info.borrowed_sampler,
-                        create_info.mip_levels,
-                      };
-                    }
-                    return make_sampler(create_info.device.device(),
-                      create_info.device.physical_device(), create_info.sampler)
-                      .transform(
-                        [ &, image = std::move(image) ](
-                          vk::raii::Sampler&& sampler) mutable -> texture<>
-                        {
-                          return texture<> {
-                            std::move(image),
-                            std::move(sampler),
-                            create_info.mip_levels,
-                          };
-                        });
-                  });
+              return finish_texture(
+                std::move(image), create_info.stage_pool->buffer(), 0UZ);
             });
       });
 }

@@ -7,13 +7,14 @@ export module vkpp.texture;
 import std;
 import vulkan;
 
+export import vkpp.sampler;
 import vkpp.error;
 import vkpp.memory;
 import vkpp.memory.vma;
 import vkpp.image;
 import vkpp.device;
 import vkpp.command;
-export import vkpp.sampler;
+import vkpp.buffer.stage_pool;
 
 namespace vkpp
 {
@@ -91,6 +92,7 @@ export struct texture_create_info
   sampler_create_info sampler {};
   std::optional<vk::Sampler> borrowed_sampler {};
   std::span<const vk::DeviceSize> level_offsets {};
+  std::optional<stage_pool&> stage_pool {};
 };
 
 } // namespace vkpp
