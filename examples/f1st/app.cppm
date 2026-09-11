@@ -287,9 +287,19 @@ private:
         },
         .require_present = true,
         .request_dedicated_transfer = true,
+        .rank = {
+          .prefer_discrete = true,
+        },
       })
       .transform([ this ](vkpp::device_context&& device) -> void
-        { device_ = std::move(device); });
+        {
+          device_ = std::move(device);
+          const auto props = device_.physical_device().getProperties();
+          std::println(
+            "vkpp: selected GPU '{}' type = {}",
+            props.deviceName.data(),
+            static_cast<std::uint32_t>(props.deviceType));
+        });
   }
 
   auto

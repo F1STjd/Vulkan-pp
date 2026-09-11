@@ -102,6 +102,59 @@ struct feature_traits<feature_tag::buffer_device_address>
     &device_feature_requests::buffer_device_address;
 };
 
+export struct physical_device_rank_policy
+{
+  bool prefer_discrete { true };
+};
+
+export [[nodiscard]] auto
+score_physical_device(const vk::raii::PhysicalDevice& physical_device,
+  physical_device_rank_policy policy = {}) -> std::int64_t
+{
+  const auto properties = physical_device.getProperties();
+  const auto memory = physical_device.getMemoryProperties();
+  std::int64_t device_local_bytes {};
+  for (auto index : std::views::indices(memory.memoryHeapCount))
+  {
+    if (memory.memoryHeaps[ index ].flags &
+      vk::MemoryHeapFlagBits::eDeviceLocal)
+    {
+      device_local_bytes +=
+        static_cast<std::int64_t>(memory.memoryHeaps[ index ].size);
+    }
+  }
+  std::int64_t tier {};
+  if (policy.prefer_discrete)
+  {
+    switch (properties.deviceType)
+    {
+    case vk::PhysicalDeviceType::eDiscreteGpu:
+    {
+      tier = 3LL;
+      break;
+    }
+    case vk::PhysicalDeviceType::eIntegratedGpu:
+    {
+      tier = 2LL;
+      break;
+    }
+    case vk::PhysicalDeviceType::eVirtualGpu:
+    {
+      tier = 1LL;
+      break;
+    }
+    // case vk::PhysicalDeviceType::eCpu:
+    // case vk::PhysicalDeviceType::eOther:
+    default:
+    {
+      tier = 0LL;
+      break;
+    }
+    }
+  }
+  return (tier << 56) + device_local_bytes;
+}
+
 // require Vulkan 1.4 and every feature vkpp needs to construct/run today
 // if gpu is limitted then some workarounds should be searched for
 // ^^ will be done in far future
@@ -112,6 +165,7 @@ export struct device_requirements
   device_feature_requests features {};
   bool require_present { true };
   bool request_dedicated_transfer { false };
+  physical_device_rank_policy rank {};
 };
 
 export class device_context
@@ -125,16 +179,21 @@ public:
     return UTILS_VK(instance.instance().enumeratePhysicalDevices(),
       ^^vk::raii::Instance::enumeratePhysicalDevices)
       .and_then(
-        [ & ](std::span<const vk::raii::PhysicalDevice> devices)
+        [ & ](std::vector<vk::raii::PhysicalDevice>&& devices)
           -> std::expected<device_context, error_t>
         {
           const auto surface_ref = requirements.require_present
             ? std::optional { std::cref(instance.surface()) }
             : std::nullopt;
-          const auto suitable_device_it = std::ranges::find_if(devices,
-            [ & ](const vk::raii::PhysicalDevice& device)
-            { return is_suitable(device, surface_ref, requirements); });
-          if (suitable_device_it == devices.end())
+
+          auto suitable_devices = devices |
+            std::views::filter(std::bind_back(
+              is_suitable, surface_ref, std::cref(requirements)));
+          auto device = std::ranges::max_element(suitable_devices, std::less {},
+            [ &requirements ](
+              const vk::raii::PhysicalDevice& device) -> std::int64_t
+            { return score_physical_device(device, requirements.rank); });
+          if (device == suitable_devices.end())
           {
             return std::unexpected {
               app_error {
@@ -145,7 +204,7 @@ public:
           }
 
           device_context output {};
-          output.physical_device_ = *suitable_device_it;
+          output.physical_device_ = std::move(*device);
           // Todo: Konrad - is_suitable() already computes qf index, maybe there
           // is a way no to repeat this computation
           output.graphics_qf_index_ = requirements.require_present
