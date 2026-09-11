@@ -196,6 +196,7 @@ private:
       .and_then(std::bind_front(&app::create_upload_pool, this))
       .and_then(std::bind_front(&app::create_transfer_upload_pool, this))
       .and_then(std::bind_front(&app::create_frames, this))
+      .and_then(std::bind_front(&app::create_uniform_ring, this))
       .and_then(std::bind_front(&app::create_frame_timeline, this))
       .and_then(std::bind_front(&app::create_timestamp_ring, this))
       .and_then(std::bind_front(&app::create_bindless_table, this))
