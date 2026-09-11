@@ -100,6 +100,9 @@ public:
   : pool_ { std::move(pool) }
   {}
 
+  // Not thread-safe. One command_pool (and the CBs allocated from it) may be
+  // recorded by at most one thread at a time. Do not share a pool
+  // across recording threads. Use create_command_pools(count) for worker pools.
   [[nodiscard]] static auto
   create(const vk::raii::Device& device, std::uint32_t queue_family_index,
     vk::CommandPoolCreateFlags flags = {})
@@ -259,5 +262,22 @@ private:
   const vk::raii::Queue& queue_;
   vk::raii::CommandBuffer command_buffer_ { nullptr };
 };
+
+export [[nodiscard]] auto
+create_command_pools(const vk::raii::Device& device,
+  std::uint32_t queue_family_index, std::uint32_t count,
+  vk::CommandPoolCreateFlags flags = {})
+  -> std::expected<std::vector<command_pool>, error_t>
+{
+  std::vector<command_pool> pools {};
+  pools.reserve(count);
+  for (auto _ : std::views::indices(count))
+  {
+    auto pool = command_pool::create(device, queue_family_index, flags);
+    if (!pool) { return std::unexpected { std::move(pool).error() }; }
+    pools.push_back(std::move(*pool));
+  }
+  return pools;
+}
 
 }; // namespace vkpp
