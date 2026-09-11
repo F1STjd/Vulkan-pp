@@ -46,8 +46,7 @@ fill_staging_and_regions(const arena_upload_create_info& create_info,
   auto* dst = static_cast<std::byte*>(mapped);
   for (const auto& slice : create_info.slices)
   {
-    std::memcpy(
-      dst + relative, slice.bytes.data(), slice.bytes.size_bytes());
+    std::memcpy(dst + relative, slice.bytes.data(), slice.bytes.size_bytes());
     regions.push_back({
       .srcOffset = base_offset + relative,
       .dstOffset = slice.dst_offset,
@@ -176,21 +175,19 @@ upload_arena_slices(const arena_upload_create_info& create_info)
   }
 
   auto submit_regions =
-    [&](vk::Buffer staging_handle, std::span<const vk::BufferCopy> regions)
-      -> std::expected<void, error_t>
-      {
-        const bool dual_queue = create_info.device.has_dedicated_transfer() &&
-          create_info.transfer_pool.has_value();
-        if (dual_queue)
-        {
-          return submit_arena_copy_dual_queue(
-            create_info, staging_handle, regions);
-        }
-        return submit_arena_copy_single_queue(
-          create_info, staging_handle, regions)
-          .and_then([](submission&& done) -> std::expected<void, error_t>
-            { return done.wait(); });
-      };
+    [ & ](vk::Buffer staging_handle,
+      std::span<const vk::BufferCopy> regions) -> std::expected<void, error_t>
+  {
+    const bool dual_queue = create_info.device.has_dedicated_transfer() &&
+      create_info.transfer_pool.has_value();
+    if (dual_queue)
+    {
+      return submit_arena_copy_dual_queue(create_info, staging_handle, regions);
+    }
+    return submit_arena_copy_single_queue(create_info, staging_handle, regions)
+      .and_then([](submission&& done) -> std::expected<void, error_t>
+        { return done.wait(); });
+  };
 
   if (create_info.stage_pool.has_value())
   {

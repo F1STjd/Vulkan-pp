@@ -49,7 +49,8 @@ public:
   {}
 
   pending_upload(stage_pool& pool, stage_allocation&& allocation,
-    vk::raii::Semaphore&& copy_done, submission&& primary, submission&& secondary, Resource&& value)
+    vk::raii::Semaphore&& copy_done, submission&& primary,
+    submission&& secondary, Resource&& value)
   : pool_ { pool }, allocation_ { std::move(allocation) },
     copy_done_ { std::move(copy_done) },
     submissions_ { std::move(primary), std::move(secondary) },
@@ -66,7 +67,7 @@ public:
         return std::unexpected { std::move(done).error() };
       }
     }
-    if(pool_.has_value())
+    if (pool_.has_value())
     {
       pool_->free(allocation_);
       pool_ = std::nullopt;
@@ -341,27 +342,29 @@ upload_device_local_buffer(
 {
   const vk::DeviceSize byte_size = create_info.bytes.size_bytes();
 
-  if(create_info.stage_pool.has_value())
+  if (create_info.stage_pool.has_value())
   {
     return create_info.stage_pool->allocate(byte_size, 4UZ)
-      .and_then([&](stage_allocation&& allocation)
-        -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
-      {
-        std::memcpy(allocation.mapped, create_info.bytes.data(), byte_size);
-        return buffer_resource<Kind>::create(
-          create_info.device.allocator(), byte_size)
-          .and_then(
-            [&, allocation = std::move(allocation)](
-              buffer_resource<Kind>&& device_local) mutable
-              -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
-            {
-              return submit_buffer_upload(create_info, *create_info.stage_pool,
-                std::move(allocation), std::move(device_local));
-            });
-      })
+      .and_then(
+        [ & ](stage_allocation&& allocation)
+          -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
+        {
+          std::memcpy(allocation.mapped, create_info.bytes.data(), byte_size);
+          return buffer_resource<Kind>::create(
+            create_info.device.allocator(), byte_size)
+            .and_then(
+              [ &, allocation = std::move(allocation) ](
+                buffer_resource<Kind>&& device_local) mutable
+                -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
+              {
+                return submit_buffer_upload(create_info,
+                  *create_info.stage_pool, std::move(allocation),
+                  std::move(device_local));
+              });
+        })
       .and_then([](pending_upload<buffer_resource<Kind>>&& pending)
-        -> std::expected<buffer_resource<Kind>, error_t>
-      { return std::move(pending).join(); });
+                  -> std::expected<buffer_resource<Kind>, error_t>
+        { return std::move(pending).join(); });
   }
 
   return staging_buffer::create(create_info.device.allocator(), byte_size)

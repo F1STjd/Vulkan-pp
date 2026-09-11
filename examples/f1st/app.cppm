@@ -483,8 +483,8 @@ private:
   create_stage_pool() -> std::expected<void, vkpp::error_t>
   {
     return vkpp::stage_pool::create(device_.allocator(), k_stage_pool_capacity)
-      .transform([this](vkpp::stage_pool&& pool) -> void
-      { stage_pool_ = std::move(pool); });
+      .transform([ this ](vkpp::stage_pool&& pool) -> void
+        { stage_pool_ = std::move(pool); });
   }
 
   auto
@@ -784,14 +784,13 @@ private:
             });
           }
           auto uploaded_draws =
-            vkpp::upload_device_local_buffer<vkpp::buffer_kind::storage>(
-              { .device = device_,
-                .pool = upload_pool_,
-                .transfer_pool = transfer_upload_pool_,
-                .bytes =
-                  std::as_bytes(std::span<const draw_gpu> { draws_gpu }),
-                .stage_pool = stage_pool_,
-                });
+            vkpp::upload_device_local_buffer<vkpp::buffer_kind::storage>({
+              .device = device_,
+              .pool = upload_pool_,
+              .transfer_pool = transfer_upload_pool_,
+              .bytes = std::as_bytes(std::span<const draw_gpu> { draws_gpu }),
+              .stage_pool = stage_pool_,
+            });
           if (!uploaded_draws)
           {
             return std::unexpected { std::move(uploaded_draws).error() };

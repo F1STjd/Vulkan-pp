@@ -87,9 +87,8 @@ upload_texture_via_graphics_queue(const texture_create_info& create_info,
           const image_barrier to_transfer_dst =
             undefined_dst_to_transfer_dst(image_handle, create_info.mip_levels);
           record_barriers(command_buffer, std::span { &to_transfer_dst, 1UZ });
-          record_copy_precomputed_chain(
-            command_buffer, staging_buffer, image_handle, create_info,
-            src_offset);
+          record_copy_precomputed_chain(command_buffer, staging_buffer,
+            image_handle, create_info, src_offset);
           const image_barrier to_shader_read = transfer_dst_to_shader_read(
             image_handle, 0U, create_info.mip_levels);
           record_barriers(command_buffer, std::span { &to_shader_read, 1UZ });
@@ -227,53 +226,51 @@ make_texture(const texture_create_info& create_info)
   const vk::DeviceSize byte_size = create_info.pixels.size_bytes();
 
   auto finish_texture =
-    [&](image_resource<>&& image, vk::Buffer staging_handle,
+    [ & ](image_resource<>&& image, vk::Buffer staging_handle,
       vk::DeviceSize src_offset) -> std::expected<texture<>, error_t>
-    {
-      const vk::Image image_handle = image.image();
-      const bool dual_queue = create_info.device.has_dedicated_transfer() &&
-        create_info.transfer_pool.has_value() &&
-        create_info.mip_policy != texture_mip_policy::generate_gpu_blit;
-      return (dual_queue
-          ? upload_texture_via_tranfer_queue(
-              create_info, staging_handle, image_handle, src_offset)
-          : upload_texture_via_graphics_queue(
-              create_info, staging_handle, image_handle, src_offset))
-        .and_then(
-          [ & ]() -> std::expected<texture<>, error_t>
+  {
+    const vk::Image image_handle = image.image();
+    const bool dual_queue = create_info.device.has_dedicated_transfer() &&
+      create_info.transfer_pool.has_value() &&
+      create_info.mip_policy != texture_mip_policy::generate_gpu_blit;
+    return (dual_queue ? upload_texture_via_tranfer_queue(create_info,
+                           staging_handle, image_handle, src_offset)
+                       : upload_texture_via_graphics_queue(create_info,
+                           staging_handle, image_handle, src_offset))
+      .and_then(
+        [ & ]() -> std::expected<texture<>, error_t>
+        {
+          if (create_info.borrowed_sampler.has_value())
           {
-            if (create_info.borrowed_sampler.has_value())
-            {
-              return texture<> {
-                std::move(image),
-                *create_info.borrowed_sampler,
-                create_info.mip_levels,
-              };
-            }
-            return make_sampler(create_info.device.device(),
-              create_info.device.physical_device(), create_info.sampler)
-              .transform(
-                [ &, image = std::move(image) ](
-                  vk::raii::Sampler&& sampler) mutable -> texture<>
-                {
-                  return texture<> {
-                    std::move(image),
-                    std::move(sampler),
-                    create_info.mip_levels,
-                  };
-                });
-          });
-    };
+            return texture<> {
+              std::move(image),
+              *create_info.borrowed_sampler,
+              create_info.mip_levels,
+            };
+          }
+          return make_sampler(create_info.device.device(),
+            create_info.device.physical_device(), create_info.sampler)
+            .transform(
+              [ &, image = std::move(image) ](
+                vk::raii::Sampler&& sampler) mutable -> texture<>
+              {
+                return texture<> {
+                  std::move(image),
+                  std::move(sampler),
+                  create_info.mip_levels,
+                };
+              });
+        });
+  };
 
   if (create_info.stage_pool.has_value())
   {
     return create_info.stage_pool->allocate(byte_size, 4UZ)
       .and_then(
-        [ & ](stage_allocation&& allocation)
-          -> std::expected<texture<>, error_t>
+        [ & ](
+          stage_allocation&& allocation) -> std::expected<texture<>, error_t>
         {
-          std::memcpy(
-            allocation.mapped, create_info.pixels.data(), byte_size);
+          std::memcpy(allocation.mapped, create_info.pixels.data(), byte_size);
           const auto src_offset = allocation.offset;
           return make_image_resource<image_kind::sampled_texture>(
             create_info.device.allocator(), create_info.device.device(),
@@ -288,12 +285,12 @@ make_texture(const texture_create_info& create_info)
                 image_resource<>&& image) mutable
                 -> std::expected<texture<>, error_t>
               {
-                return finish_texture(
-                  std::move(image), create_info.stage_pool->buffer(),
-                  src_offset)
+                return finish_texture(std::move(image),
+                  create_info.stage_pool->buffer(), src_offset)
                   .and_then(
-                    [&, allocation = std::move(allocation)](texture<>&& tex)
-                    mutable -> std::expected<texture<>, error_t>
+                    [ &, allocation = std::move(allocation) ](
+                      texture<>&& tex) mutable
+                      -> std::expected<texture<>, error_t>
                     {
                       create_info.stage_pool->free(allocation);
                       return std::move(tex);

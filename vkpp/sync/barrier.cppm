@@ -302,7 +302,7 @@ record_upload_sampled_texture(vk::raii::CommandBuffer& command_buffer,
   const vk::raii::PhysicalDevice& physical, vk::Buffer staging_buffer,
   vk::Image image, vk::Format format, vk::Extent2D extent,
   std::uint32_t mip_levels, vk::DeviceSize buffer_offset)
-    -> std::expected<void, error_t>
+  -> std::expected<void, error_t>
 {
   const image_barrier to_transfer_dst =
     undefined_dst_to_transfer_dst(image, mip_levels);
