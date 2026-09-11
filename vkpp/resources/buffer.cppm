@@ -295,6 +295,18 @@ public:
         { return mapped_buffer { std::move(resource) }; });
   }
 
+  [[nodiscard]] static auto
+  create(Alloc& allocator, vk::DeviceSize size,
+    std::span<const std::uint32_t> sharing_families = {})
+    -> std::expected<mapped_buffer, error_t>
+    requires(Kind == buffer_kind::uniform)
+  {
+    return buffer_resource<Kind, Alloc>::create(
+      allocator, size, sharing_families)
+      .transform([](buffer_resource<Kind, Alloc>&& resource) -> mapped_buffer
+        { return mapped_buffer { std::move(resource) }; });
+  }
+
   void
   write(const void* data, std::size_t bytes, std::size_t offset = 0UZ)
   {
@@ -482,5 +494,22 @@ get_buffer_device_address(const vk::raii::Device& device, vk::Buffer buffer)
     .buffer = buffer,
   });
 }
+
+export [[nodiscard]] constexpr auto
+align_up(vk::DeviceSize value, vk::DeviceSize alignment) -> vk::DeviceSize
+{
+  if (alignment <= 1UZ) { return value; }
+  return (value + alignment - 1UZ) / alignment * alignment;
+}
+
+export [[nodiscard]] constexpr auto
+uniform_slice_stride(vk::DeviceSize element_size, vk::DeviceSize min_alignment)
+  -> vk::DeviceSize
+{ return align_up(element_size, min_alignment); }
+
+export [[nodiscard]] constexpr auto
+uniform_slice_offset(std::uint32_t index, vk::DeviceSize stride)
+  -> vk::DeviceSize
+{ return static_cast<vk::DeviceSize>(index) * stride; }
 
 }; // namespace vkpp

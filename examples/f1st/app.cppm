@@ -111,7 +111,7 @@ static constexpr vkpp::graphics_pipeline_spec k_blend_pipeline_spec {
 static constexpr std::array k_set0_bindings {
   vk::DescriptorSetLayoutBinding {
     .binding = 0U,
-    .descriptorType = vk::DescriptorType::eUniformBuffer,
+    .descriptorType = vk::DescriptorType::eUniformBufferDynamic,
     .descriptorCount = 1U,
     .stageFlags =
       vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
@@ -201,7 +201,7 @@ private:
       .and_then(std::bind_front(&app::create_bindless_table, this))
       .and_then(std::bind_front(&app::create_buffers, this))
       .and_then(std::bind_front(&app::create_set0_arena, this))
-      .and_then(std::bind_front(&app::create_descriptor_sets, this))
+      .transform(std::bind_front(&app::create_descriptor_sets, this))
       .and_then(std::bind_front(&app::create_graphics_pipelines, this))
       .and_then(std::bind_front(&app::create_imgui_descriptor_pool, this))
       .and_then(std::bind_front(&app::init_imgui, this))
@@ -884,17 +884,34 @@ private:
   auto
   create_frames() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::create_frames<max_frames_in_flight, uniform_buffer_object>(
-      {
-        .device = device_,
-        .pool = command_pool_,
-        .min_ubo_alignment = device_.physical_device()
-          .getProperties()
-          .limits.minUniformBufferOffsetAlignment,
-      })
+    return vkpp::create_frames<max_frames_in_flight>(
+      { .device = device_, .pool = command_pool_ })
       .transform(
         [ this ](std::array<vkpp::frame, max_frames_in_flight>&& frames) -> void
         { frames_ = std::move(frames); });
+  }
+
+  auto
+  create_uniform_ring() -> std::expected<void, vkpp::error_t>
+  {
+    uniform_ring_stride_ =
+      vkpp::uniform_slice_stride(sizeof(uniform_buffer_object),
+        device_.min_uniform_buffer_offset_alignment());
+    const auto ring_size =
+      uniform_ring_stride_ * static_cast<vk::DeviceSize>(max_frames_in_flight);
+    auto ring = vkpp::uniform_buffer::create(device_.allocator(), ring_size);
+    if (!ring) { return std::unexpected { std::move(ring).error() }; }
+    if (ring->mapped() == nullptr)
+    {
+      return std::unexpected {
+        vkpp::app_error {
+          .kind = vkpp::app_error_kind::mapping_failed,
+          .detail = "uniform ring map returned nullptr"sv,
+        },
+      };
+    }
+    uniform_ring_ = std::move(*ring);
+    return {};
   }
 
   auto
@@ -947,42 +964,39 @@ private:
       .exposure = 1.0F,
     };
     ubo.projection[ 1 ][ 1 ] *= -1;
-    frames_[ current_frame ].uniform_buffer.write(&ubo, sizeof(ubo));
+    const auto offset =
+      vkpp::uniform_slice_offset(current_frame, uniform_ring_stride_);
+    uniform_ring_.write(&ubo, sizeof(ubo), static_cast<std::size_t>(offset));
   }
 
   auto
   create_set0_arena() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::descriptor_set_arena::create(
+    return vkpp::descriptor_set_arena::create( //
       {
         .device = device_.device(),
         .bindings = k_set0_bindings,
-        .set_count = max_frames_in_flight,
+        .set_count = 1U,
       })
       .transform([ this ](vkpp::descriptor_set_arena&& arena) -> void
         { set0_arena_ = std::move(arena); });
   }
 
-  auto
-  create_descriptor_sets() -> std::expected<void, vkpp::error_t>
+  void
+  create_descriptor_sets()
   {
+    const auto set = set0_arena_.set(0U);
     for (auto index : std::views::indices(max_frames_in_flight))
     {
-      frames_[ index ].descriptor_set =
-        set0_arena_.set(static_cast<std::uint32_t>(index));
+      frames_[ index ].descriptor_set = set;
       const vk::DescriptorSet set = frames_[ index ].descriptor_set;
-
-      vkpp::write_uniform_buffer(device_.device(), set, 0U,
-        frames_[ index ].uniform_buffer.buffer(),
-        sizeof(uniform_buffer_object));
-
-      vkpp::write_storage_buffer(device_.device(), set, 1U,
-        material_buffer_.buffer(), material_buffer_.size());
-
-      vkpp::write_storage_buffer(
-        device_.device(), set, 3U, draw_buffer_.buffer(), draw_buffer_.size());
     }
-    return {};
+    vkpp::write_uniform_buffer_dynamic(device_.device(), set, 0U,
+      uniform_ring_.buffer(), sizeof(uniform_buffer_object));
+    vkpp::write_storage_buffer(device_.device(), set, 1U,
+      material_buffer_.buffer(), material_buffer_.size());
+    vkpp::write_storage_buffer(
+      device_.device(), set, 3U, draw_buffer_.buffer(), draw_buffer_.size());
   }
 
   auto
@@ -1338,8 +1352,12 @@ private:
       frames_[ frame_index_ ].descriptor_set,
       bindless_table_.set(),
     };
-    vkpp::bind_graphics(
-      command_buffer, *pipeline.pipeline(), *pipeline.layout(), sets);
+    const std::array dynamic_offsets {
+      static_cast<std::uint32_t>(
+        vkpp::uniform_slice_offset(frame_index_, uniform_ring_stride_)),
+    };
+    vkpp::bind_graphics(command_buffer, *pipeline.pipeline(),
+      *pipeline.layout(), sets, 0U, dynamic_offsets);
   }
 
   void
@@ -1907,6 +1925,9 @@ private:
   std::vector<primitive_draw> draws_ {};
   std::vector<vkpp::gltf::draw_item_cpu> draw_list_ {};
   vkpp::storage_buffer draw_buffer_ {};
+
+  vkpp::uniform_buffer uniform_ring_ {};
+  vk::DeviceSize uniform_ring_stride_ {};
 
   // histogram
   vkpp::device_address_buffer histogram_bins_ {};

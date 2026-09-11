@@ -29,13 +29,14 @@ dispatch(vk::raii::CommandBuffer& command_buffer, std::uint32_t group_count_x,
 export inline void
 bind_graphics(vk::raii::CommandBuffer& command_buffer, vk::Pipeline pipeline,
   vk::PipelineLayout layout, std::span<const vk::DescriptorSet> sets,
-  std::uint32_t first_set = 0U)
+  std::uint32_t first_set = 0U,
+  std::span<const std::uint32_t> dynamic_offsets = {})
 {
   command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
   if (!sets.empty())
   {
-    command_buffer.bindDescriptorSets(
-      vk::PipelineBindPoint::eGraphics, layout, first_set, sets, {});
+    command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout,
+      first_set, sets, dynamic_offsets);
   }
 }
 

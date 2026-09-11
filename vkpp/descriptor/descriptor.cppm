@@ -284,4 +284,13 @@ write_ubo_and_combined_image(const vk::raii::Device& device,
   write_combined_image_sampler(device, destination, 1U, sampler, view, layout);
 }
 
+export void
+write_uniform_buffer_dynamic(const vk::raii::Device& device,
+  vk::DescriptorSet set, std::uint32_t binding, vk::Buffer buffer,
+  vk::DeviceSize range, vk::DeviceSize offset = 0UZ)
+{
+  write_buffer_descriptor(device, set, binding,
+    vk::DescriptorType::eUniformBufferDynamic, buffer, offset, range);
+}
+
 } // namespace vkpp

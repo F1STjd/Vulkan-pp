@@ -235,6 +235,9 @@ public:
               queue_create_info_count = 2U;
             }
           }
+          output.min_uniform_buffer_offset_alignment_ =
+            output.physical_device_.getProperties()
+              .limits.minUniformBufferOffsetAlignment;
 
           const vk::StructureChain feature_chain =
             make_enable_chain(requirements.features);
@@ -306,6 +309,13 @@ public:
   [[nodiscard]] auto
   msaa_samples(this auto&& self) -> decltype(auto)
   { return std::forward_like<decltype(self)>(self.msaa_samples_); }
+
+  [[nodiscard]] auto
+  min_uniform_buffer_offset_alignment(this auto&& self) -> decltype(auto)
+  {
+    return std::forward_like<decltype(self)>(
+      self.min_uniform_buffer_offset_alignment_);
+  }
 
   [[nodiscard]] auto
   has_dedicated_transfer() const -> bool
@@ -571,6 +581,8 @@ private:
   std::uint32_t graphics_qf_index_ { ~0U };
   std::uint32_t transfer_qf_index_ { ~0U };
   vk::SampleCountFlagBits msaa_samples_ { vk::SampleCountFlagBits::e1 };
+  // there are 4 bytes of padding here, so possible new free 4 byte member here
+  vk::DeviceSize min_uniform_buffer_offset_alignment_ { 1UZ };
 };
 
 }; // namespace vkpp
