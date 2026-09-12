@@ -119,8 +119,33 @@ public:
   [[nodiscard]] auto
   acquire_index() -> std::optional<std::uint32_t>
   {
+    if (!free_list_.empty())
+    {
+      const auto index = free_list_.back();
+      free_list_.pop_back();
+      return index;
+    }
     if (next_index_ >= capacity_) { return std::nullopt; }
     return next_index_++;
+  }
+
+  void
+  release_index(
+    std::uint32_t index, std::uint64_t earliest_reuse_timeline_value)
+  { pending_retire_.emplace_back(index, earliest_reuse_timeline_value); }
+
+  void
+  retire(std::uint64_t completed_timeline_value)
+  {
+    const auto split = std::ranges::stable_partition(pending_retire_,
+      [ completed_timeline_value ](
+        const std::pair<std::uint32_t, std::uint64_t>& e) -> bool
+      { return e.second > completed_timeline_value; });
+    for (const auto& entry : split)
+    {
+      free_list_.push_back(entry.first);
+    }
+    pending_retire_.erase(split.begin(), split.end());
   }
 
   void
@@ -157,6 +182,8 @@ private:
   vk::DescriptorSet set_ {};
   std::uint32_t capacity_ { 0U };
   std::uint32_t next_index_ { 0U };
+  std::vector<std::uint32_t> free_list_ {};
+  std::vector<std::pair<std::uint32_t, std::uint64_t>> pending_retire_ {};
 };
 
 } // namespace vkpp
