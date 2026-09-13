@@ -309,6 +309,9 @@ private:
             "vkpp: selected GPU '{}' type = {}",
             props.deviceName.data(),
             static_cast<std::uint32_t>(props.deviceType));
+          std::println(
+            "vkpp: descriptor_heap supported = {}",
+            vkpp::descriptor_heap_supported(device_.physical_device()));
         });
   }
 

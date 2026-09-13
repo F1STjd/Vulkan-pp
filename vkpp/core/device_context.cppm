@@ -28,6 +28,7 @@ export struct device_feature_requests
   bool buffer_device_address { false };
   bool graphics_pipeline_library { false };
   bool shader_object { false };
+  bool descriptor_heap { false };
 };
 
 // clang-format off
@@ -44,6 +45,7 @@ export struct feature_tag
   struct buffer_device_address {};
   struct graphics_pipeline_library {};
   struct shader_object {};
+  struct descriptor_heap {};
 };
 // clang-format on
 
@@ -117,6 +119,12 @@ template<>
 struct feature_traits<feature_tag::shader_object>
 {
   static constexpr auto member = &device_feature_requests::shader_object;
+};
+
+template<>
+struct feature_traits<feature_tag::descriptor_heap>
+{
+  static constexpr auto member = &device_feature_requests::descriptor_heap;
 };
 
 export struct physical_device_rank_policy
@@ -358,7 +366,8 @@ private:
     vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
     vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
-    vk::PhysicalDeviceShaderObjectFeaturesEXT>;
+    vk::PhysicalDeviceShaderObjectFeaturesEXT,
+    vk::PhysicalDeviceDescriptorHeapFeaturesEXT>;
 
   [[nodiscard]] static constexpr auto
   make_enable_chain(const device_feature_requests& requests)
@@ -402,6 +411,9 @@ private:
     chain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject =
       vk::Bool32 { requests.shader_object };
 
+    chain.get<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>().descriptorHeap =
+      vk::Bool32 { requests.descriptor_heap };
+
     return chain;
   }
 
@@ -414,7 +426,8 @@ private:
         vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
         vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
-        vk::PhysicalDeviceShaderObjectFeaturesEXT>();
+        vk::PhysicalDeviceShaderObjectFeaturesEXT,
+        vk::PhysicalDeviceDescriptorHeapFeaturesEXT>();
 
     const auto& core = available.get<vk::PhysicalDeviceFeatures2>().features;
     const auto& v12 = available.get<vk::PhysicalDeviceVulkan12Features>();
@@ -486,6 +499,14 @@ private:
         return false;
       }
     }
+    if (requests.descriptor_heap)
+    {
+      if (available.get<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>()
+            .descriptorHeap != vk::True)
+      {
+        return false;
+      }
+    }
 
     return true;
   }
@@ -516,6 +537,11 @@ private:
     }
     if (requirements.features.shader_object &&
       !has_extension(vk::EXTShaderObjectExtensionName))
+    {
+      return false;
+    }
+    if (requirements.features.descriptor_heap &&
+      !has_extension(vk::EXTDescriptorHeapExtensionName))
     {
       return false;
     }
@@ -666,5 +692,31 @@ private:
   // there are 3 bytes of padding here, so possible new free 3 byte member here
   vk::DeviceSize min_uniform_buffer_offset_alignment_ { 1UZ };
 };
+
+export [[nodiscard]] auto
+descriptor_heap_supported(const vk::raii::PhysicalDevice& physical_device)
+  -> bool
+{
+  const bool extension_present =
+    physical_device.enumerateDeviceExtensionProperties()
+      .transform(
+        [](std::span<const vk::ExtensionProperties> available) -> bool
+        {
+          return std::ranges::any_of(available,
+            [](const vk::ExtensionProperties& properties) -> bool
+            {
+              return std::strcmp(properties.extensionName,
+                       vk::EXTDescriptorHeapExtensionName) == 0;
+            });
+        })
+      .value_or(false);
+  if (!extension_present) { return false; }
+
+  const auto features =
+    physical_device.getFeatures2<vk::PhysicalDeviceFeatures2,
+      vk::PhysicalDeviceDescriptorHeapFeaturesEXT>();
+  return features.get<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>()
+           .descriptorHeap == vk::True;
+}
 
 }; // namespace vkpp
