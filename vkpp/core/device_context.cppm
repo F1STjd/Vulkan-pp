@@ -27,6 +27,7 @@ export struct device_feature_requests
   bool descriptor_indexing { false };
   bool buffer_device_address { false };
   bool graphics_pipeline_library { false };
+  bool shader_object { false };
 };
 
 // clang-format off
@@ -42,6 +43,7 @@ export struct feature_tag
   struct descriptor_indexing {};
   struct buffer_device_address {};
   struct graphics_pipeline_library {};
+  struct shader_object {};
 };
 // clang-format on
 
@@ -109,6 +111,12 @@ struct feature_traits<feature_tag::graphics_pipeline_library>
 {
   static constexpr auto member =
     &device_feature_requests::graphics_pipeline_library;
+};
+
+template<>
+struct feature_traits<feature_tag::shader_object>
+{
+  static constexpr auto member = &device_feature_requests::shader_object;
 };
 
 export struct physical_device_rank_policy
@@ -349,7 +357,8 @@ private:
   using device_feature_chain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
     vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
-    vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>;
+    vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
+    vk::PhysicalDeviceShaderObjectFeaturesEXT>;
 
   [[nodiscard]] static constexpr auto
   make_enable_chain(const device_feature_requests& requests)
@@ -390,6 +399,9 @@ private:
       .graphicsPipelineLibrary =
       vk::Bool32 { requests.graphics_pipeline_library };
 
+    chain.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject =
+      vk::Bool32 { requests.shader_object };
+
     return chain;
   }
 
@@ -401,7 +413,8 @@ private:
       physical_device.getFeatures2<vk::PhysicalDeviceFeatures2,
         vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
-        vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>();
+        vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
+        vk::PhysicalDeviceShaderObjectFeaturesEXT>();
 
     const auto& core = available.get<vk::PhysicalDeviceFeatures2>().features;
     const auto& v12 = available.get<vk::PhysicalDeviceVulkan12Features>();
@@ -465,6 +478,14 @@ private:
         return false;
       }
     }
+    if (requests.shader_object)
+    {
+      if (available.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>()
+            .shaderObject != vk::True)
+      {
+        return false;
+      }
+    }
 
     return true;
   }
@@ -492,6 +513,11 @@ private:
       {
         return false;
       }
+    }
+    if (requirements.features.shader_object &&
+      !has_extension(vk::EXTShaderObjectExtensionName))
+    {
+      return false;
     }
     return true;
   }

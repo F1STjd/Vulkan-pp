@@ -59,4 +59,10 @@ push_compute_constants(vk::raii::CommandBuffer& command_buffer,
     command_buffer, layout, vk::ShaderStageFlagBits::eCompute, value);
 }
 
+export inline void
+bind_shaders(vk::raii::CommandBuffer& command_buffer,
+  std::span<const vk::ShaderStageFlagBits> stages,
+  std::span<const vk::ShaderEXT> shaders)
+{ command_buffer.bindShadersEXT(stages, shaders); }
+
 } // namespace vkpp

@@ -73,6 +73,7 @@ target_sources(vkpp
       pipeline/compute.cppm       # module vkpp.pipeline.compute
       pipeline/pipeline_cache.cppm # module vkpp.pipeline.cache
       pipeline/graphics_pipeline_library.cppm # module vkpp.pipeline.gpl
+      pipeline/shader_object.cppm # module vkpp.pipeline.shader_object
 
       query/timestamp.cppm # module vkpp.query
 )
