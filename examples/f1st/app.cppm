@@ -47,6 +47,7 @@ import vkpp.barrier;
 import vkpp.pipeline;
 import vkpp.pipeline.compute;
 import vkpp.pipeline.cache;
+import vkpp.pipeline.gpl;
 import vkpp.descriptor;
 import vkpp.descriptor.indexing;
 import vkpp.semaphore;
@@ -91,6 +92,8 @@ required_instance_extensions() -> std::vector<const char*>
 constexpr std::array required_device_extensions {
   vk::KHRSwapchainExtensionName,
   vk::EXTExtendedDynamicStateExtensionName,
+  vk::KHRPipelineLibraryExtensionName,
+  vk::EXTGraphicsPipelineLibraryExtensionName,
 };
 
 constexpr std::size_t max_frames_in_flight { 2UZ };
@@ -290,6 +293,7 @@ private:
           .host_query_reset = true,
           .descriptor_indexing = true,
           .buffer_device_address = true,
+          .graphics_pipeline_library = true,
         },
         .require_present = true,
         .request_dedicated_transfer = true,
@@ -388,6 +392,8 @@ private:
   auto
   create_graphics_pipelines() -> std::expected<void, vkpp::error_t>
   {
+    using enum vkpp::graphics_pipeline_library_kind;
+
     constexpr std::array vertex_bindings {
       vkpp::vertex::get_binding_description(),
     };
@@ -399,56 +405,148 @@ private:
       *bindless_table_.layout(),
     };
 
-    // Again we nest +1 every time dependency is left up behind (here spirv).
-    // Maybe we should create helper about creating more than one
-    // graphics_pipeline, so spirv could be shared as one nesting level. Also
-    // like I wrote earlier: there should be some utils function that calls some
-    // function and the initialises the passed object with resulting value. <- I
-    // do not know if this is good idea. It chould be called `do_and_init`, or
-    // `dai` if it is too long. What about function with a lot of arguments,
-    // this API then could look bad. In perfect world API should look like this:
-    // return load_shader()
-    //   .and_then(create_first_pipeline)  // <- also initialises the data
-    //   member .and_then(create_second_pipeline);
+    auto depth_format =
+      vkpp::find_depth_attachment_format(device_.physical_device());
+    if (!depth_format)
+    {
+      return std::unexpected { std::move(depth_format).error() };
+    }
 
-    return vkpp::find_depth_attachment_format(device_.physical_device())
-      .and_then(
-        [ &, this ](
-          vk::Format depth_format) -> std::expected<void, vkpp::error_t>
-        {
-          const vkpp::graphics_pipeline_runtime_args runtime_args {
-            .color_formats = color_formats,
-            .depth_format = depth_format,
-            .samples = device_.msaa_samples(),
-            .set_layouts = set_layouts,
-            .vertex_bindings = vertex_bindings,
-            .vertex_attributes = vertex_attributes,
-            .push_constant_size = static_cast<std::uint32_t>(sizeof(draw_push)),
-            .push_constant_stages = vk::ShaderStageFlagBits::eVertex |
-              vk::ShaderStageFlagBits::eFragment,
-          };
-          return vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv")
-            .and_then(
-              [ &, this ](const std::vector<char>& spirv)
-                -> std::expected<void, vkpp::error_t>
-              {
-                return vkpp::make_graphics_pipeline<k_pipeline_spec>(
-                  device_.device(), runtime_args, { .spirv = spirv },
-                  pipeline_cache_.get())
-                  .and_then(
-                    [ &, this ](vkpp::graphics_pipeline&& opaque)
-                      -> std::expected<void, vkpp::error_t>
-                    {
-                      graphics_pipeline_ = std::move(opaque);
-                      return vkpp::make_graphics_pipeline<
-                        k_blend_pipeline_spec>(device_.device(), runtime_args,
-                        { .spirv = spirv }, pipeline_cache_.get())
-                        .transform(
-                          [ this ](vkpp::graphics_pipeline&& blend) -> void
-                          { blend_pipeline_ = std::move(blend); });
-                    });
-              });
-        });
+    auto spirv = vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
+    if (!spirv) { return std::unexpected { std::move(spirv).error() }; }
+
+    const vk::PushConstantRange push_range {
+      .stageFlags =
+        vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+      .offset = 0U,
+      .size = static_cast<std::uint32_t>(sizeof(draw_push)),
+    };
+    const vk::PipelineLayoutCreateInfo layout_info {
+      .setLayoutCount = static_cast<std::uint32_t>(set_layouts.size()),
+      .pSetLayouts = set_layouts.data(),
+      .pushConstantRangeCount = 1U,
+      .pPushConstantRanges = &push_range,
+    };
+
+    auto make_layout =
+      [ & ]() -> std::expected<vk::raii::PipelineLayout, vkpp::error_t>
+    {
+      return UTILS_VK(device_.device().createPipelineLayout(layout_info),
+        ^^vk::raii::Device::createPipelineLayout);
+    };
+
+    auto gpl_layout = make_layout();
+    if (!gpl_layout)
+    {
+      return std::unexpected { std::move(gpl_layout).error() };
+    }
+    graphics_pipeline_layout_ = std::move(*gpl_layout);
+
+    auto layout_opaque = make_layout();
+    if (!layout_opaque)
+    {
+      return std::unexpected { std::move(layout_opaque).error() };
+    }
+
+    auto layout_blend = make_layout();
+    if (!layout_blend)
+    {
+      return std::unexpected { std::move(layout_blend).error() };
+    }
+
+    const vkpp::graphics_pipeline_library_runtime_args lib_args {
+      .vertex_bindings = vertex_bindings,
+      .vertex_attributes = vertex_attributes,
+      .spirv = *spirv,
+      .set_layouts = set_layouts,
+      .push_constant_size = static_cast<std::uint32_t>(sizeof(draw_push)),
+      .push_constant_stages =
+        vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+      .layout = *graphics_pipeline_layout_,
+      .color_formats = color_formats,
+      .depth_format = *depth_format,
+      .samples = device_.msaa_samples(),
+    };
+
+    auto vi =
+      vkpp::make_graphics_pipeline_library<vertex_input, k_pipeline_spec>(
+        device_.device(), lib_args, pipeline_cache_.get());
+    if (!vi) { return std::unexpected { std::move(vi).error() }; }
+    gpl_vertex_input_ = std::move(*vi);
+
+    auto pre =
+      vkpp::make_graphics_pipeline_library<pre_rasterization, k_pipeline_spec>(
+        device_.device(), lib_args, pipeline_cache_.get());
+    if (!pre) { return std::unexpected { std::move(pre).error() }; }
+    gpl_pre_raster_ = std::move(*pre);
+
+    auto frag_opaque =
+      vkpp::make_graphics_pipeline_library<fragment, k_pipeline_spec>(
+        device_.device(), lib_args, pipeline_cache_.get());
+    if (!frag_opaque)
+    {
+      return std::unexpected { std::move(frag_opaque).error() };
+    }
+    gpl_fragment_opaque_ = std::move(*frag_opaque);
+
+    auto out_opaque =
+      vkpp::make_graphics_pipeline_library<fragment_output, k_pipeline_spec>(
+        device_.device(), lib_args, pipeline_cache_.get());
+    if (!out_opaque)
+    {
+      return std::unexpected { std::move(out_opaque).error() };
+    }
+    gpl_fragment_output_opaque_ = std::move(*out_opaque);
+
+    auto frag_blend =
+      vkpp::make_graphics_pipeline_library<fragment, k_blend_pipeline_spec>(
+        device_.device(), lib_args, pipeline_cache_.get());
+    if (!frag_blend)
+    {
+      return std::unexpected { std::move(frag_blend).error() };
+    }
+    gpl_fragment_blend_ = std::move(*frag_blend);
+
+    auto out_blend = vkpp::make_graphics_pipeline_library<fragment_output,
+      k_blend_pipeline_spec>(device_.device(), lib_args, pipeline_cache_.get());
+    if (!out_blend) { return std::unexpected { std::move(out_blend).error() }; }
+    gpl_fragment_output_blend_ = std::move(*out_blend);
+
+    const std::array opaque_libs {
+      *gpl_vertex_input_.pipeline(),
+      *gpl_pre_raster_.pipeline(),
+      *gpl_fragment_opaque_.pipeline(),
+      *gpl_fragment_output_opaque_.pipeline(),
+    };
+    auto opaque_executable = vkpp::link_graphics_pipeline(device_.device(),
+      opaque_libs, false, *graphics_pipeline_layout_, pipeline_cache_.get());
+    if (!opaque_executable)
+    {
+      return std::unexpected { std::move(opaque_executable).error() };
+    }
+
+    const std::array blend_libs {
+      *gpl_vertex_input_.pipeline(),
+      *gpl_pre_raster_.pipeline(),
+      *gpl_fragment_blend_.pipeline(),
+      *gpl_fragment_output_blend_.pipeline(),
+    };
+    auto blend_executable = vkpp::link_graphics_pipeline(device_.device(),
+      blend_libs, false, *graphics_pipeline_layout_, pipeline_cache_.get());
+    if (!blend_executable)
+    {
+      return std::unexpected { std::move(blend_executable).error() };
+    }
+
+    graphics_pipeline_ = vkpp::graphics_pipeline {
+      std::move(*layout_opaque),
+      std::move(*opaque_executable),
+    };
+    blend_pipeline_ = vkpp::graphics_pipeline {
+      std::move(*layout_blend),
+      std::move(*blend_executable),
+    };
+    return {};
   }
 
   auto
@@ -1931,6 +2029,14 @@ private:
 
   vkpp::graphics_pipeline graphics_pipeline_ {};
   vkpp::graphics_pipeline blend_pipeline_ {};
+
+  vk::raii::PipelineLayout graphics_pipeline_layout_ { nullptr };
+  vkpp::graphics_pipeline_library gpl_vertex_input_ {};
+  vkpp::graphics_pipeline_library gpl_pre_raster_ {};
+  vkpp::graphics_pipeline_library gpl_fragment_opaque_ {};
+  vkpp::graphics_pipeline_library gpl_fragment_output_opaque_ {};
+  vkpp::graphics_pipeline_library gpl_fragment_blend_ {};
+  vkpp::graphics_pipeline_library gpl_fragment_output_blend_ {};
 
   struct blend_entry
   {

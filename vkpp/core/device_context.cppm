@@ -26,6 +26,7 @@ export struct device_feature_requests
   bool host_query_reset { false };
   bool descriptor_indexing { false };
   bool buffer_device_address { false };
+  bool graphics_pipeline_library { false };
 };
 
 // clang-format off
@@ -40,6 +41,7 @@ export struct feature_tag
   struct host_query_reset {};
   struct descriptor_indexing {};
   struct buffer_device_address {};
+  struct graphics_pipeline_library {};
 };
 // clang-format on
 
@@ -100,6 +102,13 @@ struct feature_traits<feature_tag::buffer_device_address>
 {
   static constexpr auto member =
     &device_feature_requests::buffer_device_address;
+};
+
+template<>
+struct feature_traits<feature_tag::graphics_pipeline_library>
+{
+  static constexpr auto member =
+    &device_feature_requests::graphics_pipeline_library;
 };
 
 export struct physical_device_rank_policy
@@ -205,6 +214,17 @@ public:
 
           device_context output {};
           output.physical_device_ = std::move(*device);
+          if (requirements.features.graphics_pipeline_library)
+          {
+            const auto props =
+              output.physical_device_
+                .getProperties2<vk::PhysicalDeviceProperties2,
+                  vk::PhysicalDeviceGraphicsPipelineLibraryPropertiesEXT>();
+            output.graphics_pipeline_library_fast_linking_ =
+              props
+                .get<vk::PhysicalDeviceGraphicsPipelineLibraryPropertiesEXT>()
+                .graphicsPipelineLibraryFastLinking == vk::True;
+          }
           // Todo: Konrad - is_suitable() already computes qf index, maybe there
           // is a way no to repeat this computation
           output.graphics_qf_index_ = requirements.require_present
@@ -311,6 +331,10 @@ public:
   { return std::forward_like<decltype(self)>(self.msaa_samples_); }
 
   [[nodiscard]] auto
+  graphics_pipeline_library_fast_linking() const -> bool
+  { return graphics_pipeline_library_fast_linking_; }
+
+  [[nodiscard]] auto
   min_uniform_buffer_offset_alignment(this auto&& self) -> decltype(auto)
   {
     return std::forward_like<decltype(self)>(
@@ -324,7 +348,8 @@ public:
 private:
   using device_feature_chain = vk::StructureChain<vk::PhysicalDeviceFeatures2,
     vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
-    vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>;
+    vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+    vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>;
 
   [[nodiscard]] static constexpr auto
   make_enable_chain(const device_feature_requests& requests)
@@ -361,6 +386,10 @@ private:
     auto& eds = chain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
     eds.extendedDynamicState = vk::Bool32 { requests.extended_dynamic_state };
 
+    chain.get<vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>()
+      .graphicsPipelineLibrary =
+      vk::Bool32 { requests.graphics_pipeline_library };
+
     return chain;
   }
 
@@ -371,7 +400,8 @@ private:
     const auto available =
       physical_device.getFeatures2<vk::PhysicalDeviceFeatures2,
         vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
-        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+        vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>();
 
     const auto& core = available.get<vk::PhysicalDeviceFeatures2>().features;
     const auto& v12 = available.get<vk::PhysicalDeviceVulkan12Features>();
@@ -427,6 +457,14 @@ private:
     {
       return false;
     }
+    if (requests.graphics_pipeline_library)
+    {
+      if (available.get<vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>()
+            .graphicsPipelineLibrary != vk::True)
+      {
+        return false;
+      }
+    }
 
     return true;
   }
@@ -435,10 +473,27 @@ private:
   features_extensions_consistent(const device_requirements& requirements)
     -> bool
   {
-    if (!requirements.features.extended_dynamic_state) { return true; }
-    return std::ranges::contains(requirements.extensions,
-      std::string_view { vk::EXTExtendedDynamicStateExtensionName },
-      [](const char* ext) { return std::string_view { ext }; });
+    const auto has_extension = [ & ](std::string_view name) -> bool
+    {
+      return std::ranges::contains(requirements.extensions, name,
+        [](const char* extension) -> std::string_view
+        { return std::string_view { extension }; });
+    };
+
+    if (requirements.features.extended_dynamic_state &&
+      !has_extension(vk::EXTExtendedDynamicStateExtensionName))
+    {
+      return false;
+    }
+    if (requirements.features.graphics_pipeline_library)
+    {
+      if (!has_extension(vk::KHRPipelineLibraryExtensionName) &&
+        !has_extension(vk::EXTGraphicsPipelineLibraryExtensionName))
+      {
+        return false;
+      }
+    }
+    return true;
   }
 
   [[nodiscard]] static auto
@@ -581,7 +636,8 @@ private:
   std::uint32_t graphics_qf_index_ { ~0U };
   std::uint32_t transfer_qf_index_ { ~0U };
   vk::SampleCountFlagBits msaa_samples_ { vk::SampleCountFlagBits::e1 };
-  // there are 4 bytes of padding here, so possible new free 4 byte member here
+  bool graphics_pipeline_library_fast_linking_ { false };
+  // there are 3 bytes of padding here, so possible new free 3 byte member here
   vk::DeviceSize min_uniform_buffer_offset_alignment_ { 1UZ };
 };
 
