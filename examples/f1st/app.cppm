@@ -1996,6 +1996,24 @@ private:
       {
         return std::unexpected { std::move(emissive_index).error() };
       }
+      const auto clearcoat_index =
+        resolve_slot(material.clearcoat_texture, 32U, texture_mask);
+      if (!clearcoat_index)
+      {
+        return std::unexpected { std::move(clearcoat_index).error() };
+      }
+      const auto clearcoat_roughness_index =
+        resolve_slot(material.clearcoat_roughness_texture, 64U, texture_mask);
+      if (!clearcoat_roughness_index)
+      {
+        return std::unexpected { std::move(clearcoat_roughness_index).error() };
+      }
+      const auto clearcoat_normal_index =
+        resolve_slot(material.clearcoat_normal_texture, 128U, texture_mask);
+      if (!clearcoat_normal_index)
+      {
+        return std::unexpected { std::move(clearcoat_normal_index).error() };
+      }
 
       materials_gpu.push_back({
                 .base_color_factor = material.base_color_factor,
@@ -2017,6 +2035,11 @@ private:
                 .alpha_mode = static_cast<std::uint32_t>(material.alpha_mode),
                 .has_texture_mask = texture_mask,
                 .transmission_factor = material.transmission_factor,
+                .clearcoat_factor = material.clearcoat_factor,
+                .clearcoat_roughness_factor = material.clearcoat_roughness_factor,
+                .clearcoat_index = *clearcoat_index,
+                .clearcoat_roughness_index = *clearcoat_roughness_index,
+                .clearcoat_normal_index = *clearcoat_normal_index,
             });
     }
     materials_gpu.emplace_back();
@@ -2350,9 +2373,18 @@ private:
 
   struct material_gpu
   {
-    std::array<float, 4> base_color_factor { 1.0F, 1.0F, 1.0F, 1.0F };
-    std::array<float, 4> emissive_factor_and_metallic { 0.0F, 0.0F, 0.0F,
-      1.0F };
+    std::array<float, 4> base_color_factor {
+      1.0F,
+      1.0F,
+      1.0F,
+      1.0F,
+    };
+    std::array<float, 4> emissive_factor_and_metallic {
+      0.0F,
+      0.0F,
+      0.0F,
+      1.0F,
+    };
     float roughness_factor { 1.0F };
     float normal_scale { 1.0F };
     float occlusion_strength { 1.0F };
@@ -2365,8 +2397,16 @@ private:
     std::uint32_t alpha_mode { 0U };
     std::uint32_t has_texture_mask { 0U };
     float transmission_factor { 0.0F };
+    float clearcoat_factor { 0.0F };
+    float clearcoat_roughness_factor { 0.0F };
+    std::uint32_t clearcoat_index { 0U };
+    std::uint32_t clearcoat_roughness_index { 0U };
+    std::uint32_t clearcoat_normal_index { 0U };
+    std::uint32_t _;
+    std::uint32_t _;
+    std::uint32_t _;
   };
-  static_assert(sizeof(material_gpu) == 80UZ);
+  static_assert(sizeof(material_gpu) == 112UZ);
 
   std::optional<vkpp::sampler_cache> sampler_cache_ {};
   vkpp::bindless_table bindless_table_ {};

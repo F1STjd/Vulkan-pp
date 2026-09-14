@@ -34,6 +34,14 @@ struct material_gpu {
   uint alpha_mode;
   uint has_texture_mask;
   float transmission_factor;
+  float clearcoat_factor;
+  float clearcoat_roughness_factor;
+  uint clearcoat_index;
+  uint clearcoat_roughness_index;
+  uint clearcoat_normal_index;
+  uint _padding1;
+  uint _padding2;
+  uint _padding3;
 };
 [[vk::binding(1, 0)]]
 StructuredBuffer<material_gpu> materials;
@@ -276,7 +284,53 @@ float4 fragment_main(
     max(4.0 * normal_view_cosine *  normal_light_cosine, 1e-4);
   const float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / pi;
   const float3 direct = (diffuse + specular) * ubo.light_color * normal_light_cosine;
-   const float3 radiance_n =
+  float clearcoat = material.clearcoat_factor;
+  float clearcoat_roughness = material.clearcoat_roughness_factor;
+  if ((material.has_texture_mask & 32) != 0)
+  {
+    clearcoat *= textures[
+      NonUniformResourceIndex(material.clearcoat_index)
+    ].Sample(input.texture_coordinates).r;
+  }
+  if ((material.has_texture_mask & 64) != 0)
+  {
+    clearcoat_roughness *= textures[
+      NonUniformResourceIndex(material.clearcoat_roughness_index)
+    ].Sample(input.texture_coordinates).g;
+  }
+  clearcoat_roughness = clamp (clearcoat_roughness, 0.045, 1.0);
+
+  float3 clearcoat_normal = normal;
+  if ((material.has_texture_mask & 128) != 0)
+  {
+    const float3 encoded_clearcoat_normal = textures[
+      NonUniformResourceIndex(material.clearcoat_normal_index)
+    ].Sample(input.texture_coordinates).rgb;
+    clearcoat_normal = apply_normal_map(
+      normal, input.world_position, input.texture_coordinates,
+      encoded_clearcoat_normal, 1.0
+    );
+  }
+
+  float3 clearcoat_specular = float3(0.0, 0.0, 0.0);
+  if (material.clearcoat_factor > 0.0)
+  {
+    const float3 clearcoat_half = normalize(light_direction + view_direction);
+    const float cc_n_dot_l = max(dot(clearcoat_normal, light_direction), 0.0);
+    const float cc_n_dot_v = max(dot(clearcoat_normal, view_direction), 1e-4);
+    const float cc_n_dot_h = max(dot(clearcoat_normal, clearcoat_half), 0.0);
+    const float cc_v_dot_h = max(dot(view_direction, clearcoat_half), 0.0);
+    float3 clearcoat_f0 = float3(0.04, 0.04, 0.04);
+    float3 clearcoat_f = fresnel_schlick(cc_v_dot_h, clearcoat_f0);
+    clearcoat_specular =
+      clearcoat_f *
+      distribution_ggx(cc_n_dot_h, clearcoat_roughness) *
+      geometry_smith(cc_n_dot_v, cc_n_dot_l, clearcoat_roughness) /
+      max(4.0 * cc_n_dot_v * cc_n_dot_l, 1e-4) * ubo.light_color *
+      cc_n_dot_l * clearcoat;
+  }
+
+  const float3 radiance_n =
     ibl_radiance.Sample(normalize(normal)).rgb;
   const float3 ambient =
     albedo * occlusion * radiance_n * ubo.ambient_scale;
@@ -289,7 +343,8 @@ float4 fragment_main(
   const float3 f_ibl =
     fresnel_schlick_roughness(normal_view_cosine, f0, roughness);
   const float3 specular_ibl = prefiltered * (f_ibl * brdf.x + brdf.y);
-  const float3 color = direct + ambient + specular_ibl + emissive;
+  const float3 color = direct + ambient + specular_ibl + clearcoat_specular +
+    emissive;
   const float3 display_linear = tonemap_reinhard_luminance(color * ubo.exposure);
   return float4(display_linear, opacity);
 }

@@ -37,6 +37,7 @@ make_gltf_parser(const gltf::load_runtime_args& runtime_args)
   if (runtime_args.enable_texture_basisu)
   {
     extensions |= fastgltf::Extensions::KHR_texture_basisu;
+    extensions |= fastgltf::Extensions::KHR_materials_clearcoat;
   }
   extensions |= fastgltf::Extensions::KHR_materials_transmission;
   return fastgltf::Parser { extensions };
@@ -635,6 +636,22 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
         {
           mapped.transmission_factor =
             static_cast<float>(material.transmission->transmissionFactor);
+        }
+        if (material.clearcoat)
+        {
+          mapped.clearcoat_factor =
+            static_cast<float>(material.clearcoat->clearcoatFactor);
+          mapped.clearcoat_roughness_factor =
+            static_cast<float>(material.clearcoat->clearcoatRoughnessFactor);
+          mapped.clearcoat_texture =
+            map_optional_texture(gltf, material.clearcoat->clearcoatTexture);
+          mapped.clearcoat_roughness_texture = map_optional_texture(
+            gltf, material.clearcoat->clearcoatRoughnessTexture);
+          if (material.clearcoat->clearcoatNormalTexture.has_value())
+          {
+            mapped.clearcoat_normal_texture = map_texture_ref(
+              gltf, material.clearcoat->clearcoatNormalTexture->textureIndex);
+          }
         }
         out.materials.push_back(std::move(mapped));
       }

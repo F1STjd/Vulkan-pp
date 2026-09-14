@@ -209,10 +209,20 @@ enum class alpha_mode : std::uint8_t
 
 struct material_cpu
 {
-  std::array<float, 4> base_color_factor { 1.0F, 1.0F, 1.0F, 1.0F };
+  std::array<float, 4> base_color_factor {
+    1.0F,
+    1.0F,
+    1.0F,
+    1.0F,
+  };
   float metallic_factor { 1.0F };
   float roughness_factor { 1.0F };
   float transmission_factor { 0.0F };
+  float clearcoat_factor { 0.0F };
+  float clearcoat_roughness_factor { 0.0F };
+  std::optional<texture_ref_cpu> clearcoat_texture {};
+  std::optional<texture_ref_cpu> clearcoat_roughness_texture {};
+  std::optional<texture_ref_cpu> clearcoat_normal_texture {};
   std::optional<texture_ref_cpu> base_color_texture {};
   std::optional<texture_ref_cpu> metallic_roughness_texture {};
   std::optional<texture_ref_cpu> normal_texture {};
@@ -220,7 +230,11 @@ struct material_cpu
   std::optional<texture_ref_cpu> occlusion_texture {};
   float occlusion_strength { 1.0F };
   std::optional<texture_ref_cpu> emissive_texture {};
-  std::array<float, 3> emissive_factor { 0.0F, 0.0F, 0.0F };
+  std::array<float, 3> emissive_factor {
+    0.0F,
+    0.0F,
+    0.0F,
+  };
   alpha_mode alpha_mode { alpha_mode::opaque };
   float alpha_cutoff { 0.5F };
   bool double_sided { false };
