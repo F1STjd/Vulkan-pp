@@ -182,7 +182,7 @@ public:
           for (vk::Image image : output.images_)
           {
             auto view = make_image_view<image_kind::resolve>(
-              device.device(), image, output.format());
+              device.device(), image, output.format(), 1U, 1U);
             if (!view) { return std::unexpected { std::move(view).error() }; }
             output.image_views_.push_back(std::move(*view));
           }

@@ -23,6 +23,74 @@ namespace vkpp
 {
 using namespace std::string_view_literals;
 
+[[nodiscard]] constexpr auto
+texel_byte_size(vk::Format format) -> std::optional<std::uint32_t>
+{
+  switch (format)
+  {
+  case vk::Format::eR8G8B8A8Unorm:
+  case vk::Format::eR8G8B8A8Srgb      : return 4U;
+  case vk::Format::eR16G16B16A16Sfloat: return 8U;
+  default                             : return std::nullopt;
+  }
+}
+
+[[nodiscard]] inline auto
+make_layered_single_level_copy_regions(vk::Extent2D extent,
+  std::uint32_t array_layers, std::uint32_t texel_bytes,
+  vk::DeviceSize buffer_base_offset) -> std::vector<vk::BufferImageCopy>
+{
+  const auto face_bytes = //
+    static_cast<vk::DeviceSize>(extent.width) *
+    static_cast<vk::DeviceSize>(extent.height) *
+    static_cast<vk::DeviceSize>(texel_bytes);
+  std::vector<vk::BufferImageCopy> regions {};
+  regions.reserve(array_layers);
+  for (auto layer : std::views::indices(array_layers))
+  {
+    regions.push_back({
+      .bufferOffset = buffer_base_offset + face_bytes * layer,
+      .bufferRowLength = 0U,
+      .bufferImageHeight = 0U,
+      .imageSubresource = {
+        .aspectMask = vk::ImageAspectFlagBits::eColor,
+        .mipLevel = 0U,
+        .baseArrayLayer = layer,
+        .layerCount = 1U,
+      },
+      .imageOffset = {
+        .x = 0,
+        .y = 0,
+        .z= 0,
+      },
+      .imageExtent = {
+        .width = extent.width,
+        .height = extent.height,
+        .depth = 1U,
+      },
+    });
+  }
+  return regions;
+}
+
+inline void
+record_copy_texture_pixels(vk::raii::CommandBuffer& command_buffer,
+  vk::Buffer staging_buffer, vk::Image image,
+  const texture_create_info& create_info, vk::DeviceSize src_offset,
+  std::uint32_t texel_bytes)
+{
+  if (create_info.array_layers == 1U)
+  {
+    record_copy_buffer_to_image(
+      command_buffer, staging_buffer, image, create_info.extent, src_offset);
+  }
+  const std::vector<vk::BufferImageCopy> regions =
+    make_layered_single_level_copy_regions(
+      create_info.extent, create_info.array_layers, texel_bytes, src_offset);
+  command_buffer.copyBufferToImage(
+    staging_buffer, image, vk::ImageLayout::eTransferDstOptimal, regions);
+}
+
 [[nodiscard]] inline auto
 make_precomputed_copy_regions(vk::Extent2D base_extent,
   std::uint32_t mip_levels, std::span<const vk::DeviceSize> level_offsets,
@@ -85,12 +153,38 @@ upload_texture_via_graphics_queue(const texture_create_info& create_info,
           texture_mip_policy::upload_precomputed_chain)
         {
           const image_barrier to_transfer_dst =
-            undefined_dst_to_transfer_dst(image_handle, create_info.mip_levels);
+            undefined_dst_to_transfer_dst(image_handle, create_info.mip_levels,
+              vk::ImageAspectFlagBits::eColor, create_info.array_layers);
           record_barriers(command_buffer, std::span { &to_transfer_dst, 1UZ });
           record_copy_precomputed_chain(command_buffer, staging_buffer,
             image_handle, create_info, src_offset);
           const image_barrier to_shader_read = transfer_dst_to_shader_read(
-            image_handle, 0U, create_info.mip_levels);
+            image_handle, 0U, create_info.mip_levels,
+            vk::ImageAspectFlagBits::eColor, create_info.array_layers);
+          record_barriers(command_buffer, std::span { &to_shader_read, 1UZ });
+          return {};
+        }
+        if (create_info.array_layers != 1U)
+        {
+          const auto texel_bytes = texel_byte_size(create_info.format);
+          if (!texel_bytes)
+          {
+            return std::unexpected {
+              app_error {
+                .kind = app_error_kind::invalid_argument,
+                .detail = "cube upload missing texel size"sv,
+              },
+            };
+          }
+          const image_barrier to_transfer_dst =
+            undefined_dst_to_transfer_dst(image_handle, create_info.mip_levels,
+              vk::ImageAspectFlagBits::eColor, create_info.array_layers);
+          record_barriers(command_buffer, std::span { &to_transfer_dst, 1UZ });
+          record_copy_texture_pixels(command_buffer, staging_buffer,
+            image_handle, create_info, src_offset, *texel_bytes);
+          const image_barrier to_shader_read = transfer_dst_to_shader_read(
+            image_handle, 0U, create_info.mip_levels,
+            vk::ImageAspectFlagBits::eColor, create_info.array_layers);
           record_barriers(command_buffer, std::span { &to_shader_read, 1UZ });
           return {};
         }
@@ -131,8 +225,9 @@ upload_texture_via_tranfer_queue(const texture_create_info& create_info,
             {
               auto& command_buffer = transfer_submit.command_buffer();
               const image_barrier to_transfer_dst =
-                undefined_dst_to_transfer_dst(
-                  image_handle, create_info.mip_levels);
+                undefined_dst_to_transfer_dst(image_handle,
+                  create_info.mip_levels, vk::ImageAspectFlagBits::eColor,
+                  create_info.array_layers);
               record_barriers(
                 command_buffer, std::span { &to_transfer_dst, 1UZ });
               if (create_info.mip_policy ==
@@ -140,6 +235,21 @@ upload_texture_via_tranfer_queue(const texture_create_info& create_info,
               {
                 record_copy_precomputed_chain(command_buffer, staging_buffer,
                   image_handle, create_info, src_offset);
+              }
+              else if (create_info.array_layers != 1U)
+              {
+                const auto texel_bytes = texel_byte_size(create_info.format);
+                if (!texel_bytes)
+                {
+                  return std::unexpected {
+                    app_error {
+                      .kind = app_error_kind::invalid_argument,
+                      .detail = "cube upload missing texel size"sv,
+                    },
+                  };
+                }
+                record_copy_texture_pixels(command_buffer, staging_buffer,
+                  image_handle, create_info, src_offset, *texel_bytes);
               }
               else
               {
@@ -150,7 +260,8 @@ upload_texture_via_tranfer_queue(const texture_create_info& create_info,
                 image_handle, transfer, vk::ImageLayout::eTransferDstOptimal,
                 vk::ImageLayout::eShaderReadOnlyOptimal,
                 vk::PipelineStageFlagBits2::eCopy,
-                vk::AccessFlagBits2::eTransferWrite, create_info.mip_levels);
+                vk::AccessFlagBits2::eTransferWrite, create_info.mip_levels,
+                vk::ImageAspectFlagBits::eColor, create_info.array_layers);
               record_barriers(command_buffer, std::span { &release, 1UZ });
               return transfer_submit.end_and_submit(
                 upload::deferred, { .signal = *copy_done });
@@ -175,7 +286,8 @@ upload_texture_via_tranfer_queue(const texture_create_info& create_info,
                         vk::ImageLayout::eShaderReadOnlyOptimal,
                         vk::PipelineStageFlagBits2::eFragmentShader,
                         vk::AccessFlagBits2::eShaderSampledRead,
-                        create_info.mip_levels);
+                        create_info.mip_levels, vk::ImageAspectFlagBits::eColor,
+                        create_info.array_layers);
                     record_barriers(graphics_submit.command_buffer(),
                       std::span { &acquire, 1UZ });
                     return graphics_submit.end_and_submit(
@@ -188,7 +300,7 @@ upload_texture_via_tranfer_queue(const texture_create_info& create_info,
       });
 }
 
-export auto
+export [[nodiscard]] auto
 make_texture(const texture_create_info& create_info)
   -> std::expected<texture<>, error_t>
 {
@@ -219,6 +331,54 @@ make_texture(const texture_create_info& create_info)
       app_error {
         .kind = app_error_kind::invalid_argument,
         .detail = "upload_precomputed_chain requires one offset per mip"sv,
+      },
+    };
+  }
+  if (create_info.array_layers != 1U && create_info.array_layers != 6U)
+  {
+    return std::unexpected {
+      app_error {
+        .kind = app_error_kind::invalid_argument,
+        .detail = "texture array_layers must be 1 or 6"sv,
+      },
+    };
+  }
+  if (create_info.array_layers == 6U &&
+    create_info.mip_policy != texture_mip_policy::single_level)
+  {
+    return std::unexpected {
+      app_error {
+        .kind = app_error_kind::invalid_argument,
+        .detail = "cube upload multi_level not supported yet"sv,
+      },
+    };
+  }
+
+  const auto texel_bytes = texel_byte_size(create_info.format);
+  if (create_info.mip_policy == texture_mip_policy::single_level)
+  {
+    if (!texel_bytes)
+    {
+      return std::unexpected {
+        app_error {
+          .kind = app_error_kind::invalid_argument,
+          .detail = "unsupported format for single_level size check"sv,
+        },
+      };
+    }
+  }
+
+  const auto expected_bytes =
+    static_cast<std::size_t>(create_info.extent.width) *
+    static_cast<std::size_t>(create_info.extent.height) *
+    static_cast<std::size_t>(*texel_bytes) *
+    static_cast<std::size_t>(create_info.array_layers);
+  if (create_info.pixels.size_bytes() != expected_bytes)
+  {
+    return std::unexpected {
+      app_error {
+        .kind = app_error_kind::invalid_argument,
+        .detail = "pixels size does not match extent * texels * array_layers"sv,
       },
     };
   }
@@ -263,6 +423,25 @@ make_texture(const texture_create_info& create_info)
         });
   };
 
+  auto make_sampled_image = [ & ] -> std::expected<image_resource<>, error_t>
+  {
+    image_runtime_args image_args {
+      .extent = create_info.extent,
+      .format = create_info.format,
+      .samples = vk::SampleCountFlagBits::e1,
+      .mip_levels = create_info.mip_levels,
+      .array_layers = create_info.array_layers,
+    };
+    if (create_info.array_layers == 6U)
+    {
+      return make_image_resource<image_kind::sampled_cube>(
+        create_info.device.allocator(), create_info.device.device(),
+        image_args);
+    }
+    return make_image_resource<image_kind::sampled_texture>(
+      create_info.device.allocator(), create_info.device.device(), image_args);
+  };
+
   if (create_info.stage_pool.has_value())
   {
     return create_info.stage_pool->allocate(byte_size, 4UZ)
@@ -272,30 +451,22 @@ make_texture(const texture_create_info& create_info)
         {
           std::memcpy(allocation.mapped, create_info.pixels.data(), byte_size);
           const auto src_offset = allocation.offset;
-          return make_image_resource<image_kind::sampled_texture>(
-            create_info.device.allocator(), create_info.device.device(),
-            image_runtime_args {
-              .extent = create_info.extent,
-              .format = create_info.format,
-              .samples = vk::SampleCountFlagBits::e1,
-              .mip_levels = create_info.mip_levels,
-            })
-            .and_then(
-              [ &, allocation = std::move(allocation), src_offset ](
-                image_resource<>&& image) mutable
-                -> std::expected<texture<>, error_t>
-              {
-                return finish_texture(std::move(image),
-                  create_info.stage_pool->buffer(), src_offset)
-                  .and_then(
-                    [ &, allocation = std::move(allocation) ](
-                      texture<>&& tex) mutable
-                      -> std::expected<texture<>, error_t>
-                    {
-                      create_info.stage_pool->free(allocation);
-                      return std::move(tex);
-                    });
-              });
+          return make_sampled_image().and_then(
+            [ &, allocation = std::move(allocation), src_offset ](
+              image_resource<>&& image) mutable
+              -> std::expected<texture<>, error_t>
+            {
+              return finish_texture(
+                std::move(image), create_info.stage_pool->buffer(), src_offset)
+                .and_then(
+                  [ &, allocation = std::move(allocation) ](
+                    texture<>&& tex) mutable
+                    -> std::expected<texture<>, error_t>
+                  {
+                    create_info.stage_pool->free(allocation);
+                    return std::move(tex);
+                  });
+            });
         });
   }
 
@@ -317,22 +488,14 @@ make_texture(const texture_create_info& create_info)
         std::memcpy(
           staging_buffer.mapped(), create_info.pixels.data(), byte_size);
 
-        return make_image_resource<image_kind::sampled_texture>(
-          create_info.device.allocator(), create_info.device.device(),
-          image_runtime_args {
-            .extent = create_info.extent,
-            .format = create_info.format,
-            .samples = vk::SampleCountFlagBits::e1,
-            .mip_levels = create_info.mip_levels,
-          })
-          .and_then(
-            [ &, staging_buffer = std::move(staging_buffer) ](
-              image_resource<>&& image) mutable
-              -> std::expected<texture<>, error_t>
-            {
-              return finish_texture(
-                std::move(image), create_info.stage_pool->buffer(), 0UZ);
-            });
+        return make_sampled_image().and_then(
+          [ &, staging_buffer = std::move(staging_buffer) ](
+            image_resource<>&& image) mutable
+            -> std::expected<texture<>, error_t>
+          {
+            return finish_texture(
+              std::move(image), create_info.stage_pool->buffer(), 0UZ);
+          });
       });
 }
 

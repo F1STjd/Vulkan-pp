@@ -164,6 +164,184 @@ static constexpr auto k_pipeline_cache_path = "f1st_pipeline_cache.bin"sv;
 static constexpr vk::DeviceSize k_stage_pool_capacity =
   64ULL * 1024ULL * 1024ULL;
 
+constexpr std::uint32_t k_ibl_cube_size { 64U };
+constexpr std::uint32_t k_brdf_lut_size { 512U };
+constexpr std::uint32_t k_brdf_sample_count { 64U };
+
+void
+fill_radiance_cube_rgba8(std::vector<std::byte>& out)
+{
+  constexpr std::array<std::array<std::uint8_t, 3>, 6> face_rgb { {
+    { { 220, 60, 60 } },
+    { { 60, 180, 180 } },
+    { { 60, 220, 80 } },
+    { { 40, 40, 40 } },
+    { { 60, 100, 220 } },
+    { { 200, 180, 60 } },
+  } };
+
+  const auto face_bytes = static_cast<std::size_t>(k_ibl_cube_size) *
+    static_cast<std::size_t>(k_ibl_cube_size) * 4UZ;
+  out.resize(face_bytes * 6UZ);
+  for (auto face : std::views::indices(6UZ))
+  {
+    const auto rgb = face_rgb[ face ];
+    auto* face_base = out.data() + face * face_bytes;
+    for (auto pixel :
+      std::views::indices(static_cast<std::size_t>(k_ibl_cube_size) *
+        static_cast<std::size_t>(k_ibl_cube_size)))
+    {
+      auto* texel = face_base + pixel * 4UZ;
+      texel[ 0 ] = static_cast<std::byte>(rgb[ 0 ]);
+      texel[ 1 ] = static_cast<std::byte>(rgb[ 1 ]);
+      texel[ 2 ] = static_cast<std::byte>(rgb[ 2 ]);
+      texel[ 3 ] = static_cast<std::byte>(255);
+    }
+  }
+}
+
+[[nodiscard]] auto
+float_to_half_bits(float value) -> std::uint16_t
+{
+  const std::uint32_t bits = std::bit_cast<std::uint32_t>(value);
+  const std::uint32_t sign = (bits >> 16U) & 0x8000U;
+  const std::int32_t exponent =
+    static_cast<std::int32_t>((bits >> 23U) & 0xFFU) - 127 + 15;
+  const std::uint32_t mantissa = bits & 0x7FFFFFU;
+  if (exponent <= 0) { return static_cast<std::uint16_t>(sign); }
+  if (exponent >= 31) { return static_cast<std::uint16_t>(sign | 0x7C00U); }
+  return static_cast<std::uint16_t>(
+    sign | (static_cast<std::uint32_t>(exponent) << 10U) | (mantissa >> 13U));
+}
+
+void
+store_rgba16f(std::byte* dst, float r, float g, float b, float a)
+{
+  const std::array<std::uint16_t, 4> halves {
+    float_to_half_bits(r),
+    float_to_half_bits(g),
+    float_to_half_bits(b),
+    float_to_half_bits(a),
+  };
+  std::memcpy(dst, halves.data(), sizeof(halves));
+}
+
+[[nodiscard]] auto
+radical_inverse_vdc(std::uint32_t bits) -> float
+{
+  bits = (bits << 16U) | (bits >> 16U);
+  bits = ((bits & 0x55555555U) << 1U) | ((bits & 0xAAAAAAAAU) >> 1U);
+  bits = ((bits & 0x33333333U) << 2U) | ((bits & 0xCCCCCCCCU) >> 2U);
+  bits = ((bits & 0x0F0F0F0FU) << 4U) | ((bits & 0xF0F0F0F0U) >> 4U);
+  bits = ((bits & 0x00FF00FFU) << 8U) | ((bits & 0xFF00FF00U) >> 8U);
+  return static_cast<float>(bits) * 2.3283064365386963e-10F;
+}
+
+[[nodiscard]] auto
+hammersley(std::uint32_t index, std::uint32_t count) -> std::array<float, 2>
+{
+  return {
+    static_cast<float>(index) / static_cast<float>(count),
+    radical_inverse_vdc(index),
+  };
+}
+
+[[nodiscard]] auto
+importance_sample_ggx(
+  std::array<float, 2> xi, float roughness, const glm::vec3& n) -> glm::vec3
+{
+  const float a = roughness * roughness;
+  const float phi = 2.0F * 3.14159265359F * xi[ 0 ];
+  const float cos_theta =
+    std::sqrt((1.0F - xi[ 1 ]) / (1.0F + (a * a - 1.0F) * xi[ 1 ]));
+  const float sin_theta = std::sqrt(1.0F - cos_theta * cos_theta);
+  const glm::vec3 h {
+    std::cos(phi) * sin_theta,
+    std::sin(phi) * sin_theta,
+    cos_theta,
+  };
+  const glm::vec3 up = std::abs(n.z) < 0.999F ? glm::vec3 { 0.0F, 0.0F, 1.0F }
+                                              : glm::vec3 { 1.0F, 0.0F, 0.0F };
+  const glm::vec3 tangent = glm::normalize(glm::cross(up, n));
+  const glm::vec3 bitangent = glm::cross(n, tangent);
+  return glm::normalize(tangent * h.x + bitangent * h.y + n * h.z);
+}
+
+[[nodiscard]] auto
+geometry_schlick_ggx_ibl(float n_dot_v, float roughness) -> float
+{
+  const float a = roughness;
+  const float k = (a * a) / 2.0F;
+  return n_dot_v / (n_dot_v * (1.0F - k) + k);
+}
+
+[[nodiscard]] auto
+geometry_smith_ibl(float n_dot_v, float n_dot_l, float roughness) -> float
+{
+  return geometry_schlick_ggx_ibl(n_dot_v, roughness) *
+    geometry_schlick_ggx_ibl(n_dot_l, roughness);
+}
+
+void
+generate_brdf_lut_rgba16f(std::vector<std::byte>& out)
+{
+  out.resize(static_cast<std::size_t>(k_brdf_lut_size) * k_brdf_lut_size * 8UZ);
+  for (auto y : std::views::indices(k_brdf_lut_size))
+  {
+    for (auto x : std::views::indices(k_brdf_lut_size))
+    {
+      const float n_dot_v =
+        (static_cast<float>(x) + 0.5F) / static_cast<float>(k_brdf_lut_size);
+      const float roughness =
+        (static_cast<float>(y) + 0.5F) / static_cast<float>(k_brdf_lut_size);
+      const glm::vec3 v {
+        std::sqrt(1.0F - n_dot_v * n_dot_v),
+        0.0F,
+        n_dot_v,
+      };
+      const glm::vec3 n { 0.0F, 0.0F, 1.0F };
+      float a { 0.0F };
+      float b { 0.0F };
+      for (auto sample_index : std::views::indices(k_brdf_sample_count))
+      {
+        const auto xi = hammersley(
+          static_cast<std::uint32_t>(sample_index), k_brdf_sample_count);
+        const glm::vec3 h = importance_sample_ggx(xi, roughness, n);
+        const glm::vec3 l = glm::normalize(2.0F * glm::dot(v, h) * h - v);
+        const float n_dot_l = std::max(l.z, 0.0F);
+        const float n_dot_h = std::max(h.z, 0.0F);
+        const float v_dot_h = std::max(glm::dot(v, h), 0.0F);
+        if (n_dot_l > 0.0F)
+        {
+          const float g = geometry_smith_ibl(n_dot_v, n_dot_l, roughness);
+          const float g_vis =
+            (g * v_dot_h) / std::max(n_dot_h * n_dot_v, 1e-4F);
+          const float fc = std::pow(1.0F - v_dot_h, 5.0F);
+          a += (1.0F - fc) * g_vis;
+          b += fc * g_vis;
+        }
+      }
+      a /= static_cast<float>(k_brdf_sample_count);
+      b /= static_cast<float>(k_brdf_sample_count);
+      store_rgba16f(out.data() +
+          (static_cast<std::size_t>(y) * k_brdf_lut_size +
+            static_cast<std::size_t>(x)) *
+            8UZ,
+        a, b, 0.0F, 0.0F);
+    }
+  }
+}
+
+static constexpr std::array k_ibl_bindings {
+  vk::DescriptorSetLayoutBinding {
+    .binding = 0U,
+    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+    .descriptorCount = 1U,
+    .stageFlags = vk::ShaderStageFlagBits::eFragment,
+    .pImmutableSamplers = nullptr,
+  },
+};
+
 export class app
 {
 public:
@@ -208,6 +386,7 @@ private:
       .and_then(std::bind_front(&app::create_frame_timeline, this))
       .and_then(std::bind_front(&app::create_timestamp_ring, this))
       .and_then(std::bind_front(&app::create_bindless_table, this))
+      .and_then(std::bind_front(&app::create_ibl_set, this))
       .and_then(std::bind_front(&app::create_buffers, this))
       .and_then(std::bind_front(&app::create_set0_arena, this))
       .transform(std::bind_front(&app::create_descriptor_sets, this))
@@ -393,6 +572,18 @@ private:
   }
 
   auto
+  create_ibl_set() -> std::expected<void, vkpp::error_t>
+  {
+    return vkpp::descriptor_set_arena::create({
+                                                .device = device_.device(),
+                                                .bindings = k_ibl_bindings,
+                                                .set_count = 1U,
+                                              })
+      .transform([ this ](vkpp::descriptor_set_arena&& arena) -> void
+        { ibl_arena_ = std::move(arena); });
+  }
+
+  auto
   create_graphics_pipelines() -> std::expected<void, vkpp::error_t>
   {
     using enum vkpp::graphics_pipeline_library_kind;
@@ -406,6 +597,7 @@ private:
     const std::array set_layouts {
       *set0_arena_.layout(),
       *bindless_table_.layout(),
+      *ibl_arena_.layout(),
     };
 
     auto depth_format =
@@ -747,6 +939,78 @@ private:
             texture_bindless_image_indices_[ texture_index ] = *image_index;
           }
 
+          std::vector<std::byte> radiance_bytes {};
+          fill_radiance_cube_rgba8(radiance_bytes);
+
+          auto ibl_sampler = sampler_cache_->get_or_create({
+            .mag_filter = vk::Filter::eLinear,
+            .min_filter = vk::Filter::eLinear,
+            .mipmap_mode = vk::SamplerMipmapMode::eLinear,
+            .address_mode_u = vk::SamplerAddressMode::eClampToEdge,
+            .address_mode_v = vk::SamplerAddressMode::eClampToEdge,
+            .address_mode_w = vk::SamplerAddressMode::eClampToEdge,
+          });
+          if (!ibl_sampler)
+          {
+            return std::unexpected { std::move(ibl_sampler).error() };
+          }
+
+          auto radiance = vkpp::make_texture({
+            .device = device_,
+            .pool = upload_pool_,
+            .transfer_pool = transfer_upload_pool_,
+            .pixels = radiance_bytes,
+            .extent = { k_ibl_cube_size, k_ibl_cube_size },
+            .format = vk::Format::eR8G8B8A8Unorm,
+            .mip_levels = 1U,
+            .mip_policy = vkpp::texture_mip_policy::single_level,
+            .borrowed_sampler = *ibl_sampler,
+            .stage_pool = stage_pool_,
+            .array_layers = 6U,
+          });
+          if (!radiance)
+          {
+            return std::unexpected { std::move(radiance).error() };
+          }
+          ibl_radiance_ = std::move(*radiance);
+          vkpp::write_combined_image_sampler(device_.device(),
+            ibl_arena_.set(0U), 0U, *ibl_sampler, *ibl_radiance_.view());
+
+          std::vector<std::byte> brdf_bytes {};
+          generate_brdf_lut_rgba16f(brdf_bytes);
+          auto brdf_lut = vkpp::make_texture({
+            .device = device_,
+            .pool = upload_pool_,
+            .transfer_pool = transfer_upload_pool_,
+            .pixels = brdf_bytes,
+            .extent = { k_brdf_lut_size, k_brdf_lut_size },
+            .format = vk::Format::eR16G16B16A16Sfloat,
+            .mip_levels = 1U,
+            .mip_policy = vkpp::texture_mip_policy::single_level,
+            .borrowed_sampler = *ibl_sampler,
+            .stage_pool = stage_pool_,
+            .array_layers = 1U,
+          });
+          if (!brdf_lut)
+          {
+            return std::unexpected { std::move(brdf_lut).error() };
+          }
+
+          const auto brdf_slot = bindless_table_.acquire_index();
+          if (!brdf_slot)
+          {
+            return std::unexpected {
+              vkpp::app_error {
+                .kind = vkpp::app_error_kind::invalid_argument,
+                .detail = "bindless_table capacity exhausted (brdf lut)"sv,
+              },
+            };
+          }
+          bindless_table_.write(
+            device_.device(), *brdf_slot, *ibl_sampler, *brdf_lut->view());
+          ibl_brdf_lut_index_ = *brdf_slot;
+          ibl_brdf_lut_ = std::move(*brdf_lut);
+
           if (auto uploaded = reupload_materials_from_slots(); !uploaded)
           {
             return std::unexpected { std::move(uploaded).error() };
@@ -978,6 +1242,8 @@ private:
       .light_color = glm::vec3 { 4.0F, 3.85F, 3.6F },
       .camera_position = camera_position,
       .exposure = 1.0F,
+      .brdf_lut_index = ibl_brdf_lut_index_,
+      .ambient_scale = 0.30F,
     };
     ubo.projection[ 1 ][ 1 ] *= -1;
     const auto offset =
@@ -1371,6 +1637,7 @@ private:
     const std::array sets {
       frames_[ frame_index_ ].descriptor_set,
       bindless_table_.set(),
+      ibl_arena_.set(0U),
     };
     const std::array dynamic_offsets {
       static_cast<std::uint32_t>(
@@ -2140,6 +2407,12 @@ private:
   vkpp::compute_pipeline histogram_pipeline_ {};
   vk::raii::Sampler histogram_sampler_ { nullptr };
   std::array<std::uint32_t, k_histogram_bins> histogram_cpu_ {};
+
+  // cube
+  vkpp::descriptor_set_arena ibl_arena_ {};
+  vkpp::texture<> ibl_radiance_ {};
+  vkpp::texture<> ibl_brdf_lut_ {};
+  std::uint32_t ibl_brdf_lut_index_ { 0U };
 
   // the rest with small size
   bool resized_ { false };

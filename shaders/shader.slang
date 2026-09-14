@@ -13,6 +13,8 @@ struct uniform_buffer {
   float3 light_color;
   float3 camera_position;
   float exposure;
+  uint brdf_lut_index;
+  float ambient_scale;
 };
 [[vk::binding(0, 0)]]
 ConstantBuffer<uniform_buffer> ubo;
@@ -100,6 +102,9 @@ vertex_shader_output vertex_main(vertex_shader_input input)
 [[vk::binding(0, 1)]]
 Sampler2D textures[];
 
+[[vk::binding(0, 2)]]
+SamplerCube ibl_radiance;
+
 float3 apply_normal_map(
   float3 geometric_normal, float3 world_position, float2 texture_coordinates,
   float3 encoded_normal, float scale)
@@ -168,6 +173,12 @@ float geometry_smith(
 float3 fresnel_schlick(float cosine, float3 f0)
 {
   return f0 + (1.0 - f0) * pow(saturate(1.0 - cosine), 5.0);
+}
+
+float3 fresnel_schlick_roughness(float cosine, float3 f0, float roughness)
+{
+  return f0 + (max(float3(1.0 - roughness, 1.0 - roughness, 1.0 - roughness), f0) - f0)
+    * pow(saturate(1.0 - cosine), 5.0);
 }
 
 float3 tonemap_reinhard_luminance(float3 color)
@@ -265,11 +276,20 @@ float4 fragment_main(
     max(4.0 * normal_view_cosine *  normal_light_cosine, 1e-4);
   const float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / pi;
   const float3 direct = (diffuse + specular) * ubo.light_color * normal_light_cosine;
-  const float3 sky = float3(0.22, 0.25, 0.30);
-  const float3 ground = float3(0.04, 0.035, 0.03);
-  const float hemi = normal.y * 0.5 + 0.5;
-  const float3 ambient = albedo * occlusion * lerp(ground, sky, hemi);
-  const float3 color = direct + ambient + emissive;
+   const float3 radiance_n =
+    ibl_radiance.Sample(normalize(normal)).rgb;
+  const float3 ambient =
+    albedo * occlusion * radiance_n * ubo.ambient_scale;
+
+  const float3 reflection = reflect(-view_direction, normal);
+  const float3 prefiltered =
+    ibl_radiance.Sample(normalize(reflection)).rgb;
+  const float2 brdf = textures[NonUniformResourceIndex(ubo.brdf_lut_index)]
+    .Sample(float2(normal_view_cosine, roughness)).rg;
+  const float3 f_ibl =
+    fresnel_schlick_roughness(normal_view_cosine, f0, roughness);
+  const float3 specular_ibl = prefiltered * (f_ibl * brdf.x + brdf.y);
+  const float3 color = direct + ambient + specular_ibl + emissive;
   const float3 display_linear = tonemap_reinhard_luminance(color * ubo.exposure);
   return float4(display_linear, opacity);
 }

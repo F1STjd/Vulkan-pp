@@ -66,7 +66,8 @@ export enum class image_kind : std::uint8_t {
   color_sampled,
   color_transfer,
   sampled_texture,
-  shadow_map
+  shadow_map,
+  sampled_cube,
 };
 
 export struct image_runtime_args
@@ -75,6 +76,7 @@ export struct image_runtime_args
   vk::Format format {};
   vk::SampleCountFlagBits samples { vk::SampleCountFlagBits::e1 };
   std::uint32_t mip_levels { 1U };
+  std::uint32_t array_layers { 1U };
 };
 
 export template<image_kind Kind>
@@ -139,6 +141,20 @@ struct image_traits<image_kind::sampled_texture>
   };
 };
 
+template<>
+struct image_traits<image_kind::sampled_cube>
+{
+  static constexpr image_type_spec spec {
+    .view_type = vk::ImageViewType::eCube,
+    .array_layers = 6U,
+    .intent = memory_intent::gpu_only,
+    .usage = vk::ImageUsageFlagBits::eTransferDst |
+      vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled,
+    .aspect = vk::ImageAspectFlagBits::eColor,
+    .flags = vk::ImageCreateFlagBits::eCubeCompatible,
+  };
+};
+
 export consteval auto
 validate(const image_type_spec& spec) -> bool
 {
@@ -173,12 +189,13 @@ validate(const image_type_spec& spec) -> bool
 static_assert(validate(image_traits<image_kind::sampled_texture>::spec));
 static_assert(validate(image_traits<image_kind::color_sampled>::spec));
 static_assert(validate(image_traits<image_kind::color_transfer>::spec));
+static_assert(validate(image_traits<image_kind::sampled_cube>::spec));
 
 export template<image_kind Kind>
   requires(validate(image_traits<Kind>::spec))
 auto
 make_image_view(const vk::raii::Device& device, vk::Image image,
-  vk::Format format, std::uint32_t mip_levels = 1U)
+  vk::Format format, std::uint32_t mip_levels, std::uint32_t array_layers)
   -> std::expected<vk::raii::ImageView, error_t>
 {
   constexpr image_type_spec spec = image_traits<Kind>::spec;
@@ -191,7 +208,7 @@ make_image_view(const vk::raii::Device& device, vk::Image image,
       .baseMipLevel = 0U,
       .levelCount = mip_levels,
       .baseArrayLayer = 0U,
-      .layerCount = spec.array_layers,
+      .layerCount = array_layers,
     },
   };
   return UTILS_VK(
@@ -216,7 +233,7 @@ make_image_resource(Alloc& allocator, const vk::raii::Device& device,
       .depth = 1U,
     },
     .mipLevels = args.mip_levels,
-    .arrayLayers = spec.array_layers,
+    .arrayLayers = args.array_layers,
     .samples = args.samples,
     .tiling = spec.tiling,
     .usage = spec.usage,
@@ -229,7 +246,7 @@ make_image_resource(Alloc& allocator, const vk::raii::Device& device,
         -> std::expected<image_resource<Alloc>, error_t>
       {
         return make_image_view<Kind>(
-          device, handle.get(), args.format, args.mip_levels)
+          device, handle.get(), args.format, args.mip_levels, args.array_layers)
           .transform(
             [ & ](vk::raii::ImageView&& view)
             {

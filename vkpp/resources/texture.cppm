@@ -89,10 +89,12 @@ export struct texture_create_info
   vk::Format format { vk::Format::eR8G8B8A8Srgb };
   std::uint32_t mip_levels { 1U };
   texture_mip_policy mip_policy { texture_mip_policy::generate_gpu_blit };
+  // 3 bytes of padding
   sampler_create_info sampler {};
   std::optional<vk::Sampler> borrowed_sampler {};
   std::span<const vk::DeviceSize> level_offsets {};
   std::optional<stage_pool&> stage_pool {};
+  std::uint32_t array_layers { 1U };
 };
 
 } // namespace vkpp

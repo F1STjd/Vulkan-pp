@@ -106,8 +106,8 @@ record_barriers(vk::raii::CommandBuffer& command_buffer,
 
 export [[nodiscard]] constexpr auto
 undefined_dst_to_transfer_dst(vk::Image image, std::uint32_t mip_count,
-  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor)
-  -> image_barrier
+  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor,
+  std::uint32_t layer_count = 1U) -> image_barrier
 {
   return {
     .src_stage = vk::PipelineStageFlagBits2::eTopOfPipe,
@@ -120,7 +120,7 @@ undefined_dst_to_transfer_dst(vk::Image image, std::uint32_t mip_count,
     .range = {
       .aspectMask = aspect,
       .levelCount = mip_count,
-      .layerCount = 1U,
+      .layerCount = layer_count,
     },
   };
 }
@@ -128,8 +128,8 @@ undefined_dst_to_transfer_dst(vk::Image image, std::uint32_t mip_count,
 export [[nodiscard]] constexpr auto
 transfer_dst_to_shader_read(vk::Image image, std::uint32_t base_mip,
   std::uint32_t mip_count = 1U,
-  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor)
-  -> image_barrier
+  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor,
+  std::uint32_t layer_count = 1U) -> image_barrier
 {
   return {
     .src_stage = vk::PipelineStageFlagBits2::eTransfer,
@@ -143,7 +143,7 @@ transfer_dst_to_shader_read(vk::Image image, std::uint32_t base_mip,
       .aspectMask = aspect,
       .baseMipLevel = base_mip,
       .levelCount = mip_count,
-      .layerCount = 1U,
+      .layerCount = layer_count,
     },
   };
 }
@@ -365,8 +365,8 @@ release_image_ownership(vk::Image image, ownership_transfer transfer,
   vk::ImageLayout old_layout, vk::ImageLayout new_layout,
   vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access,
   std::uint32_t mip_count = 1U,
-  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor)
-  -> image_barrier
+  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor,
+  std::uint32_t layer_count = 1U) -> image_barrier
 {
   return {
     .src_stage = src_stage,
@@ -379,7 +379,7 @@ release_image_ownership(vk::Image image, ownership_transfer transfer,
     .range = {
       .aspectMask = aspect,
       .levelCount = mip_count,
-      .layerCount = 1U,
+      .layerCount = layer_count,
     },
     .src_queue_family = transfer.src_queue_family,
     .dst_queue_family = transfer.dst_queue_family,
@@ -391,8 +391,8 @@ acquire_image_ownership(vk::Image image, ownership_transfer transfer,
   vk::ImageLayout old_layout, vk::ImageLayout new_layout,
   vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
   std::uint32_t mip_count = 1U,
-  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor)
-  -> image_barrier
+  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor,
+  std::uint32_t layer_count = 1U) -> image_barrier
 {
   return {
     .src_stage = vk::PipelineStageFlagBits2::eNone,
@@ -405,7 +405,7 @@ acquire_image_ownership(vk::Image image, ownership_transfer transfer,
     .range = {
       .aspectMask = aspect,
       .levelCount = mip_count,
-      .layerCount = 1U,
+      .layerCount = layer_count,
     },
     .src_queue_family = transfer.src_queue_family,
     .dst_queue_family = transfer.dst_queue_family,
