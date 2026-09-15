@@ -566,9 +566,17 @@ private:
   create_bindless_table() -> std::expected<void, vkpp::error_t>
   {
     return vkpp::bindless_table::create(device_.device(),
-      { .capacity = 256U, .stages = vk::ShaderStageFlagBits::eFragment })
-      .transform([ this ](vkpp::bindless_table&& table) -> void
-        { bindless_table_ = std::move(table); });
+      {
+        .capacity = 256U,
+        .stages = vk::ShaderStageFlagBits::eFragment,
+      })
+      .transform(
+        [ this ](vkpp::bindless_table&& table) -> void
+        {
+          bindless_table_ = std::move(table);
+          std::println("vkpp: bindless_table backend = {}",
+            static_cast<std::uint32_t>(bindless_table_.backend()));
+        });
   }
 
   auto
@@ -932,8 +940,12 @@ private:
                 },
               };
             }
-            bindless_table_.write(device_.device(), *slot, *sampler,
-              *textures_[ *image_index ].view());
+            if (auto written = bindless_table_.write(device_.device(), *slot,
+                  *sampler, *textures_[ *image_index ].view());
+              !written)
+            {
+              return std::unexpected { std::move(written).error() };
+            }
             texture_bindless_slots_[ texture_index ] = *slot;
             texture_bindless_samplers_[ texture_index ] = *sampler;
             texture_bindless_image_indices_[ texture_index ] = *image_index;
@@ -1006,8 +1018,12 @@ private:
               },
             };
           }
-          bindless_table_.write(
-            device_.device(), *brdf_slot, *ibl_sampler, *brdf_lut->view());
+          if (auto written = bindless_table_.write(
+                device_.device(), *brdf_slot, *ibl_sampler, *brdf_lut->view());
+            !written)
+          {
+            return std::unexpected { std::move(written).error() };
+          }
           ibl_brdf_lut_index_ = *brdf_slot;
           ibl_brdf_lut_ = std::move(*brdf_lut);
 
@@ -2138,9 +2154,13 @@ private:
         }
         const auto image_index =
           texture_bindless_image_indices_[ texture_index ];
-        bindless_table_.write(device_.device(), *slot,
-          texture_bindless_samplers_[ texture_index ],
-          *textures_[ image_index ].view());
+        if (auto written = bindless_table_.write(device_.device(), *slot,
+              texture_bindless_samplers_[ texture_index ],
+              *textures_[ image_index ].view());
+          !written)
+        {
+          return std::unexpected { std::move(written).error() };
+        }
         texture_bindless_slots_[ texture_index ] = *slot;
       }
       if (all_acquired)
