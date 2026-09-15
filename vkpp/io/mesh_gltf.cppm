@@ -37,8 +37,8 @@ make_gltf_parser(const gltf::load_runtime_args& runtime_args)
   if (runtime_args.enable_texture_basisu)
   {
     extensions |= fastgltf::Extensions::KHR_texture_basisu;
-    extensions |= fastgltf::Extensions::KHR_materials_clearcoat;
   }
+  extensions |= fastgltf::Extensions::KHR_materials_clearcoat;
   extensions |= fastgltf::Extensions::KHR_materials_transmission;
   return fastgltf::Parser { extensions };
 }
@@ -504,6 +504,9 @@ mark_linear_images(std::span<const gltf::material_cpu> materials,
     mark(material.metallic_roughness_texture);
     mark(material.normal_texture);
     mark(material.occlusion_texture);
+    mark(material.clearcoat.texture);
+    mark(material.clearcoat.roughness_texture);
+    mark(material.clearcoat.normal_texture);
   }
 }
 
@@ -634,22 +637,22 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
         }
         if (material.transmission)
         {
-          mapped.transmission_factor =
+          mapped.transmission.factor =
             static_cast<float>(material.transmission->transmissionFactor);
         }
         if (material.clearcoat)
         {
-          mapped.clearcoat_factor =
+          mapped.clearcoat.factor =
             static_cast<float>(material.clearcoat->clearcoatFactor);
-          mapped.clearcoat_roughness_factor =
+          mapped.clearcoat.roughness_factor =
             static_cast<float>(material.clearcoat->clearcoatRoughnessFactor);
-          mapped.clearcoat_texture =
+          mapped.clearcoat.texture =
             map_optional_texture(gltf, material.clearcoat->clearcoatTexture);
-          mapped.clearcoat_roughness_texture = map_optional_texture(
+          mapped.clearcoat.roughness_texture = map_optional_texture(
             gltf, material.clearcoat->clearcoatRoughnessTexture);
           if (material.clearcoat->clearcoatNormalTexture.has_value())
           {
-            mapped.clearcoat_normal_texture = map_texture_ref(
+            mapped.clearcoat.normal_texture = map_texture_ref(
               gltf, material.clearcoat->clearcoatNormalTexture->textureIndex);
           }
         }

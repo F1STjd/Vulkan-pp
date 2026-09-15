@@ -1076,13 +1076,13 @@ private:
               const auto& material =
                 asset.materials[ *primitive.material_index ];
               mode = material.alpha_mode;
-              if (material.transmission_factor > 0.0F &&
+              if (material.transmission.factor > 0.0F &&
                 mode == vkpp::gltf::alpha_mode::opaque)
               {
                 mode = vkpp::gltf::alpha_mode::blend;
               }
               two_sided =
-                material.double_sided || material.transmission_factor > 0.0F;
+                material.double_sided || material.transmission.factor > 0.0F;
             }
             alpha_modes.push_back(mode);
             double_sided.push_back(static_cast<std::uint8_t>(two_sided));
@@ -1997,19 +1997,19 @@ private:
         return std::unexpected { std::move(emissive_index).error() };
       }
       const auto clearcoat_index =
-        resolve_slot(material.clearcoat_texture, 32U, texture_mask);
+        resolve_slot(material.clearcoat.texture, 32U, texture_mask);
       if (!clearcoat_index)
       {
         return std::unexpected { std::move(clearcoat_index).error() };
       }
       const auto clearcoat_roughness_index =
-        resolve_slot(material.clearcoat_roughness_texture, 64U, texture_mask);
+        resolve_slot(material.clearcoat.roughness_texture, 64U, texture_mask);
       if (!clearcoat_roughness_index)
       {
         return std::unexpected { std::move(clearcoat_roughness_index).error() };
       }
       const auto clearcoat_normal_index =
-        resolve_slot(material.clearcoat_normal_texture, 128U, texture_mask);
+        resolve_slot(material.clearcoat.normal_texture, 128U, texture_mask);
       if (!clearcoat_normal_index)
       {
         return std::unexpected { std::move(clearcoat_normal_index).error() };
@@ -2034,12 +2034,14 @@ private:
                 .emissive_index = *emissive_index,
                 .alpha_mode = static_cast<std::uint32_t>(material.alpha_mode),
                 .has_texture_mask = texture_mask,
-                .transmission_factor = material.transmission_factor,
-                .clearcoat_factor = material.clearcoat_factor,
-                .clearcoat_roughness_factor = material.clearcoat_roughness_factor,
-                .clearcoat_index = *clearcoat_index,
-                .clearcoat_roughness_index = *clearcoat_roughness_index,
-                .clearcoat_normal_index = *clearcoat_normal_index,
+                .transmission = {.factor = material.transmission.factor},
+                .clearcoat = {
+                  .factor = material.clearcoat.factor,
+                  .roughness_factor = material.clearcoat.roughness_factor,
+                  .texture_index = *clearcoat_index,
+                  .roughness_index = *clearcoat_roughness_index,
+                  .normal_index = *clearcoat_normal_index,
+                },
             });
     }
     materials_gpu.emplace_back();
@@ -2371,6 +2373,20 @@ private:
   };
   static_assert(sizeof(draw_push) == 4UZ);
 
+  struct material_gpu_transmission
+  {
+    float factor { 0.0F };
+  };
+
+  struct material_gpu_clearcoat
+  {
+    float factor { 0.0F };
+    float roughness_factor { 0.0F };
+    std::uint32_t texture_index { 0U };
+    std::uint32_t roughness_index { 0U };
+    std::uint32_t normal_index { 0U };
+  };
+
   struct material_gpu
   {
     std::array<float, 4> base_color_factor {
@@ -2396,12 +2412,8 @@ private:
     std::uint32_t emissive_index { 0U };
     std::uint32_t alpha_mode { 0U };
     std::uint32_t has_texture_mask { 0U };
-    float transmission_factor { 0.0F };
-    float clearcoat_factor { 0.0F };
-    float clearcoat_roughness_factor { 0.0F };
-    std::uint32_t clearcoat_index { 0U };
-    std::uint32_t clearcoat_roughness_index { 0U };
-    std::uint32_t clearcoat_normal_index { 0U };
+    material_gpu_transmission transmission {};
+    material_gpu_clearcoat clearcoat {};
     std::uint32_t _;
     std::uint32_t _;
     std::uint32_t _;

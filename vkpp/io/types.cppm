@@ -207,6 +207,34 @@ enum class alpha_mode : std::uint8_t
   blend,
 };
 
+// PBR structs from https://www.khronos.org/gltf/pbr/
+struct transmission_t
+{
+  float factor { 0.0F };
+  std::optional<texture_ref_cpu> texture {};
+};
+
+struct clearcoat_t
+{
+  float factor { 0.0F };
+  float roughness_factor { 0.0F };
+  std::optional<texture_ref_cpu> texture {};
+  std::optional<texture_ref_cpu> roughness_texture {};
+  std::optional<texture_ref_cpu> normal_texture {};
+};
+
+// clang-format off
+struct volume_t {};
+struct ior_t {};
+struct specular_t {};
+struct sheen_t {};
+struct iridescence_t {};
+struct anisotropy_t {};
+struct dispersion_t {};
+struct emissive_strenght_t {};
+struct unlit_t {};
+// clang-format on
+
 struct material_cpu
 {
   std::array<float, 4> base_color_factor {
@@ -217,12 +245,17 @@ struct material_cpu
   };
   float metallic_factor { 1.0F };
   float roughness_factor { 1.0F };
-  float transmission_factor { 0.0F };
-  float clearcoat_factor { 0.0F };
-  float clearcoat_roughness_factor { 0.0F };
-  std::optional<texture_ref_cpu> clearcoat_texture {};
-  std::optional<texture_ref_cpu> clearcoat_roughness_texture {};
-  std::optional<texture_ref_cpu> clearcoat_normal_texture {};
+  transmission_t transmission {};
+  clearcoat_t clearcoat {};
+  volume_t volume {};
+  ior_t ior {};
+  specular_t specular {};
+  sheen_t sheen {};
+  iridescence_t iridescence {};
+  anisotropy_t anisotropy {};
+  dispersion_t dispersion {};
+  emissive_strenght_t emissive_strenght {};
+  unlit_t unlit {};
   std::optional<texture_ref_cpu> base_color_texture {};
   std::optional<texture_ref_cpu> metallic_roughness_texture {};
   std::optional<texture_ref_cpu> normal_texture {};

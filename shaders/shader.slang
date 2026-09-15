@@ -19,6 +19,18 @@ struct uniform_buffer {
 [[vk::binding(0, 0)]]
 ConstantBuffer<uniform_buffer> ubo;
 
+struct material_gpu_transmission {
+  float factor;
+};
+
+struct material_gpu_clearcoat {
+  float factor;
+  float roughness_factor;
+  uint texture_index;
+  uint roughness_index;
+  uint normal_index;
+};
+
 struct material_gpu {
   float4 base_color_factor;
   float4 emissive_factor_and_metallic;
@@ -33,12 +45,8 @@ struct material_gpu {
   uint emissive_index;
   uint alpha_mode;
   uint has_texture_mask;
-  float transmission_factor;
-  float clearcoat_factor;
-  float clearcoat_roughness_factor;
-  uint clearcoat_index;
-  uint clearcoat_roughness_index;
-  uint clearcoat_normal_index;
+  material_gpu_transmission transmission;
+  material_gpu_clearcoat clearcoat;
   uint _padding1;
   uint _padding2;
   uint _padding3;
@@ -213,9 +221,9 @@ float4 fragment_main(
   {
     discard;
   }
-  if (material.transmission_factor > 0.0)
+  if (material.transmission.factor > 0.0)
   {
-    opacity *= saturate(1.0 - material.transmission_factor);
+    opacity *= saturate(1.0 - material.transmission.factor);
   }
   const float3 albedo =
     base_color_sample.rgb * material.base_color_factor.rgb * input.color;
@@ -284,18 +292,18 @@ float4 fragment_main(
     max(4.0 * normal_view_cosine *  normal_light_cosine, 1e-4);
   const float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / pi;
   const float3 direct = (diffuse + specular) * ubo.light_color * normal_light_cosine;
-  float clearcoat = material.clearcoat_factor;
-  float clearcoat_roughness = material.clearcoat_roughness_factor;
+  float clearcoat = material.clearcoat.factor;
+  float clearcoat_roughness = material.clearcoat.roughness_factor;
   if ((material.has_texture_mask & 32) != 0)
   {
     clearcoat *= textures[
-      NonUniformResourceIndex(material.clearcoat_index)
+      NonUniformResourceIndex(material.clearcoat.texture_index)
     ].Sample(input.texture_coordinates).r;
   }
   if ((material.has_texture_mask & 64) != 0)
   {
     clearcoat_roughness *= textures[
-      NonUniformResourceIndex(material.clearcoat_roughness_index)
+      NonUniformResourceIndex(material.clearcoat.roughness_index)
     ].Sample(input.texture_coordinates).g;
   }
   clearcoat_roughness = clamp (clearcoat_roughness, 0.045, 1.0);
@@ -304,7 +312,7 @@ float4 fragment_main(
   if ((material.has_texture_mask & 128) != 0)
   {
     const float3 encoded_clearcoat_normal = textures[
-      NonUniformResourceIndex(material.clearcoat_normal_index)
+      NonUniformResourceIndex(material.clearcoat.normal_index)
     ].Sample(input.texture_coordinates).rgb;
     clearcoat_normal = apply_normal_map(
       normal, input.world_position, input.texture_coordinates,
@@ -313,7 +321,7 @@ float4 fragment_main(
   }
 
   float3 clearcoat_specular = float3(0.0, 0.0, 0.0);
-  if (material.clearcoat_factor > 0.0)
+  if (material.clearcoat.factor > 0.0)
   {
     const float3 clearcoat_half = normalize(light_direction + view_direction);
     const float cc_n_dot_l = max(dot(clearcoat_normal, light_direction), 0.0);
