@@ -24,7 +24,11 @@ export struct bindless_table_create_info
   vk::ShaderStageFlags stages { vk::ShaderStageFlagBits::eFragment };
 };
 
-export class bindless_table
+export template<descriptor_table_backend Backend>
+class bindless_table;
+
+export template<>
+class bindless_table<descriptor_table_backend::classic>
 {
 public:
   bindless_table() = default;
@@ -192,5 +196,8 @@ private:
   std::vector<std::uint32_t> free_list_ {};
   std::vector<std::pair<std::uint32_t, std::uint64_t>> pending_retire_ {};
 };
+
+export using classic_bindless_table =
+  bindless_table<descriptor_table_backend::classic>;
 
 } // namespace vkpp

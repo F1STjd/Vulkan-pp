@@ -565,12 +565,12 @@ private:
   auto
   create_bindless_table() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::bindless_table::create(device_.device(),
+    return vkpp::classic_bindless_table::create(device_.device(),
       {
         .capacity = 256U,
         .stages = vk::ShaderStageFlagBits::eFragment,
       })
-      .transform([ this ](vkpp::bindless_table&& table) -> void
+      .transform([ this ](vkpp::classic_bindless_table&& table) -> void
         { bindless_table_ = std::move(table); });
   }
 
@@ -2436,7 +2436,7 @@ private:
   static_assert(sizeof(material_gpu) == 112UZ);
 
   std::optional<vkpp::sampler_cache> sampler_cache_ {};
-  vkpp::bindless_table bindless_table_ {};
+  vkpp::classic_bindless_table bindless_table_ {};
   std::vector<vkpp::gltf::material_cpu> materials_cpu_ {};
   std::vector<vkpp::gltf::texture_ref_cpu> gltf_textures_ {};
   std::vector<std::uint32_t> texture_bindless_slots_ {};
