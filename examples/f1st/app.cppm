@@ -570,13 +570,8 @@ private:
         .capacity = 256U,
         .stages = vk::ShaderStageFlagBits::eFragment,
       })
-      .transform(
-        [ this ](vkpp::bindless_table&& table) -> void
-        {
-          bindless_table_ = std::move(table);
-          std::println("vkpp: bindless_table backend = {}",
-            static_cast<std::uint32_t>(bindless_table_.backend()));
-        });
+      .transform([ this ](vkpp::bindless_table&& table) -> void
+        { bindless_table_ = std::move(table); });
   }
 
   auto

@@ -22,7 +22,6 @@ export struct bindless_table_create_info
 {
   std::uint32_t capacity { 1024U };
   vk::ShaderStageFlags stages { vk::ShaderStageFlagBits::eFragment };
-  descriptor_table_backend backend { descriptor_table_backend::classic };
 };
 
 export class bindless_table
@@ -32,9 +31,9 @@ public:
 
   bindless_table(vk::raii::DescriptorSetLayout&& layout,
     vk::raii::DescriptorPool&& pool, vk::DescriptorSet set,
-    std::uint32_t capacity, descriptor_table_backend backend)
+    std::uint32_t capacity)
   : layout_ { std::move(layout) }, pool_ { std::move(pool) }, set_ { set },
-    capacity_ { capacity }, backend_ { backend }
+    capacity_ { capacity }
   {}
 
   [[nodiscard]] static auto
@@ -42,16 +41,6 @@ public:
     const bindless_table_create_info& create_info)
     -> std::expected<bindless_table, error_t>
   {
-    if (create_info.backend != descriptor_table_backend::classic)
-    {
-      return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "bindless_table::create: heap backend not yet supported"sv,
-        },
-      };
-    }
-
     const vk::DescriptorSetLayoutBinding binding {
       .binding = 0U,
       .descriptorType = vk::DescriptorType::eCombinedImageSampler,
@@ -126,7 +115,6 @@ public:
                         std::move(pool),
                         sets.front().release(),
                         create_info.capacity,
-                        descriptor_table_backend::classic,
                       };
                     });
               });
@@ -170,16 +158,6 @@ public:
     vk::Sampler sampler, vk::ImageView view) const
     -> std::expected<void, error_t>
   {
-    if (backend_ != descriptor_table_backend::classic)
-    {
-      return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "bindless_table::create: heap backend not yet supported"sv,
-        },
-      };
-    }
-
     const vk::DescriptorImageInfo image_info {
       .sampler = sampler,
       .imageView = view,
@@ -205,10 +183,6 @@ public:
   set() const -> vk::DescriptorSet
   { return set_; }
 
-  [[nodiscard]] auto
-  backend() const -> descriptor_table_backend
-  { return backend_; }
-
 private:
   vk::raii::DescriptorSetLayout layout_ { nullptr };
   vk::raii::DescriptorPool pool_ { nullptr };
@@ -217,7 +191,6 @@ private:
   std::uint32_t next_index_ { 0U };
   std::vector<std::uint32_t> free_list_ {};
   std::vector<std::pair<std::uint32_t, std::uint64_t>> pending_retire_ {};
-  descriptor_table_backend backend_ {};
 };
 
 } // namespace vkpp
