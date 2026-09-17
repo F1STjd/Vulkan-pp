@@ -27,7 +27,7 @@ export struct bindless_table_create_info
 export template<descriptor_table_backend Backend>
 class bindless_table;
 
-export template<>
+template<>
 class bindless_table<descriptor_table_backend::classic>
 {
 public:
