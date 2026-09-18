@@ -183,6 +183,26 @@ public:
   }
 
   [[nodiscard]] auto
+  register_combined_image_sampler(
+    const vk::raii::Device& device, vk::Sampler sampler, vk::ImageView view)
+    -> std::expected<std::uint32_t, error_t>
+  {
+    const auto index = acquire_index();
+    if (!index)
+    {
+      return std::unexpected {
+        app_error {
+          .kind = app_error_kind::invalid_argument,
+          .detail = "classic_bindless_table::register_combined_image_sampler: "
+                    "capacity exhausted "sv,
+        },
+      };
+    }
+    return write(device, *index, sampler, view)
+      .transform([ index ] -> std::uint32_t { return *index; });
+  }
+
+  [[nodiscard]] auto
   layout() const -> const vk::raii::DescriptorSetLayout&
   { return layout_; }
 
@@ -475,6 +495,29 @@ public:
                             }),
             ^^vk::raii::Device::writeResourceDescriptorsEXT);
         });
+  }
+
+  [[nodiscard]] auto
+  register_combined_image_sampler(const vk::raii::Device& device,
+    const vk::SamplerCreateInfo& sampler_create_info,
+    const vk::ImageViewCreateInfo& image_view_create_info,
+    vk::ImageLayout image_layout = vk::ImageLayout::eShaderReadOnlyOptimal)
+    -> std::expected<std::uint32_t, error_t>
+  {
+    const auto index = acquire_index();
+    if (!index)
+    {
+      return std::unexpected {
+        app_error {
+          .kind = app_error_kind::invalid_argument,
+          .detail = "heap_bindless_table::register_combined_image_sampler: "
+                    "capacity exhausted"sv,
+        },
+      };
+    }
+    return write(
+      device, *index, sampler_create_info, image_view_create_info, image_layout)
+      .transform([ index ] -> std::uint32_t { return *index; });
   }
 
   void

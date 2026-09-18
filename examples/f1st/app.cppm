@@ -978,22 +978,9 @@ private:
             {
               return std::unexpected { std::move(sampler).error() };
             }
-            const auto slot = bindless_table_.acquire_index();
-            if (!slot)
-            {
-              return std::unexpected {
-                vkpp::app_error {
-                  .kind = vkpp::app_error_kind::invalid_argument,
-                  .detail = "bindless_table capacity exhausted"sv,
-                },
-              };
-            }
-            if (auto written = bindless_table_.write(device_.device(), *slot,
-                  *sampler, *textures_[ *image_index ].view());
-              !written)
-            {
-              return std::unexpected { std::move(written).error() };
-            }
+            const auto slot = bindless_table_.register_combined_image_sampler(
+              device_.device(), *sampler, *textures_[ *image_index ].view());
+            if (!slot) { return std::unexpected { std::move(slot).error() }; }
             texture_bindless_slots_[ texture_index ] = *slot;
             texture_bindless_samplers_[ texture_index ] = *sampler;
             texture_bindless_image_indices_[ texture_index ] = *image_index;
@@ -1056,21 +1043,11 @@ private:
             return std::unexpected { std::move(brdf_lut).error() };
           }
 
-          const auto brdf_slot = bindless_table_.acquire_index();
+          auto brdf_slot = bindless_table_.register_combined_image_sampler(
+            device_.device(), *ibl_sampler, *brdf_lut->view());
           if (!brdf_slot)
           {
-            return std::unexpected {
-              vkpp::app_error {
-                .kind = vkpp::app_error_kind::invalid_argument,
-                .detail = "bindless_table capacity exhausted (brdf lut)"sv,
-              },
-            };
-          }
-          if (auto written = bindless_table_.write(
-                device_.device(), *brdf_slot, *ibl_sampler, *brdf_lut->view());
-            !written)
-          {
-            return std::unexpected { std::move(written).error() };
+            return std::unexpected { std::move(brdf_slot).error() };
           }
           ibl_brdf_lut_index_ = *brdf_slot;
           ibl_brdf_lut_ = std::move(*brdf_lut);
@@ -2194,20 +2171,23 @@ private:
           continue;
         }
         if (texture_bindless_slots_[ texture_index ] != ~0U) { continue; }
-        const auto slot = bindless_table_.acquire_index();
-        if (!slot)
-        {
-          all_acquired = false;
-          break;
-        }
         const auto image_index =
           texture_bindless_image_indices_[ texture_index ];
-        if (auto written = bindless_table_.write(device_.device(), *slot,
-              texture_bindless_samplers_[ texture_index ],
-              *textures_[ image_index ].view());
-          !written)
+        const auto slot = bindless_table_.register_combined_image_sampler(
+          device_.device(), texture_bindless_samplers_[ texture_index ],
+          *textures_[ image_index ].view());
+        if (!slot)
         {
-          return std::unexpected { std::move(written).error() };
+          const auto* app_err = std::get_if<vkpp::app_error>(&slot.error());
+          if (app_err != nullptr /* &&
+            app_err->detail ==
+              "classic_bindless_table::register_combined_image_sampler: "
+              "capavity exhausted"sv */)
+          {
+            all_acquired = false;
+            break;
+          }
+          return std::unexpected { std::move(slot).error() };
         }
         texture_bindless_slots_[ texture_index ] = *slot;
       }
