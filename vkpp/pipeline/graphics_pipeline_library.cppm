@@ -346,8 +346,9 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
 export auto
 link_graphics_pipeline(const vk::raii::Device& device,
   std::span<const vk::Pipeline> libraries, bool optimize,
-  vk::PipelineLayout layout, const vk::raii::PipelineCache& cache = { nullptr })
-  -> std::expected<vk::raii::Pipeline, error_t>
+  vk::PipelineLayout layout, const vk::raii::PipelineCache& cache = { nullptr },
+  const std::optional<vk::PipelineBinaryInfoKHR>& binary_info = {},
+  bool capture_binary = false) -> std::expected<vk::raii::Pipeline, error_t>
 {
   if (libraries.size() != 4UZ)
   {
@@ -362,18 +363,47 @@ link_graphics_pipeline(const vk::raii::Device& device,
     .libraryCount = 4U,
     .pLibraries = libraries.data(),
   };
+
+  vk::PipelineCreateFlags2CreateInfoKHR flags2_info {};
+  const void* p_next = &library_info;
   vk::PipelineCreateFlags flags {};
-  if (optimize)
+  if (capture_binary)
+  {
+    flags2_info.flags = vk::PipelineCreateFlagBits2::eCaptureDataKHR;
+    if (optimize)
+    {
+      flags2_info.flags |=
+        vk::PipelineCreateFlagBits2::eLinkTimeOptimizationEXT;
+    }
+    flags2_info.pNext = p_next;
+    p_next = &flags2_info;
+  }
+  else if (optimize)
   {
     flags |= vk::PipelineCreateFlagBits::eLinkTimeOptimizationEXT;
   }
+
+  vk::PipelineBinaryInfoKHR binary_local {};
+  const bool replaying_binaries =
+    binary_info.has_value() && binary_info->binaryCount != 0U;
+  if (binary_info.has_value())
+  {
+    binary_local = *binary_info;
+    binary_local.pNext = p_next;
+    p_next = &binary_local;
+  }
+
   const vk::GraphicsPipelineCreateInfo create_info {
-    .pNext = &library_info,
-    .flags = flags,
+    .pNext = p_next,
+    .flags = capture_binary ? vk::PipelineCreateFlags {} : flags,
     .layout = layout,
   };
 
-  return UTILS_VK(device.createGraphicsPipeline(cache, create_info),
+  const vk::raii::PipelineCache null_cache { nullptr };
+  const auto& cache_for_create =
+    (capture_binary || replaying_binaries) ? null_cache : cache;
+
+  return UTILS_VK(device.createGraphicsPipeline(cache_for_create, create_info),
     ^^vk::raii::Device::createGraphicsPipeline)
     .transform([](vk::raii::Pipeline&& pipeline) -> vk::raii::Pipeline
       { return std::move(pipeline); });

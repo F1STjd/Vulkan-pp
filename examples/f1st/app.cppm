@@ -48,6 +48,7 @@ import vkpp.pipeline;
 import vkpp.pipeline.compute;
 import vkpp.pipeline.cache;
 import vkpp.pipeline.gpl;
+import vkpp.pipeline.binary;
 import vkpp.descriptor;
 import vkpp.descriptor.indexing;
 import vkpp.semaphore;
@@ -94,6 +95,7 @@ constexpr std::array required_device_extensions {
   vk::EXTExtendedDynamicStateExtensionName,
   vk::KHRPipelineLibraryExtensionName,
   vk::EXTGraphicsPipelineLibraryExtensionName,
+  vk::KHRPipelineBinaryExtensionName,
 };
 
 constexpr std::size_t max_frames_in_flight { 2UZ };
@@ -160,6 +162,10 @@ static_assert(sizeof(histogram_push_cpu) == 24UZ);
 static_assert(offsetof(histogram_push_cpu, device_address) == 16UZ);
 
 static constexpr auto k_pipeline_cache_path = "f1st_pipeline_cache.bin"sv;
+static constexpr auto k_pipeline_binary_opaque_path =
+  "f1st_pipeline_binaries_opaque.bin"sv;
+static constexpr auto k_pipeline_binary_blend_path =
+  "f1st_pipeline_binaries_blend.bin"sv;
 
 static constexpr vk::DeviceSize k_stage_pool_capacity =
   64ULL * 1024ULL * 1024ULL;
@@ -473,6 +479,7 @@ private:
           .descriptor_indexing = true,
           .buffer_device_address = true,
           .graphics_pipeline_library = true,
+          .pipeline_binary = true,
         },
         .require_present = true,
         .request_dedicated_transfer = true,
@@ -483,6 +490,7 @@ private:
       .transform([ this ](vkpp::device_context&& device) -> void
         {
           device_ = std::move(device);
+          pipeline_binary_enabled_ = true;
           const auto props = device_.physical_device().getProperties();
           std::println(
             "vkpp: selected GPU '{}' type = {}",
@@ -584,6 +592,51 @@ private:
                                               })
       .transform([ this ](vkpp::descriptor_set_arena&& arena) -> void
         { ibl_arena_ = std::move(arena); });
+  }
+
+  [[nodiscard]] auto
+  link_graphics_executable(std::span<const vk::Pipeline> libraries,
+    const std::filesystem::path& binary_path)
+    -> std::expected<vk::raii::Pipeline, vkpp::error_t>
+  {
+    if (!pipeline_binary_enabled_)
+    {
+      return vkpp::link_graphics_pipeline(device_.device(), libraries, false,
+        *graphics_pipeline_layout_, pipeline_cache_.get());
+    }
+
+    auto blobs = vkpp::load_pipeline_binary_file(binary_path);
+    if (blobs && !blobs->empty())
+    {
+      auto binaries = vkpp::pipeline_binaries::create(device_.device(), *blobs);
+      if (binaries)
+      {
+        const auto info = binaries->info();
+        if (auto linked =
+              vkpp::link_graphics_pipeline(device_.device(), libraries, false,
+                *graphics_pipeline_layout_, { nullptr }, info, false);
+          linked)
+        {
+          return linked;
+        }
+      }
+    }
+
+    auto linked = vkpp::link_graphics_pipeline(device_.device(), libraries,
+      false, *graphics_pipeline_layout_, { nullptr }, std::nullopt, true);
+    if (!linked) { return std::unexpected { std::move(linked).error() }; }
+
+    if (auto captured =
+          vkpp::pipeline_binaries::capture(device_.device(), *(*linked));
+      captured)
+    {
+      if (auto extracted = captured->extract_blobs(device_.device()); extracted)
+      {
+        (void)vkpp::save_pipeline_binary_file(binary_path, *extracted);
+      }
+    }
+
+    return linked;
   }
 
   auto
@@ -716,8 +769,8 @@ private:
       *gpl_fragment_opaque_.pipeline(),
       *gpl_fragment_output_opaque_.pipeline(),
     };
-    auto opaque_executable = vkpp::link_graphics_pipeline(device_.device(),
-      opaque_libs, false, *graphics_pipeline_layout_, pipeline_cache_.get());
+    auto opaque_executable =
+      link_graphics_executable(opaque_libs, k_pipeline_binary_opaque_path);
     if (!opaque_executable)
     {
       return std::unexpected { std::move(opaque_executable).error() };
@@ -729,8 +782,8 @@ private:
       *gpl_fragment_blend_.pipeline(),
       *gpl_fragment_output_blend_.pipeline(),
     };
-    auto blend_executable = vkpp::link_graphics_pipeline(device_.device(),
-      blend_libs, false, *graphics_pipeline_layout_, pipeline_cache_.get());
+    auto blend_executable =
+      link_graphics_executable(blend_libs, k_pipeline_binary_blend_path);
     if (!blend_executable)
     {
       return std::unexpected { std::move(blend_executable).error() };
@@ -2336,6 +2389,7 @@ private:
   vkpp::image_use_tracker image_uses_ {};
 
   vkpp::pipeline_cache pipeline_cache_ {};
+  bool pipeline_binary_enabled_ { false };
 
   vkpp::graphics_pipeline graphics_pipeline_ {};
   vkpp::graphics_pipeline blend_pipeline_ {};

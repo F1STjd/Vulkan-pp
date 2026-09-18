@@ -29,6 +29,7 @@ export struct device_feature_requests
   bool graphics_pipeline_library { false };
   bool shader_object { false };
   bool descriptor_heap { false };
+  bool pipeline_binary { false };
 };
 
 // clang-format off
@@ -46,6 +47,7 @@ export struct feature_tag
   struct graphics_pipeline_library {};
   struct shader_object {};
   struct descriptor_heap {};
+  struct pipeline_binary {};
 };
 // clang-format on
 
@@ -125,6 +127,12 @@ template<>
 struct feature_traits<feature_tag::descriptor_heap>
 {
   static constexpr auto member = &device_feature_requests::descriptor_heap;
+};
+
+template<>
+struct feature_traits<feature_tag::pipeline_binary>
+{
+  static constexpr auto member = &device_feature_requests::pipeline_binary;
 };
 
 export struct physical_device_rank_policy
@@ -367,7 +375,8 @@ private:
     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
     vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
     vk::PhysicalDeviceShaderObjectFeaturesEXT,
-    vk::PhysicalDeviceDescriptorHeapFeaturesEXT>;
+    vk::PhysicalDeviceDescriptorHeapFeaturesEXT,
+    vk::PhysicalDevicePipelineBinaryFeaturesKHR>;
 
   [[nodiscard]] static constexpr auto
   make_enable_chain(const device_feature_requests& requests)
@@ -414,6 +423,9 @@ private:
     chain.get<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>().descriptorHeap =
       vk::Bool32 { requests.descriptor_heap };
 
+    chain.get<vk::PhysicalDevicePipelineBinaryFeaturesKHR>().pipelineBinaries =
+      vk::Bool32 { requests.pipeline_binary };
+
     return chain;
   }
 
@@ -427,7 +439,8 @@ private:
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
         vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
         vk::PhysicalDeviceShaderObjectFeaturesEXT,
-        vk::PhysicalDeviceDescriptorHeapFeaturesEXT>();
+        vk::PhysicalDeviceDescriptorHeapFeaturesEXT,
+        vk::PhysicalDevicePipelineBinaryFeaturesKHR>();
 
     const auto& core = available.get<vk::PhysicalDeviceFeatures2>().features;
     const auto& v12 = available.get<vk::PhysicalDeviceVulkan12Features>();
@@ -507,6 +520,14 @@ private:
         return false;
       }
     }
+    if (requests.pipeline_binary)
+    {
+      if (available.get<vk::PhysicalDevicePipelineBinaryFeaturesKHR>()
+            .pipelineBinaries != vk::True)
+      {
+        return false;
+      }
+    }
 
     return true;
   }
@@ -542,6 +563,11 @@ private:
     }
     if (requirements.features.descriptor_heap &&
       !has_extension(vk::EXTDescriptorHeapExtensionName))
+    {
+      return false;
+    }
+    if (requirements.features.pipeline_binary &&
+      !has_extension(vk::KHRPipelineBinaryExtensionName))
     {
       return false;
     }
