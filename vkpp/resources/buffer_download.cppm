@@ -82,10 +82,7 @@ download_device_local_buffer(const buffer_download_create_info& create_info)
         if (staging.mapped() == nullptr)
         {
           return std::unexpected {
-            app_error {
-              .kind = app_error_kind::mapping_failed,
-              .detail = "readback staging map returned nullptr"sv,
-            },
+            make_app_error(app_error_code::mapping_failed),
           };
         }
         single_time_submit single_time {

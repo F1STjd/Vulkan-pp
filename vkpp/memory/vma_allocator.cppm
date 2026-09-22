@@ -12,17 +12,6 @@ namespace vkpp
 {
 using namespace std::string_view_literals;
 
-[[nodiscard]]
-constexpr auto
-vma_error(std::string_view function, VkResult result) -> error_t
-{
-  return vk_error {
-    .function = function,
-    .type = "vma",
-    .result = static_cast<vk::Result>(result),
-  };
-}
-
 export class gpu_image
 {
 public:
@@ -139,18 +128,13 @@ public:
   {
     if (allocation_ == nullptr)
     {
-      return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "invalidate_mapped: no allocation"sv,
-        },
-      };
+      return std::unexpected { make_app_error(app_error_code::invalid_state) };
     }
     if (const auto result =
           vmaInvalidateAllocation(allocator_, allocation_, offset, size);
       result != VK_SUCCESS)
     {
-      return std::unexpected { vma_error("vmaInvalidateAllocation", result) };
+      return std::unexpected { make_vma_error(result) };
     }
     return {};
   }
@@ -225,9 +209,7 @@ public:
     if (const auto result = vmaCreateAllocator(&create_info, &allocator);
       result != VK_SUCCESS)
     {
-      return std::unexpected {
-        vma_error("vmaCreateAllocator", result),
-      };
+      return std::unexpected { make_vma_error(result) };
     }
     return vma_policy { allocator };
   }
@@ -246,9 +228,7 @@ public:
           &allocation_info, &image, &allocation, nullptr);
       result != VK_SUCCESS)
     {
-      return std::unexpected {
-        vma_error("vmaCreateImage", result),
-      };
+      return std::unexpected { make_vma_error(result) };
     }
     return image_handle {
       allocator_,
@@ -272,9 +252,7 @@ public:
           &allocation_info, &buffer, &allocation, &info);
       result != VK_SUCCESS)
     {
-      return std::unexpected {
-        vma_error("vmaCreateBuffer", result),
-      };
+      return std::unexpected { make_vma_error(result) };
     }
     return buffer_handle {
       allocator_,

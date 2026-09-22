@@ -119,19 +119,13 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
     if (runtime_args.layout == vk::PipelineLayout {})
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "pre_rasterization library requires layout"sv,
-        },
+        make_app_error(app_error_code::missing_required_argument),
       };
     }
     if (runtime_args.spirv.empty())
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "pre_rasterization library spirv empty"sv,
-        },
+        make_app_error(app_error_code::missing_required_argument),
       };
     }
     const vk::ShaderModuleCreateInfo module_info {
@@ -205,19 +199,13 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
     if (runtime_args.layout == vk::PipelineLayout {})
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "fragment library requires layout"sv,
-        },
+        make_app_error(app_error_code::missing_required_argument),
       };
     }
     if (runtime_args.spirv.empty())
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "fragment library spirv empty"sv,
-        },
+        make_app_error(app_error_code::missing_required_argument),
       };
     }
     const vk::ShaderModuleCreateInfo module_info {
@@ -278,10 +266,7 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
     if (runtime_args.color_formats.empty())
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "fragment_output library missing color_formats"sv,
-        },
+        make_app_error(app_error_code::missing_required_argument),
       };
     }
     const vk::PipelineMultisampleStateCreateInfo multisample {
@@ -334,12 +319,7 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
     static_assert(Kind == vertex_input || Kind == pre_rasterization ||
         Kind == fragment || Kind == fragment_output,
       "unhandled graphics_pipeline_library_kind");
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::invalid_argument,
-        .detail = "unhandled graphics_pipeline_library_kind"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::invalid_state) };
   }
 }
 
@@ -352,12 +332,7 @@ link_graphics_pipeline(const vk::raii::Device& device,
 {
   if (libraries.size() != 4UZ)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::invalid_argument,
-        .detail = "link_graphics_pipeline expects 4 libraries"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::invalid_state) };
   }
   const vk::PipelineLibraryCreateInfoKHR library_info {
     .libraryCount = 4U,

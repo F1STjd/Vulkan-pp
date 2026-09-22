@@ -450,10 +450,7 @@ private:
     if (!window_.createVulkanSurface(*instance_.instance(), _surface))
     {
       return std::unexpected {
-        vkpp::app_error {
-          .kind = vkpp::app_error_kind::surface_creation,
-          .detail = "Faild to create window surface"sv,
-        },
+        vkpp::make_app_error(vkpp::app_error_code::surface_creation),
       };
     }
     instance_.adopt_surface(
@@ -585,11 +582,12 @@ private:
   auto
   create_ibl_set() -> std::expected<void, vkpp::error_t>
   {
-    return vkpp::descriptor_set_arena::create({
-                                                .device = device_.device(),
-                                                .bindings = k_ibl_bindings,
-                                                .set_count = 1U,
-                                              })
+    return vkpp::descriptor_set_arena::create( //
+      {
+        .device = device_.device(),
+        .bindings = k_ibl_bindings,
+        .set_count = 1U,
+      })
       .transform([ this ](vkpp::descriptor_set_arena&& arena) -> void
         { ibl_arena_ = std::move(arena); });
   }
@@ -903,10 +901,7 @@ private:
             else
             {
               return std::unexpected {
-                vkpp::app_error {
-                  .kind = vkpp::app_error_kind::invalid_argument,
-                  .detail = "gltf host image empty after realize"sv,
-                },
+                vkpp::make_app_error(vkpp::app_error_code::invalid_state),
               };
             }
             if (!made) { return std::unexpected { std::move(made).error() }; }
@@ -924,10 +919,7 @@ private:
             if (*reference.sampler_index >= asset.samplers.size())
             {
               return std::unexpected {
-                vkpp::app_error {
-                  .kind = vkpp::app_error_kind::invalid_argument,
-                  .detail = "gltf sampler index out of range"sv,
-                },
+                vkpp::make_app_error(vkpp::app_error_code::out_of_range),
               };
             }
             const auto& source = asset.samplers[ *reference.sampler_index ];
@@ -961,10 +953,7 @@ private:
             if (*image_index >= textures_.size())
             {
               return std::unexpected {
-                vkpp::app_error {
-                  .kind = vkpp::app_error_kind::invalid_argument,
-                  .detail = "gltf texture image index out of range"sv,
-                },
+                vkpp::make_app_error(vkpp::app_error_code::out_of_range),
               };
             }
 
@@ -1066,10 +1055,7 @@ private:
             if (item.primitive_index >= asset.meshes.primitives.size())
             {
               return std::unexpected {
-                vkpp::app_error {
-                  .kind = vkpp::app_error_kind::invalid_argument,
-                  .detail = "draw item primitive index out of range"sv,
-                },
+                vkpp::make_app_error(vkpp::app_error_code::out_of_range),
               };
             }
             const vkpp::mesh_streams_cpu& primitive =
@@ -1225,10 +1211,7 @@ private:
     if (ring->mapped() == nullptr)
     {
       return std::unexpected {
-        vkpp::app_error {
-          .kind = vkpp::app_error_kind::mapping_failed,
-          .detail = "uniform ring map returned nullptr"sv,
-        },
+        vkpp::make_app_error(vkpp::app_error_code::mapping_failed),
       };
     }
     uniform_ring_ = std::move(*ring);
@@ -1381,10 +1364,7 @@ private:
     if (!ImGui_ImplVulkan_Init(&init_info))
     {
       return std::unexpected {
-        vkpp::app_error {
-          .kind = vkpp::app_error_kind::invalid_argument,
-          .detail = "ImGui Vulkan backend initialisation failed"sv,
-        },
+        vkpp::make_app_error(vkpp::app_error_code::invalid_state),
       };
     }
     imgui_renderer_initialized_ = true;
@@ -1493,10 +1473,7 @@ private:
           if (scene_texture_id_ == VK_NULL_HANDLE)
           {
             return std::unexpected {
-              vkpp::app_error {
-                .kind = vkpp::app_error_kind::invalid_argument,
-                .detail = "ImGui_ImplVulkan_AddTexture returned null"sv,
-              },
+              vkpp::make_app_error(vkpp::app_error_code::invalid_state),
             };
           }
           vkpp::write_combined_image_sampler(device_.device(),
@@ -1995,10 +1972,7 @@ private:
       }
 
       return std::unexpected {
-        vkpp::app_error {
-          .kind = vkpp::app_error_kind::invalid_argument,
-          .detail = "material texture reference was not realized"sv,
-        },
+        vkpp::make_app_error(vkpp::app_error_code::invalid_state),
       };
     };
 
@@ -2137,13 +2111,7 @@ private:
           timeline_wait_info, std::numeric_limits<std::uint64_t>::max());
       result != vk::Result::eSuccess)
     {
-      return std::unexpected {
-        vkpp::vk_error {
-          .function = "waitSemaphores",
-          .type = "vk::raii::Device",
-          .result = result,
-        },
-      };
+      return std::unexpected { vkpp::make_vk_error(result) };
     }
     bindless_table_.retire(wait_value);
     if (rebuild_bindless_requested_)
@@ -2178,11 +2146,9 @@ private:
           *textures_[ image_index ].view());
         if (!slot)
         {
-          const auto* app_err = std::get_if<vkpp::app_error>(&slot.error());
-          if (app_err != nullptr /* &&
-            app_err->detail ==
-              "classic_bindless_table::register_combined_image_sampler: "
-              "capavity exhausted"sv */)
+          if (slot.error().domain == vkpp::error_domain::application &&
+            slot.error().code ==
+              std::to_underlying(vkpp::app_error_code::capacity_exhausted))
           {
             all_acquired = false;
             break;
@@ -2233,13 +2199,7 @@ private:
     }
     if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
     {
-      return std::unexpected {
-        vkpp::vk_error {
-          .function = "acquireNextImage",
-          .type = "vk::raii::SwapchainKHR",
-          .result = result,
-        },
-      };
+      return std::unexpected { vkpp::make_vk_error(result) };
     }
 
     begin_imgui_frame();
@@ -2312,13 +2272,7 @@ private:
             resized_ = false;
             return recreate_or_suspend();
           }
-          return std::unexpected {
-            vkpp::vk_error {
-              .function = "presentKHR",
-              .type = "vk::raii::Queue",
-              .result = result,
-            },
-          };
+          return std::unexpected { vkpp::make_vk_error(result) };
         });
   }
 

@@ -23,12 +23,7 @@ host_image_from_stb(stbi_uc* pixels, std::int32_t width, std::int32_t height)
 {
   if (pixels == nullptr)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::image_decode,
-        .detail = "stb_image failed to decode"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::image_decode) };
   }
 
   const std::size_t image_size {

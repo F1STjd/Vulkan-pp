@@ -60,13 +60,7 @@ public:
           device_->waitForFences(*fence_, vk::True, timeout_ns);
       result != vk::Result::eSuccess)
     {
-      return std::unexpected {
-        vk_error {
-          .function = "waitForFences",
-          .type = "vk::raii::Device",
-          .result = result,
-        },
-      };
+      return std::unexpected { make_vk_error(result) };
     }
     return {};
   }
@@ -77,13 +71,7 @@ public:
     const auto result = fence_.getStatus();
     if (result == vk::Result::eSuccess) { return true; }
     if (result == vk::Result::eNotReady) { return false; }
-    return std::unexpected {
-      vk_error {
-        .function = "getStatus",
-        .type = "vk::raii::Fence",
-        .result = result,
-      },
-    };
+    return std::unexpected { make_vk_error(result) };
   }
 
 private:

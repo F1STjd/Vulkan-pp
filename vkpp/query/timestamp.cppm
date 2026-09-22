@@ -34,10 +34,7 @@ public:
     if (properties.limits.timestampComputeAndGraphics != vk::True)
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::no_supported_format,
-          .detail = "timestamp npt supported on all graphics/compute queues"sv,
-        },
+        make_app_error(app_error_code::feature_not_supported),
       };
     }
 
@@ -78,10 +75,7 @@ public:
     if (result == vk::Result::eNotReady)
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "timestamp slots read before frame completion"sv,
-        },
+        make_app_error(app_error_code::invalid_state),
       };
     }
     pool_.reset(first, queries_per_frame_);

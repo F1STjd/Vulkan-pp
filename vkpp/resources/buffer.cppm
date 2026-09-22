@@ -182,20 +182,12 @@ public:
     auto* const ptr = mapped();
     if (ptr == nullptr)
     {
-      return std::unexpected {
-        app_error {
-          .kind = app_error_kind::mapping_failed,
-          .detail = "mapped_span: map returned nullptr"sv,
-        },
-      };
+      return std::unexpected { make_app_error(app_error_code::mapping_failed) };
     }
     if (size_ % sizeof(T) != 0UZ)
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "mapped_span: buffer size not a multiple of sizeof(T)"sv,
-        },
+        make_app_error(app_error_code::invalid_data_size),
       };
     }
     if (auto inv = handle_.invalidate_mapped(0UZ, size_); !inv)
@@ -221,11 +213,7 @@ public:
         if (destination.size() > source.size())
         {
           return std::unexpected {
-            app_error {
-              .kind = app_error_kind::invalid_argument,
-              .detail =
-                "copy_mapped_into: destination larger than mapped buffer"sv,
-            },
+            make_app_error(app_error_code::invalid_data_size),
           };
         }
         std::ranges::copy_n(

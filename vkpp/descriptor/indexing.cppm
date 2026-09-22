@@ -191,11 +191,7 @@ public:
     if (!index)
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "classic_bindless_table::register_combined_image_sampler: "
-                    "capacity exhausted "sv,
-        },
+        make_app_error(app_error_code::capacity_exhausted),
       };
     }
     return write(device, *index, sampler, view)
@@ -261,11 +257,7 @@ public:
     if (!descriptor_heap_supported(physical))
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail =
-            "heap_bindless_table::create: VK_EXT_descriptor_heap unsupported"sv,
-        },
+        make_app_error(app_error_code::feature_not_supported),
       };
     }
 
@@ -275,11 +267,7 @@ public:
           .bufferDeviceAddress != vk::True)
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail =
-            "heap_bindless_table::create: bufferDeviceAddress required"sv,
-        },
+        make_app_error(app_error_code::feature_not_supported),
       };
     }
 
@@ -313,11 +301,7 @@ public:
       resource_size > heap_porperties.maxResourceHeapSize)
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail =
-            "heap_bindless_table::create: capacity exceeds heap limits"sv,
-        },
+        make_app_error(app_error_code::capacity_exhausted),
       };
     }
 
@@ -352,11 +336,7 @@ public:
                   resource_heap.mapped() == nullptr)
                 {
                   return std::unexpected {
-                    app_error {
-                      .kind = app_error_kind::invalid_argument,
-                      .detail =
-                        "heap_bindless_table::create: heap buffers not mapped"sv,
-                    },
+                    make_app_error(app_error_code::invalid_state),
                   };
                 }
 
@@ -435,12 +415,7 @@ public:
   {
     if (index >= capacity_)
     {
-      return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "heap_bindless_table::write: index out of range"sv,
-        },
-      };
+      return std::unexpected { make_app_error(app_error_code::out_of_range) };
     }
 
     auto* const sampler_base = static_cast<std::byte*>(sampler_heap_.mapped());
@@ -449,12 +424,7 @@ public:
 
     if (sampler_base == nullptr || resource_base == nullptr)
     {
-      return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "heap_bindless_table::write: heaps not mapped"sv,
-        },
-      };
+      return std::unexpected { make_app_error(app_error_code::invalid_state) };
     }
 
     const vk::HostAddressRangeEXT sampler_range {
@@ -508,11 +478,7 @@ public:
     if (!index)
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "heap_bindless_table::register_combined_image_sampler: "
-                    "capacity exhausted"sv,
-        },
+        make_app_error(app_error_code::capacity_exhausted),
       };
     }
     return write(

@@ -33,12 +33,7 @@ load_mesh_cpu<mesh_file_type::obj>(const std::filesystem::path& path)
   if (!tinyobj::LoadObj(&attributes, &shapes, &materials, &warnings, &errors,
         path.string().c_str()))
   {
-    return std::unexpected {
-      vkpp::app_error {
-        .kind = vkpp::app_error_kind::model_parse,
-        .detail = std::format("warnings: {}\nerrors: {}", warnings, errors),
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::model_parse) };
   }
 
   mesh_streams_cpu streams { .index_type = vk::IndexType::eUint32 };

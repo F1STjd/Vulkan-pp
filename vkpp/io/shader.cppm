@@ -16,12 +16,7 @@ load_shader_file(const std::filesystem::path& filename)
   std::ifstream input_file { filename, std::ios::ate | std::ios::binary };
   if (!input_file.is_open())
   {
-    return std::unexpected {
-      vkpp::app_error {
-        .kind = vkpp::app_error_kind::file_open,
-        .detail = "Failed to open shader file"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::file_open) };
   }
 
   std::vector<char> buffer(input_file.tellg());

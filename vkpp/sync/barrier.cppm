@@ -235,10 +235,7 @@ record_generate_mipmaps(vk::raii::CommandBuffer& command_buffer,
   if (!(features & vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
   {
     return std::unexpected {
-      app_error {
-        .kind = app_error_kind::no_supported_format,
-        .detail = "Texture format lacks linear blit filter"sv,
-      },
+      make_app_error(app_error_code::no_supported_format),
     };
   }
 

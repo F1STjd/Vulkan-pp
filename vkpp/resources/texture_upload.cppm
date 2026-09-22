@@ -170,10 +170,7 @@ upload_texture_via_graphics_queue(const texture_create_info& create_info,
           if (!texel_bytes)
           {
             return std::unexpected {
-              app_error {
-                .kind = app_error_kind::invalid_argument,
-                .detail = "cube upload missing texel size"sv,
-              },
+              make_app_error(app_error_code::missing_required_argument),
             };
           }
           const image_barrier to_transfer_dst =
@@ -242,10 +239,7 @@ upload_texture_via_tranfer_queue(const texture_create_info& create_info,
                 if (!texel_bytes)
                 {
                   return std::unexpected {
-                    app_error {
-                      .kind = app_error_kind::invalid_argument,
-                      .detail = "cube upload missing texel size"sv,
-                    },
+                    make_app_error(app_error_code::missing_required_argument),
                   };
                 }
                 record_copy_texture_pixels(command_buffer, staging_buffer,
@@ -307,50 +301,27 @@ make_texture(const texture_create_info& create_info)
   if (create_info.mip_policy == texture_mip_policy::single_level &&
     create_info.mip_levels != 1U)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::invalid_argument,
-        .detail = "single_level policy requires mip_levels == 1"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::invalid_count) };
   }
   if (create_info.mip_policy == texture_mip_policy::generate_gpu_blit &&
     create_info.mip_levels < 2U)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::invalid_argument,
-        .detail = "generate_gpu_blit policy requires mip_levels >= 2"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::invalid_count) };
   }
   if (create_info.mip_policy == texture_mip_policy::upload_precomputed_chain &&
     create_info.level_offsets.size() != create_info.mip_levels)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::invalid_argument,
-        .detail = "upload_precomputed_chain requires one offset per mip"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::invalid_count) };
   }
   if (create_info.array_layers != 1U && create_info.array_layers != 6U)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::invalid_argument,
-        .detail = "texture array_layers must be 1 or 6"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::invalid_count) };
   }
   if (create_info.array_layers == 6U &&
     create_info.mip_policy != texture_mip_policy::single_level)
   {
     return std::unexpected {
-      app_error {
-        .kind = app_error_kind::invalid_argument,
-        .detail = "cube upload multi_level not supported yet"sv,
-      },
+      make_app_error(app_error_code::unsupported_operation),
     };
   }
 
@@ -360,10 +331,7 @@ make_texture(const texture_create_info& create_info)
     if (!texel_bytes)
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "unsupported format for single_level size check"sv,
-        },
+        make_app_error(app_error_code::unsupported_image_format),
       };
     }
   }
@@ -376,10 +344,7 @@ make_texture(const texture_create_info& create_info)
   if (create_info.pixels.size_bytes() != expected_bytes)
   {
     return std::unexpected {
-      app_error {
-        .kind = app_error_kind::invalid_argument,
-        .detail = "pixels size does not match extent * texels * array_layers"sv,
-      },
+      make_app_error(app_error_code::invalid_data_size),
     };
   }
 
@@ -479,10 +444,7 @@ make_texture(const texture_create_info& create_info)
         if (staging_buffer.mapped() == nullptr)
         {
           return std::unexpected {
-            app_error {
-              .kind = app_error_kind::mapping_failed,
-              .detail = "Staging buffer map returned nullptr"sv,
-            },
+            make_app_error(app_error_code::mapping_failed),
           };
         }
         std::memcpy(

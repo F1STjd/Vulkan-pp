@@ -20,24 +20,20 @@ to_ktx_transcode_format(ktx2_transcode_target target) -> ktx_transcode_fmt_e
 {
   switch (target)
   {
-  case ktx2_transcode_target::bc7_rgba:
-    return KTX_TTF_BC7_RGBA;
-  case ktx2_transcode_target::etc2_rgba:
-    return KTX_TTF_ETC2_RGBA;
-  case ktx2_transcode_target::astc_4x4_rgba:
-    return KTX_TTF_ASTC_4x4_RGBA;
-  case ktx2_transcode_target::rgba32:
-    return KTX_TTF_RGBA32;
+  case ktx2_transcode_target::bc7_rgba     : return KTX_TTF_BC7_RGBA;
+  case ktx2_transcode_target::etc2_rgba    : return KTX_TTF_ETC2_RGBA;
+  case ktx2_transcode_target::astc_4x4_rgba: return KTX_TTF_ASTC_4x4_RGBA;
+  case ktx2_transcode_target::rgba32       : return KTX_TTF_RGBA32;
   }
   return KTX_TTF_RGBA32;
 }
 
-[[nodiscard]] auto
-map_ktx_error(KTX_error_code code) -> error_t
+export [[nodiscard]] auto
+make_ktx_error(KTX_error_code code) -> error_t
 {
-  return app_error {
-    .kind = app_error_kind::image_decode,
-    .detail = std::format("libktx error: {}", static_cast<std::int32_t>(code)),
+  return error_t {
+    .domain = error_domain::ktx,
+    .code = static_cast<std::int32_t>(code),
   };
 }
 
@@ -62,10 +58,7 @@ chain_from_ktx_texture(
     if (!runtime_args.transcode_target.has_value())
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::no_supported_format,
-          .detail = "KTX2 needs transcoding but no target was provided"sv,
-        },
+        make_app_error(app_error_code::no_supported_format),
       };
     }
 
@@ -73,7 +66,7 @@ chain_from_ktx_texture(
       held.get(), to_ktx_transcode_format(*runtime_args.transcode_target), 0);
     if (transcode_result != KTX_SUCCESS)
     {
-      return std::unexpected { map_ktx_error(transcode_result) };
+      return std::unexpected { make_ktx_error(transcode_result) };
     }
   }
 
@@ -95,7 +88,7 @@ chain_from_ktx_texture(
       ktxTexture_GetImageOffset(ktxTexture(held.get()), level, 0, 0, &offset);
     if (offset_result != KTX_SUCCESS)
     {
-      return std::unexpected { map_ktx_error(offset_result) };
+      return std::unexpected { make_ktx_error(offset_result) };
     }
     chain.level_offsets[ level ] = static_cast<vk::DeviceSize>(offset);
   }
@@ -115,7 +108,7 @@ load_host_image_ktx2_from_memory(
 
   if (create_result != KTX_SUCCESS)
   {
-    return std::unexpected { map_ktx_error(create_result) };
+    return std::unexpected { make_ktx_error(create_result) };
   }
   return chain_from_ktx_texture(texture, runtime_args);
 }
@@ -132,7 +125,7 @@ load_host_image<image_file_type::ktx2>(
 
   if (create_result != KTX_SUCCESS)
   {
-    return std::unexpected { map_ktx_error(create_result) };
+    return std::unexpected { make_ktx_error(create_result) };
   }
   return chain_from_ktx_texture(texture, runtime_args);
 }

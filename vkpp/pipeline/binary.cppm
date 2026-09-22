@@ -65,10 +65,7 @@ public:
     if (blobs.empty())
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "pipeline_binaries::create: empty blobs"sv,
-        },
+        make_app_error(app_error_code::missing_required_argument),
       };
     }
 
@@ -147,12 +144,7 @@ save_pipeline_binary_file(const std::filesystem::path& path,
   std::ofstream output { path, std::ios::binary | std::ios::trunc };
   if (!output)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::file_open,
-        .detail = "save_pipeline_binary_file: open failed"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::file_open) };
   }
 
   const auto count = static_cast<std::uint32_t>(blobs.size());
@@ -173,12 +165,7 @@ save_pipeline_binary_file(const std::filesystem::path& path,
   }
   if (!output)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::file_open,
-        .detail = "save_pipeline_binary_file: write failed"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::file_write) };
   }
   return {};
 }
@@ -191,12 +178,7 @@ load_pipeline_binary_file(const std::filesystem::path& path)
   std::ifstream input { path, std::ios::binary };
   if (!input)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::file_open,
-        .detail = "load_pipeline_binary_file: open failed"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::file_open) };
   }
 
   std::uint32_t count {};
@@ -224,12 +206,7 @@ load_pipeline_binary_file(const std::filesystem::path& path)
     }
     if (!input)
     {
-      return std::unexpected {
-        app_error {
-          .kind = app_error_kind::file_open,
-          .detail = "load_pipeline_binary_file: read failed"sv,
-        },
-      };
+      return std::unexpected { make_app_error(app_error_code::file_read) };
     }
   }
   return blobs;

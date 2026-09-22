@@ -45,10 +45,7 @@ find_supported_format(const vk::raii::PhysicalDevice& physical_device,
   }
 
   return std::unexpected {
-    vkpp::app_error {
-      .kind = vkpp::app_error_kind::no_supported_format,
-      .detail = "Failed to find supported format"sv,
-    },
+    make_app_error(app_error_code::no_supported_format),
   };
 }
 
@@ -99,13 +96,7 @@ public:
           if (build.extent.width == 0U || build.extent.height == 0U)
           {
             return std::unexpected {
-              error_t {
-                app_error {
-                  .kind = app_error_kind::surface_not_presentable,
-                  .detail =
-                    "Surface not presentable: chosen swapchain extent is 0x0"sv,
-                },
-              },
+              make_app_error(app_error_code::surface_not_presentable),
             };
           }
           build.min_image_count =

@@ -46,10 +46,7 @@ public:
           if (buffer.mapped() == nullptr)
           {
             return std::unexpected {
-              app_error {
-                .kind = app_error_kind::mapping_failed,
-                .detail = "stage_pool: staging map returned nullptr"sv,
-              },
+              make_app_error(app_error_code::mapping_failed),
             };
           }
           return virtual_block::create(capacity).transform(
@@ -78,14 +75,11 @@ public:
       .or_else(
         [](error_t&& err) -> std::expected<stage_allocation, error_t>
         {
-          if (auto* app = std::get_if<app_error>(&err);
-            app != nullptr && app->kind == app_error_kind::arena_exhausted)
+          if (err.domain == error_domain::application &&
+            err.code == std::to_underlying(app_error_code::capacity_exhausted))
           {
             return std::unexpected {
-              app_error {
-                .kind = app_error_kind::arena_exhausted,
-                .detail = "stage_pool exhausted"sv,
-              },
+              make_app_error(app_error_code::capacity_exhausted),
             };
           }
           return std::unexpected { std::move(err) };

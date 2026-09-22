@@ -40,10 +40,7 @@ public:
     if (create_info.spirv.empty())
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "shader_stage_object spirv empty"sv,
-        },
+        make_app_error(app_error_code::missing_required_argument),
       };
     }
     const vk::ShaderCreateInfoEXT info {

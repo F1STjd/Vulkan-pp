@@ -182,12 +182,7 @@ private:
       });
     if (memory_type_it == memory_types.end())
     {
-      return std::unexpected {
-        vkpp::app_error {
-          .kind = vkpp::app_error_kind::no_memory_type,
-          .detail = "Failed to find suitable memory type"sv,
-        },
-      };
+      return std::unexpected { make_app_error(app_error_code::no_memory_type) };
     }
 
     return *memory_type_it;

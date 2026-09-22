@@ -229,10 +229,7 @@ public:
           if (device == suitable_devices.end())
           {
             return std::unexpected {
-              app_error {
-                .kind = app_error_kind::no_suitable_gpu,
-                .detail = "No suitable GPU found"sv,
-              },
+              make_app_error(app_error_code::no_suitable_gpu),
             };
           }
 

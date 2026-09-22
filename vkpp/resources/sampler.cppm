@@ -81,10 +81,7 @@ public:
     if (count_ >= entries_.size())
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "sampler_cache capacity exhausted"sv,
-        },
+        make_app_error(app_error_code::capacity_exhausted),
       };
     }
 

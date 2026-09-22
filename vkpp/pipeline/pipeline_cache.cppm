@@ -45,12 +45,7 @@ load_pipeline_cache_file(const std::filesystem::path& path)
   std::ifstream input { path, std::ios::binary };
   if (!input)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::file_open,
-        .detail = "load_pipeline_cache_file: open failed"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::file_open) };
   }
 
   input.seekg(0, std::ios::end);
@@ -62,14 +57,8 @@ load_pipeline_cache_file(const std::filesystem::path& path)
   input.read(reinterpret_cast<char*>(bytes.data()), end);
   if (!input)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::file_open,
-        .detail = "load_pipeline_cache_file: read failed"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::file_read) };
   }
-
   return bytes;
 }
 
@@ -80,26 +69,15 @@ save_pipeline_cache_file(const std::filesystem::path& path,
   std::ofstream output { path, std::ios::binary | std::ios::trunc };
   if (!output)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::file_open,
-        .detail = "load_pipeline_cache_file: open failed"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::file_open) };
   }
 
   output.write(reinterpret_cast<const char*>(bytes.data()),
     static_cast<std::streamsize>(bytes.size()));
   if (!output)
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::file_open,
-        .detail = "load_pipeline_cache_file: write failed"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::file_write) };
   }
-
   return {};
 }
 

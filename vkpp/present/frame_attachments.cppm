@@ -168,10 +168,7 @@ public:
       if (!presentable_view.has_value() || !*presentable_view)
       {
         return std::unexpected {
-          app_error {
-            .kind = app_error_kind::invalid_argument,
-            .detail = "color_sink::presentable requires a non-null swaphcain"sv,
-          },
+          make_app_error(app_error_code::missing_required_argument),
         };
       }
       one_x = *presentable_view;

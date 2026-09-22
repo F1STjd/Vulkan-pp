@@ -58,10 +58,7 @@ make_compute_pipeline(const vk::raii::Device& device,
   if (runtime_args.set_layout == nullptr || shader.spirv.empty())
   {
     return std::unexpected {
-      app_error {
-        .kind = app_error_kind::invalid_argument,
-        .detail = "compute_pipeline_runtime_args missing set_layout/spirv"sv,
-      },
+      make_app_error(app_error_code::missing_required_argument),
     };
   }
 

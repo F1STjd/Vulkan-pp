@@ -216,8 +216,7 @@ upload_arena_slices(const arena_upload_create_info& create_info)
         if (staging.mapped() == nullptr)
         {
           return std::unexpected {
-            app_error { .kind = app_error_kind::mapping_failed,
-              .detail = "Staging buffer map returned nullptr"sv },
+            make_app_error(app_error_code::mapping_failed),
           };
         }
         const std::vector<vk::BufferCopy> regions =

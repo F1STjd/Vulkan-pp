@@ -57,11 +57,7 @@ public:
             if (missing_it != info.layers.end())
             {
               return std::unexpected {
-                app_error {
-                  .kind = app_error_kind::missing_validation_layer,
-                  .detail = std::format(
-                    "Required validation layer not supported: {}", *missing_it),
-                },
+                make_app_error(app_error_code::missing_validation_layer),
               };
             }
             return {};
@@ -88,11 +84,7 @@ public:
             if (missing != extensions.end())
             {
               return std::unexpected {
-                app_error {
-                  .kind = app_error_kind::missing_instance_extension,
-                  .detail =
-                    std::format("Missing instance extension: {}", *missing),
-                },
+                make_app_error(app_error_code::missing_instance_extension),
               };
             }
             return {};

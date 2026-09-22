@@ -55,12 +55,7 @@ public:
 
     if (vmaCreateVirtualBlock(&create_info, &out.block_) != VK_SUCCESS)
     {
-      return std::unexpected {
-        app_error {
-          .kind = app_error_kind::invalid_argument,
-          .detail = "vmaCreateVirtualBlock failed"sv,
-        },
-      };
+      return std::unexpected { make_app_error(app_error_code::invalid_state) };
     }
     return out;
   }
@@ -79,10 +74,7 @@ public:
           &slice.offset) != VK_SUCCESS)
     {
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::arena_exhausted,
-          .detail = "virtual_block_is_full"sv,
-        },
+        make_app_error(app_error_code::capacity_exhausted),
       };
     }
     return slice;

@@ -20,12 +20,12 @@ namespace vkpp
 {
 using namespace std::string_view_literals;
 
-[[nodiscard]] auto
-map_fastgltf_error(fastgltf::Error error) -> error_t
+export [[nodiscard]] auto
+make_fastgltf_error(fastgltf::Error error) -> error_t
 {
-  return app_error {
-    .kind = app_error_kind::model_parse,
-    .detail = std::format("fastgltf: {}", fastgltf::getErrorMessage(error)),
+  return error_t {
+    .domain = error_domain::fastgltf,
+    .code = static_cast<std::int32_t>(error),
   };
 }
 
@@ -88,12 +88,7 @@ extract_mesh_cpu(const fastgltf::Asset& gltf)
       const auto* position_it = primitive.findAttribute("POSITION");
       if (position_it == primitive.attributes.end())
       {
-        return std::unexpected {
-          app_error {
-            .kind = app_error_kind::model_parse,
-            .detail = "glTF primitive missing POSITION"sv,
-          },
-        };
+        return std::unexpected { make_app_error(app_error_code::model_parse) };
       }
 
       const fastgltf::Accessor& position_accessor =
@@ -153,10 +148,7 @@ extract_mesh_cpu(const fastgltf::Asset& gltf)
       if (!primitive.indicesAccessor.has_value())
       {
         return std::unexpected {
-          app_error {
-            .kind = app_error_kind::model_parse,
-            .detail = "glTF primitive missing indices (unsupported for now)"sv,
-          },
+          make_app_error(app_error_code::unsupported_model_data),
         };
       }
 
@@ -189,10 +181,7 @@ extract_mesh_cpu(const fastgltf::Asset& gltf)
       else
       {
         return std::unexpected {
-          app_error {
-            .kind = app_error_kind::model_parse,
-            .detail = "unsupported glTF index component type"sv,
-          },
+          make_app_error(app_error_code::unsupported_model_data),
         };
       }
 
@@ -357,12 +346,7 @@ read_file_bytes(const std::filesystem::path& path, std::size_t byte_offset)
   std::ifstream input { path, std::ios::ate | std::ios::binary };
   if (!input.is_open())
   {
-    return std::unexpected {
-      app_error {
-        .kind = app_error_kind::file_open,
-        .detail = "Failed to open glTF-referenced image file"sv,
-      },
-    };
+    return std::unexpected { make_app_error(app_error_code::file_open) };
   }
 
   const auto total = static_cast<std::size_t>(input.tellg());
@@ -442,10 +426,7 @@ extract_image_source(const fastgltf::Asset& gltf, const fastgltf::Image& image,
         if (!file.uri.isLocalPath())
         {
           return std::unexpected {
-            app_error {
-              .kind = app_error_kind::model_parse,
-              .detail = "non-local glTF image URI"sv,
-            },
+            make_app_error(app_error_code::model_parse),
           };
         }
         const std::filesystem::path full_path = directory / file.uri.fspath();
@@ -475,10 +456,7 @@ extract_image_source(const fastgltf::Asset& gltf, const fastgltf::Image& image,
       [ & ](const auto& data) -> return_value
       {
         return std::unexpected {
-          app_error {
-            .kind = app_error_kind::model_parse,
-            .detail = "unsupported glTF image DataSource"sv,
-          },
+          make_app_error(app_error_code::unsupported_model_data),
         };
       },
     },
@@ -540,10 +518,7 @@ realize_gltf_host_images(std::span<const gltf::image_source_cpu> sources,
     }
     case gltf::image_kind::encoded_other:
       return std::unexpected {
-        app_error {
-          .kind = app_error_kind::image_decode,
-          .detail = "unsupported glTF image mime for host realize"sv,
-        },
+        make_app_error(app_error_code::unsupported_image_format),
       };
     }
 
@@ -572,7 +547,7 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
   auto data = fastgltf::GltfDataBuffer::FromPath(path);
   if (data.error() != fastgltf::Error::None)
   {
-    return std::unexpected { map_fastgltf_error(data.error()) };
+    return std::unexpected { make_fastgltf_error(data.error()) };
   }
 
   fastgltf::Parser parser = make_gltf_parser(runtime_args);
@@ -580,7 +555,7 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
     gltf_options(runtime_args), category_for(runtime_args.content));
   if (asset.error() != fastgltf::Error::None)
   {
-    return std::unexpected { map_fastgltf_error(asset.error()) };
+    return std::unexpected { make_fastgltf_error(asset.error()) };
   }
 
   const fastgltf::Asset& gltf = asset.get();
