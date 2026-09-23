@@ -1,7 +1,3 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.frame;
 
 import std;
@@ -11,6 +7,7 @@ import vkpp.buffer;
 import vkpp.command;
 import vkpp.device;
 import vkpp.error;
+import vkpp.diagnostics;
 import vkpp.memory;
 
 namespace vkpp
@@ -51,8 +48,8 @@ create_frames(const frames_create_info& info)
       {
         for (std::size_t index : std::views::indices(N))
         {
-          auto semaphore = UTILS_VK(info.device.device().createSemaphore({}),
-            ^^vk::raii::Device::createSemaphore);
+          auto semaphore = map_vk_error(
+            info.device.device().createSemaphore({}), std::nullopt);
           if (!semaphore)
           {
             return std::unexpected { std::move(semaphore).error() };

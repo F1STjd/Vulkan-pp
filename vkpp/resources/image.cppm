@@ -1,7 +1,3 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.image;
 
 import std;
@@ -10,6 +6,7 @@ import vulkan;
 import vkpp.memory;
 import vkpp.memory.vma;
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -211,8 +208,7 @@ make_image_view(const vk::raii::Device& device, vk::Image image,
       .layerCount = array_layers,
     },
   };
-  return UTILS_VK(
-    device.createImageView(view_info), ^^vk::raii::Device::createImageView);
+  return map_vk_error(device.createImageView(view_info), std::nullopt);
 }
 
 export template<image_kind Kind, device_allocator Alloc = vma_policy>

@@ -1,7 +1,3 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.texture.upload;
 
 import std;
@@ -9,6 +5,7 @@ import vulkan;
 
 export import vkpp.texture;
 import vkpp.error;
+import vkpp.diagnostics;
 import vkpp.memory;
 import vkpp.memory.vma;
 import vkpp.image;
@@ -205,8 +202,8 @@ upload_texture_via_tranfer_queue(const texture_create_info& create_info,
     .src_queue_family = create_info.device.transfer_qf_index(),
     .dst_queue_family = create_info.device.graphics_qf_index(),
   };
-  return UTILS_VK(create_info.device.device().createSemaphore({}),
-    ^^vk::raii::Device::createSemaphore)
+  return map_vk_error(
+    create_info.device.device().createSemaphore({}), std::nullopt)
     .and_then(
       [ & ](vk::raii::Semaphore&& copy_done) -> std::expected<void, error_t>
       {

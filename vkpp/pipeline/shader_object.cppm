@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.pipeline.shader_object;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -57,8 +54,7 @@ public:
         static_cast<std::uint32_t>(create_info.push_constant_ranges.size()),
       .pPushConstantRanges = create_info.push_constant_ranges.data(),
     };
-    return UTILS_VK(
-      device.createShaderEXT(info), ^^vk::raii::Device::createShaderEXT)
+    return map_vk_error(device.createShaderEXT(info), std::nullopt)
       .transform([](vk::raii::ShaderEXT&& shader) -> shader_stage_object
         { return shader_stage_object { std::move(shader) }; });
   }

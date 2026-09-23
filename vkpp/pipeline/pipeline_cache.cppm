@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.pipeline.cache;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -103,8 +100,7 @@ public:
       .initialDataSize = initial.size(),
       .pInitialData = initial.data(),
     };
-    return UTILS_VK(device.createPipelineCache(create_info),
-      ^^vk::raii::Device::createPipelineCache)
+    return map_vk_error(device.createPipelineCache(create_info), std::nullopt)
       .transform([](vk::raii::PipelineCache&& cache) -> pipeline_cache
         { return pipeline_cache { std::move(cache) }; });
   }
@@ -119,7 +115,7 @@ public:
 
   [[nodiscard]] auto
   data() const -> std::expected<std::vector<std::uint8_t>, error_t>
-  { return UTILS_VK(cache_.getData(), ^^vk::raii::PipelineCache::getData); }
+  { return map_vk_error(cache_.getData(), std::nullopt); }
 
 private:
   vk::raii::PipelineCache cache_ { nullptr };

@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.sampler;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -53,8 +50,8 @@ make_sampler(const vk::raii::Device& device,
     .borderColor = vk::BorderColor::eIntOpaqueBlack,
     .unnormalizedCoordinates = vk::False,
   };
-  return UTILS_VK(
-    device.createSampler(sampler_info), ^^vk::raii::Device::createSampler);
+  return map_vk_error(
+    device.createSampler(sampler_info), std::nullopt);
 }
 
 export class sampler_cache

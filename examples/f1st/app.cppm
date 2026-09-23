@@ -1,7 +1,6 @@
 module;
 
 #include "contracts_config.hpp"
-#include "error/vk_error_config.hpp"
 
 #include <SFML/Window.hpp>
 #include <SFML/Window/VideoMode.hpp>
@@ -24,6 +23,7 @@ import vkpp.io;
 import vkpp.io.mesh;
 import vkpp.io.mesh.gltf;
 import vkpp.error;
+import vkpp.diagnostics;
 import vkpp.vertex;
 import vkpp.memory;
 import vkpp.memory.vma;
@@ -369,7 +369,7 @@ public:
         std::cerr, "pipeline cache data: {}", vkpp::message(blob.error()));
     }
     shutdown_imgui();
-    if (!result) { std::println(stderr, "{}", vkpp::message(result.error())); }
+    if (!result) { drain_diagnostics(); }
     swap_chain_.release();
   }
 
@@ -417,7 +417,7 @@ private:
       if (!window_.isOpen()) { break; }
       if (auto result = draw_frame(); !result) { return result; }
     }
-    return UTILS_VK(device_.device().waitIdle(), ^^vk::raii::Device::waitIdle);
+    return vkpp::map_vk_error(device_.device().waitIdle(), diagnostic_buffer_);
   }
 
 private:
@@ -438,6 +438,7 @@ private:
         .extensions = extensions,
         .layers = validation_layers,
         .enable_validation = enable_validation_layers,
+        .diagnostics = diagnostic_buffer_,
       })
       .transform([ this ](vkpp::instance_context&& context)
         { instance_ = std::move(context); });
@@ -483,7 +484,8 @@ private:
         .rank = {
           .prefer_discrete = true,
         },
-      })
+      },
+    diagnostic_buffer_)
       .transform([ this ](vkpp::device_context&& device) -> void
         {
           device_ = std::move(device);
@@ -680,8 +682,8 @@ private:
     auto make_layout =
       [ & ]() -> std::expected<vk::raii::PipelineLayout, vkpp::error_t>
     {
-      return UTILS_VK(device_.device().createPipelineLayout(layout_info),
-        ^^vk::raii::Device::createPipelineLayout);
+      return map_vk_error(
+        device_.device().createPipelineLayout(layout_info), diagnostic_buffer_);
     };
 
     auto gpl_layout = make_layout();
@@ -1324,8 +1326,8 @@ private:
       .poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size()),
       .pPoolSizes = pool_sizes.data(),
     };
-    return UTILS_VK(device_.device().createDescriptorPool(create_info),
-      ^^vk::raii::Device::createDescriptorPool)
+    return map_vk_error(
+      device_.device().createDescriptorPool(create_info), diagnostic_buffer_)
       .transform([ this ](vk::raii::DescriptorPool&& pool) -> void
         { imgui_descriptor_pool_ = std::move(pool); });
   }
@@ -1395,8 +1397,8 @@ private:
       .minLod = 0.0F,
       .maxLod = 0.25F,
     };
-    return UTILS_VK(device_.device().createSampler(create_info),
-      ^^vk::raii::Device::createSampler)
+    return map_vk_error(
+      device_.device().createSampler(create_info), diagnostic_buffer_)
       .transform([ this ](vk::raii::Sampler&& sampler) -> void
         { scene_sampler_ = std::move(sampler); });
   }
@@ -1495,7 +1497,7 @@ private:
     {
       return {};
     }
-    return UTILS_VK(device_.device().waitIdle(), ^^vk::raii::Device::waitIdle)
+    return map_vk_error(device_.device().waitIdle(), diagnostic_buffer_)
       .and_then([ this, extent ]() -> std::expected<void, vkpp::error_t>
         { return rebuild_scene_targets(extent); });
   }
@@ -1694,7 +1696,7 @@ private:
   {
     image_uses_.reset();
     auto& command_buffer = frames_[ frame_index_ ].command_buffer;
-    return UTILS_VK(command_buffer.begin({}), ^^vk::raii::CommandBuffer::begin)
+    return map_vk_error(command_buffer.begin({}), diagnostic_buffer_)
       .transform(
         [ this, image_index, &command_buffer ]() -> void
         {
@@ -1877,10 +1879,8 @@ private:
             vk::ImageAspectFlagBits::eColor);
         })
       .and_then(
-        [ &command_buffer ]() -> std::expected<void, vkpp::error_t>
-        {
-          return UTILS_VK(command_buffer.end(), ^^vk::raii::CommandBuffer::end);
-        });
+        [ &command_buffer, this ]() -> std::expected<void, vkpp::error_t>
+        { return map_vk_error(command_buffer.end(), diagnostic_buffer_); });
   }
 
   auto
@@ -1897,7 +1897,7 @@ private:
 
     if (swap_chain_.empty()) { return {}; }
 
-    return UTILS_VK(device_.device().waitIdle(), ^^vk::raii::Device::waitIdle)
+    return map_vk_error(device_.device().waitIdle(), diagnostic_buffer_)
       .transform([ this ] { swap_chain_.release(); });
   }
 
@@ -2207,8 +2207,7 @@ private:
     finish_imgui_frame();
     update_uniform_buffer(frame_index_);
 
-    return UTILS_VK(
-      frame.command_buffer.reset(), ^^vk::raii::CommandBuffer::reset)
+    return map_vk_error(frame.command_buffer.reset(), diagnostic_buffer_)
       .and_then([ this, image_index ] -> std::expected<void, vkpp::error_t>
         { return record_command_buffer(image_index); })
       .and_then(
@@ -2242,9 +2241,9 @@ private:
               static_cast<std::uint32_t>(signal_semaphore_infos.size()),
             .pSignalSemaphoreInfos = signal_semaphore_infos.data(),
           };
-          return UTILS_VK(
+          return map_vk_error(
             device_.graphics_queue().submit2(submit_info, nullptr),
-            ^^vk::raii::Queue::submit2)
+            diagnostic_buffer_)
             .transform([ this ] -> void { ++frame_counter_; });
         })
       .and_then(
@@ -2292,6 +2291,26 @@ private:
       });
   }
 
+  void
+  drain_diagnostics()
+  {
+    std::array<vkpp::diagnostic_record, 256> scratch {};
+    const auto n = diagnostic_buffer_.copy_and_clear(scratch);
+    for (auto index : std::views::indices(n))
+    {
+      const auto& record = scratch[ index ];
+      std::println(std::cerr, "{}:{}:{}:{}: {}", record.location.file_name(),
+        record.location.line(), record.location.column(),
+        record.location.function_name(),
+        std::string_view { record.text.data(), record.text_size });
+    }
+    if (diagnostic_buffer_.dropped() != 0UZ)
+    {
+      std::println(std::cerr, "diagnostics dropped (lifetime): {}",
+        diagnostic_buffer_.dropped());
+    }
+  }
+
 private:
   enum class frame_rendering_state : std::uint8_t
   {
@@ -2303,6 +2322,11 @@ private:
   sf::WindowBase window_ {
     sf::VideoMode { { window_width, window_height } },
     "Window_title",
+  };
+  std::array<vkpp::diagnostic_record, 256> diagnostic_storage_ {};
+  vkpp::diagnostic_buffer diagnostic_buffer_ {
+    diagnostic_storage_,
+    vkpp::diagnostic_severity::warning,
   };
   vkpp::instance_context instance_ {};
   vkpp::device_context device_ {};

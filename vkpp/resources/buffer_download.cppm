@@ -1,7 +1,3 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.buffer.download;
 
 import std;

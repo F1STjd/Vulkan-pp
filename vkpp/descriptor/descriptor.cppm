@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.descriptor;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -21,8 +18,8 @@ make_descriptor_set_layout(const vk::raii::Device& device,
     .bindingCount = static_cast<std::uint32_t>(bindings.size()),
     .pBindings = bindings.data(),
   };
-  return UTILS_VK(device.createDescriptorSetLayout(create_info),
-    ^^vk::raii::Device::createDescriptorSetLayout);
+  return map_vk_error(
+    device.createDescriptorSetLayout(create_info), std::nullopt);
 }
 
 export class descriptor_pool
@@ -45,8 +42,7 @@ public:
       .poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size()),
       .pPoolSizes = pool_sizes.data(),
     };
-    return UTILS_VK(device.createDescriptorPool(info),
-      ^^vk::raii::Device::createDescriptorPool)
+    return map_vk_error(device.createDescriptorPool(info), std::nullopt)
       .transform([](vk::raii::DescriptorPool&& pool) -> descriptor_pool
         { return descriptor_pool { std::move(pool) }; });
   }
@@ -62,8 +58,7 @@ public:
       .descriptorSetCount = count,
       .pSetLayouts = layouts.data(),
     };
-    return UTILS_VK(device.allocateDescriptorSets(info),
-      ^^vk::raii::Device::allocateDescriptorSets)
+    return map_vk_error(device.allocateDescriptorSets(info), std::nullopt)
       .transform(
         [](std::vector<vk::raii::DescriptorSet>&& owned)
         {
@@ -79,7 +74,7 @@ public:
 
   [[nodiscard]] auto
   reset() -> std::expected<void, error_t>
-  { return UTILS_VK(pool_.reset(), ^^vk::raii::DescriptorPool::reset); }
+  { return map_vk_error(pool_.reset(), std::nullopt); }
 
   [[nodiscard]] auto
   handle(this auto&& self) -> decltype(auto)

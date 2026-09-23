@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.pipeline.compute;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -67,8 +64,7 @@ make_compute_pipeline(const vk::raii::Device& device,
     .pCode = std::start_lifetime_as<std::uint32_t>(shader.spirv.data()),
   };
 
-  return UTILS_VK(device.createShaderModule(module_info),
-    ^^vk::raii::Device::createShaderModule)
+  return map_vk_error(device.createShaderModule(module_info), std::nullopt)
     .and_then(
       [ & ](vk::raii::ShaderModule&& module)
         -> std::expected<compute_pipeline, error_t>
@@ -87,8 +83,8 @@ make_compute_pipeline(const vk::raii::Device& device,
           .pPushConstantRanges = &push_range,
         };
 
-        return UTILS_VK(device.createPipelineLayout(layout_info),
-          ^^vk::raii::Device::createPipelineLayout)
+        return map_vk_error(
+          device.createPipelineLayout(layout_info), std::nullopt)
           .and_then(
             [ &, module = std::move(module) ](vk::raii::PipelineLayout&& layout)
               -> std::expected<compute_pipeline, error_t>
@@ -102,9 +98,9 @@ make_compute_pipeline(const vk::raii::Device& device,
                 .layout = *layout,
               };
 
-              return UTILS_VK(
+              return map_vk_error(
                 device.createComputePipeline(cache, compute_pipeline_info),
-                ^^vk::raii::Device::createComputePipeline)
+                std::nullopt)
                 .transform(
                   [ &layout ](
                     vk::raii::Pipeline&& pipeline) mutable -> compute_pipeline

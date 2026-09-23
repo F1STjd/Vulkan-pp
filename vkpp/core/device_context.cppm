@@ -1,7 +1,3 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.device;
 
 import std;
@@ -10,6 +6,7 @@ import vulkan;
 import vkpp.instance;
 import vkpp.memory.vma;
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -205,12 +202,13 @@ export class device_context
 {
 public:
   [[nodiscard]] static auto
-  create(
-    const instance_context& instance, const device_requirements& requirements)
+  create(const instance_context& instance,
+    const device_requirements& requirements,
+    std::optional<diagnostic_buffer&> diagnostics = {})
     -> std::expected<device_context, error_t>
   {
-    return UTILS_VK(instance.instance().enumeratePhysicalDevices(),
-      ^^vk::raii::Instance::enumeratePhysicalDevices)
+    return map_vk_error(
+      instance.instance().enumeratePhysicalDevices(), diagnostics)
       .and_then(
         [ & ](std::vector<vk::raii::PhysicalDevice>&& devices)
           -> std::expected<device_context, error_t>
@@ -291,9 +289,9 @@ public:
             .ppEnabledExtensionNames = requirements.extensions.data(),
           };
 
-          return UTILS_VK(
+          return map_vk_error(
             output.physical_device_.createDevice(device_create_info),
-            ^^vk::raii::PhysicalDevice::createDevice)
+            diagnostics)
             .transform(
               [ & ](vk::raii::Device&& device) -> void
               {

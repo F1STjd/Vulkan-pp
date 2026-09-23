@@ -1,7 +1,3 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.swapchain;
 
 import std;
@@ -10,6 +6,7 @@ import vulkan;
 import vkpp.device;
 import vkpp.image;
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -83,9 +80,9 @@ public:
     swapchain output {};
     surface_build_info build {};
 
-    return UTILS_VK(
+    return map_vk_error(
       device.physical_device().getSurfaceCapabilitiesKHR(*surface),
-      ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR)
+      std::nullopt)
       .and_then(
         [ & ](const vk::SurfaceCapabilitiesKHR& caps)
           -> std::expected<void, error_t>
@@ -107,9 +104,9 @@ public:
       .and_then(
         [ & ] -> std::expected<void, error_t>
         {
-          return UTILS_VK(
+          return map_vk_error(
             device.physical_device().getSurfaceFormatsKHR(*surface),
-            ^^vk::raii::PhysicalDevice::getSurfaceFormatsKHR)
+            std::nullopt)
             .transform(
               [ & ](std::span<const vk::SurfaceFormatKHR> available_formats)
               {
@@ -120,9 +117,9 @@ public:
       .and_then(
         [ & ] -> std::expected<void, error_t>
         {
-          return UTILS_VK(
+          return map_vk_error(
             device.physical_device().getSurfacePresentModesKHR(*surface),
-            ^^vk::raii::PhysicalDevice::getSurfacePresentModesKHR)
+            std::nullopt)
             .transform(
               [ & ](std::span<const vk::PresentModeKHR> present_modes)
               {
@@ -151,17 +148,16 @@ public:
             .oldSwapchain = old_swapchain,
           };
 
-          return UTILS_VK(
+          return map_vk_error(
             device.device().createSwapchainKHR(swap_chain_create_info),
-            ^^vk::raii::Device::createSwapchainKHR)
+            std::nullopt)
             .transform([ & ](vk::raii::SwapchainKHR&& swap_chain)
               { output.swap_chain_ = std::move(swap_chain); });
         })
       .and_then(
         [ & ] -> std::expected<void, error_t>
         {
-          return UTILS_VK(
-            output.swap_chain_.getImages(), ^^vk::raii::SwapchainKHR::getImages)
+          return map_vk_error(output.swap_chain_.getImages(), std::nullopt)
             .transform([ & ](std::vector<vk::Image>&& images)
               { output.images_ = std::move(images); });
         })
@@ -186,8 +182,8 @@ public:
           output.render_finished_semaphores_.reserve(output.images_.size());
           for (auto _ : std::views::indices(output.images_.size()))
           {
-            if (auto error = UTILS_VK(device.device().createSemaphore({}),
-                  ^^vk::raii::Device::createSemaphore)
+            if (auto error = map_vk_error(
+                  device.device().createSemaphore({}), std::nullopt)
                   .transform(
                     [ & ](vk::raii::Semaphore&& semaphore)
                     {
@@ -229,7 +225,7 @@ public:
       choose_extent,
     recreate_wait_idle_t) -> std::expected<void, error_t>
   {
-    return UTILS_VK(device.device().waitIdle(), ^^vk::raii::Device::waitIdle)
+    return map_vk_error(device.device().waitIdle(), std::nullopt)
       .and_then([ & ]() -> std::expected<void, error_t>
         { return recreate(device, surface, window, choose_extent); });
   }
@@ -240,9 +236,9 @@ public:
     std::invocable<const vk::SurfaceCapabilitiesKHR&, vk::Extent2D> auto&&
       choose_extent) -> std::expected<presentability, error_t>
   {
-    return UTILS_VK(
+    return map_vk_error(
       device.physical_device().getSurfaceCapabilitiesKHR(*surface),
-      ^^vk::raii::PhysicalDevice::getSurfaceCapabilitiesKHR)
+      std::nullopt)
       .transform(
         [ & ](const vk::SurfaceCapabilitiesKHR& capabilities) -> presentability
         {

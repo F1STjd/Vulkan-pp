@@ -8,8 +8,6 @@
 
 add_library(vkpp STATIC)
 
-# Public include dir so headers placed under vkpp (e.g. a future
-# error/vk_error_config.hpp holding the UTILS_VK macro) are visible to consumers.
 target_include_directories(vkpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_sources(vkpp PRIVATE
@@ -21,6 +19,8 @@ target_sources(vkpp
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
     FILES
       error/error.cppm          # module vkpp.error
+      error/diagnostics.cppm    # module vkpp.diagnostics
+
       io/channels.cppm          # module vkpp.io.channels
       io/load.cppm              # module vkpp.io
       io/shader.cppm            # module vkpp.io.shader

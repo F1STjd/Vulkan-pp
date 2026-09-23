@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.descriptor.indexing;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 import vkpp.memory;
 import vkpp.memory.vma;
 import vkpp.device;
@@ -72,9 +69,10 @@ public:
       },
     };
 
-    return UTILS_VK(device.createDescriptorSetLayout(
-                      layout_chain.get<vk::DescriptorSetLayoutCreateInfo>()),
-      ^^vk::raii::Device::createDescriptorSetLayout)
+    return map_vk_error(
+      device.createDescriptorSetLayout(
+        layout_chain.get<vk::DescriptorSetLayoutCreateInfo>()),
+      std::nullopt)
       .and_then(
         [ & ](vk::raii::DescriptorSetLayout&& layout)
           -> std::expected<bindless_table, error_t>
@@ -89,8 +87,8 @@ public:
             .poolSizeCount = 1U,
             .pPoolSizes = &pool_size,
           };
-          return UTILS_VK(device.createDescriptorPool(pool_info),
-            ^^vk::raii::Device::createDescriptorPool)
+          return map_vk_error(
+            device.createDescriptorPool(pool_info), std::nullopt)
             .and_then(
               [ &, layout = std::move(layout) ](
                 vk::raii::DescriptorPool&& pool) mutable
@@ -109,10 +107,10 @@ public:
                   },
                 };
 
-                return UTILS_VK(
+                return map_vk_error(
                   device.allocateDescriptorSets(
                     allocate_chain.get<vk::DescriptorSetAllocateInfo>()),
-                  ^^vk::raii::Device::allocateDescriptorSets)
+                  std::nullopt)
                   .transform(
                     [ & ](std::vector<vk::raii::DescriptorSet>&& sets) mutable
                       -> bindless_table
@@ -445,25 +443,21 @@ public:
       .data = &image_descriptor,
     };
 
-    return UTILS_VK(device.writeSamplerDescriptorsEXT(
-                      {
-                        sampler_create_info,
-                      },
-                      {
-                        sampler_range,
-                      }),
-      ^^vk::raii::Device::writeSamplerDescriptorsEXT)
+    return map_vk_error(
+      device.writeSamplerDescriptorsEXT({ sampler_create_info },
+        {
+          sampler_range,
+        }),
+      std::nullopt)
       .and_then(
         [ & ] -> std::expected<void, error_t>
         {
-          return UTILS_VK(device.writeResourceDescriptorsEXT(
-                            {
-                              resource_info,
-                            },
-                            {
-                              resource_range,
-                            }),
-            ^^vk::raii::Device::writeResourceDescriptorsEXT);
+          return map_vk_error(
+            device.writeResourceDescriptorsEXT({ resource_info },
+              {
+                resource_range,
+              }),
+            std::nullopt);
         });
   }
 

@@ -1,7 +1,3 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.buffer.arena.upload;
 
 import std;
@@ -11,6 +7,7 @@ export import vkpp.buffer.arena;
 import vkpp.memory;
 import vkpp.memory.vma;
 import vkpp.error;
+import vkpp.diagnostics;
 import vkpp.device;
 import vkpp.command;
 import vkpp.barrier;
@@ -106,8 +103,8 @@ submit_arena_copy_dual_queue(const arena_upload_create_info& create_info,
   //  Think if there could be a way of splitting the responsibilities without
   //  createing global dependencies. Returning both submission and semaphore is
   //  not the idea I lean to
-  return UTILS_VK(create_info.device.device().createSemaphore({}),
-    ^^vk::raii::Device::createSemaphore)
+  return map_vk_error(create_info.device.device().createSemaphore({}),
+    std::nullopt)
     .and_then(
       [ & ](vk::raii::Semaphore&& copy_done) -> std::expected<void, error_t>
       {

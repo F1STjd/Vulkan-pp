@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.query;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -42,8 +39,7 @@ public:
       .queryType = vk::QueryType::eTimestamp,
       .queryCount = frames_in_flight * queries_per_frame,
     };
-    return UTILS_VK(device.createQueryPool(query_pool_info),
-      ^^vk::raii::Device::createQueryPool)
+    return map_vk_error(device.createQueryPool(query_pool_info), std::nullopt)
       .transform(
         [ & ](vk::raii::QueryPool&& pool) -> timestamp_ring
         {

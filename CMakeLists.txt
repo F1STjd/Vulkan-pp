@@ -13,7 +13,7 @@ project(Vulkan++ LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(ProjectWarnings)
-include(ProjectReflection)
+# include(ProjectReflection) # reflection is not used for now
 include(ProjectDiagnostics)
 include(ProjectContracts)
 

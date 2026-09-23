@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.pipeline.binary;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -40,8 +37,8 @@ public:
     const vk::PipelineBinaryCreateInfoKHR create_info {
       .pipeline = pipeline,
     };
-    return UTILS_VK(device.createPipelineBinariesKHR(create_info),
-      ^^vk::raii::Device::createPipelineBinariesKHR)
+    return map_vk_error(
+      device.createPipelineBinariesKHR(create_info), std::nullopt)
       .and_then(
         [ & ](std::vector<vk::raii::PipelineBinaryKHR>&& binaries)
           -> std::expected<pipeline_binaries, error_t>
@@ -49,8 +46,8 @@ public:
           const vk::ReleaseCapturedPipelineDataInfoKHR release_info {
             .pipeline = pipeline,
           };
-          return UTILS_VK(device.releaseCapturedPipelineDataKHR(release_info),
-            ^^vk::raii::Device::releaseCapturedPipelineDataKHR)
+          return map_vk_error(
+            device.releaseCapturedPipelineDataKHR(release_info), std::nullopt)
             .transform(
               [ binaries = std::move(binaries) ] mutable -> pipeline_binaries
               { return pipeline_binaries { std::move(binaries) }; });
@@ -89,8 +86,8 @@ public:
       .pKeysAndDataInfo = &keys_and_data,
     };
 
-    return UTILS_VK(device.createPipelineBinariesKHR(create_info),
-      ^^vk::raii::Device::createPipelineBinariesKHR)
+    return map_vk_error(
+      device.createPipelineBinariesKHR(create_info), std::nullopt)
       .transform([](std::vector<vk::raii::PipelineBinaryKHR>&& binaries)
                    -> pipeline_binaries
         { return pipeline_binaries { std::move(binaries) }; });
@@ -107,8 +104,8 @@ public:
       const vk::PipelineBinaryDataInfoKHR info {
         .pipelineBinary = *binary,
       };
-      auto got = UTILS_VK(device.getPipelineBinaryDataKHR(info),
-        ^^vk::raii::Device::getPipelineBinaryDataKHR);
+      auto got =
+        map_vk_error(device.getPipelineBinaryDataKHR(info), std::nullopt);
       if (!got) { return std::unexpected { std::move(got).error() }; }
       auto [ key, data ] = std::move(*got);
       blobs.push_back(pipeline_binary_blob {

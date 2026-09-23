@@ -1,11 +1,10 @@
-module;
-#include "error/vk_error_config.hpp"
 export module vkpp.memory.raw;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 import vkpp.memory;
 
 namespace vkpp
@@ -65,8 +64,7 @@ public:
     image_handle handle {};
     vk::DeviceSize memory_size {};
 
-    return UTILS_VK(
-      device_->createImage(image_info), ^^vk::raii::Device::createImage)
+    return map_vk_error(device_->createImage(image_info), std::nullopt)
       .and_then(
         [ & ](vk::raii::Image&& image)
         {
@@ -83,15 +81,15 @@ public:
             .allocationSize = memory_size,
             .memoryTypeIndex = memory_type,
           };
-          return UTILS_VK(device_->allocateMemory(allocate_info),
-            ^^vk::raii::Device::allocateMemory);
+          return map_vk_error(
+            device_->allocateMemory(allocate_info), std::nullopt);
         })
       .and_then(
         [ & ](vk::raii::DeviceMemory&& memory)
         {
           handle.memory = std::move(memory);
-          return UTILS_VK(handle.image.bindMemory(*handle.memory, 0ULL),
-            ^^vk::raii::Image::bindMemory);
+          return map_vk_error(
+            handle.image.bindMemory(*handle.memory, 0ULL), std::nullopt);
         })
       .transform([ & ] { return std::move(handle); });
   }
@@ -104,8 +102,7 @@ public:
     buffer_handle handle {};
     vk::DeviceSize memory_size {};
 
-    return UTILS_VK(
-      device_->createBuffer(buffer_info), ^^vk::raii::Device::createBuffer)
+    return map_vk_error(device_->createBuffer(buffer_info), std::nullopt)
       .and_then(
         [ & ](vk::raii::Buffer&& buffer)
         {
@@ -122,23 +119,23 @@ public:
             .allocationSize = memory_size,
             .memoryTypeIndex = memory_type,
           };
-          return UTILS_VK(device_->allocateMemory(allocate_info),
-            ^^vk::raii::Device::allocateMemory);
+          return map_vk_error(
+            device_->allocateMemory(allocate_info), std::nullopt);
         })
       .and_then(
         [ & ](vk::raii::DeviceMemory&& memory)
         {
           handle.memory = std::move(memory);
-          return UTILS_VK(handle.buffer.bindMemory(*handle.memory, 0ULL),
-            ^^vk::raii::Buffer::bindMemory);
+          return map_vk_error(
+            handle.buffer.bindMemory(*handle.memory, 0ULL), std::nullopt);
         })
       .and_then(
         [ & ] -> std::expected<void, error_t>
         {
           if (intent != memory_intent::gpu_only)
           {
-            return UTILS_VK(handle.memory.mapMemory(0ULL, vk::WholeSize),
-              ^^vk::raii::DeviceMemory::mapMemory)
+            return map_vk_error(
+              handle.memory.mapMemory(0ULL, vk::WholeSize), std::nullopt)
               .transform([ & ](void* mapped) { handle.mapped_p = mapped; });
           }
           return {};

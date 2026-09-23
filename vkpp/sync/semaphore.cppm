@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.semaphore;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -24,8 +21,8 @@ make_timeline_semaphore(
       .initialValue = initial_value,
     },
   };
-  return UTILS_VK(device.createSemaphore(chain.get<vk::SemaphoreCreateInfo>()),
-    ^^vk::raii::Device::createSemaphore);
+  return map_vk_error(
+    device.createSemaphore(chain.get<vk::SemaphoreCreateInfo>()), std::nullopt);
 }
 
 } // namespace vkpp

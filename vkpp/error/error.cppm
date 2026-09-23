@@ -146,19 +146,4 @@ message(error_t error) -> std::string
   return std::format("unknown_domain:{}", error.code);
 }
 
-export template<typename T>
-constexpr auto
-map_vk_error(std::expected<T, vk::Result>&& result) -> std::expected<T, error_t>
-{
-  return std::move(result).transform_error(
-    [](vk::Result result) -> error_t { return make_vk_error(result); });
-}
-
-#if defined(__cpp_impl_reflection) && __cpp_impl_reflection
-export template<std::meta::info Fn, typename T>
-constexpr auto
-map_vk_error(std::expected<T, vk::Result>&& result) -> std::expected<T, error_t>
-{ return map_vk_error(std::move(result)); }
-#endif
-
 } // namespace vkpp

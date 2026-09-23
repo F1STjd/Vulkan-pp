@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.command;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 
 namespace vkpp
 {
@@ -100,8 +97,8 @@ public:
       .flags = flags,
       .queueFamilyIndex = queue_family_index,
     };
-    return UTILS_VK(device.createCommandPool(command_pool_info),
-      ^^vk::raii::Device::createCommandPool)
+    return map_vk_error(
+      device.createCommandPool(command_pool_info), std::nullopt)
       .transform([](vk::raii::CommandPool&& pool) -> command_pool
         { return command_pool { std::move(pool) }; });
   }
@@ -115,8 +112,8 @@ public:
       .level = vk::CommandBufferLevel::ePrimary,
       .commandBufferCount = count,
     };
-    return UTILS_VK(device.allocateCommandBuffers(allocate_info),
-      ^^vk::raii::Device::allocateCommandBuffers);
+    return map_vk_error(
+      device.allocateCommandBuffers(allocate_info), std::nullopt);
   }
 
   [[nodiscard]] auto
@@ -159,25 +156,25 @@ public:
       .level = vk::CommandBufferLevel::ePrimary,
       .commandBufferCount = 1U,
     };
-    return UTILS_VK(device_.allocateCommandBuffers(allocate_info),
-      ^^vk::raii::Device::allocateCommandBuffers)
+    return map_vk_error(
+      device_.allocateCommandBuffers(allocate_info), std::nullopt)
       .and_then(
         [ this ](std::vector<vk::raii::CommandBuffer>&& buffers)
           -> std::expected<void, error_t>
         {
           command_buffer_ = std::move(buffers.front());
-          return UTILS_VK(
+          return map_vk_error(
             command_buffer_.begin({
               .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
             }),
-            ^^vk::raii::CommandBuffer::begin);
+            std::nullopt);
         });
   }
 
   [[nodiscard]] auto
   end_and_submit(upload::wait_idle_t) -> std::expected<void, error_t>
   {
-    return UTILS_VK(command_buffer_.end(), ^^vk::raii::CommandBuffer::end)
+    return map_vk_error(command_buffer_.end(), std::nullopt)
       .and_then(
         [ this ] -> std::expected<void, error_t>
         {
@@ -188,24 +185,20 @@ public:
             .commandBufferInfoCount = 1U,
             .pCommandBufferInfos = &command_buffer_info,
           };
-          return UTILS_VK(
-            queue_.submit2(submit_info, nullptr), ^^vk::raii::Queue::submit2);
+          return map_vk_error(
+            queue_.submit2(submit_info, nullptr), std::nullopt);
         })
       .and_then([ this ] -> std::expected<void, error_t>
-        { return UTILS_VK(queue_.waitIdle(), ^^vk::raii::Queue::waitIdle); });
+        { return map_vk_error(queue_.waitIdle(), std::nullopt); });
   }
 
   [[nodiscard]] auto
   end_and_submit(upload::deferred_t, upload_sync sync = {})
     -> std::expected<submission, error_t>
   {
-    return UTILS_VK(command_buffer_.end(), ^^vk::raii::CommandBuffer::end)
-      .and_then(
-        [ this ] -> std::expected<vk::raii::Fence, error_t>
-        {
-          return UTILS_VK(
-            device_.createFence({}), ^^vk::raii::Device::createFence);
-        })
+    return map_vk_error(command_buffer_.end(), std::nullopt)
+      .and_then([ this ] -> std::expected<vk::raii::Fence, error_t>
+        { return map_vk_error(device_.createFence({}), std::nullopt); })
       .and_then(
         [ &, this ](
           vk::raii::Fence&& fence) -> std::expected<submission, error_t>
@@ -229,8 +222,7 @@ public:
             .signalSemaphoreInfoCount = sync.signal ? 1U : 0U,
             .pSignalSemaphoreInfos = &signal_semaphore_info,
           };
-          return UTILS_VK(
-            queue_.submit2(submit_info, *fence), ^^vk::raii::Queue::submit2)
+          return map_vk_error(queue_.submit2(submit_info, *fence), std::nullopt)
             .transform(
               [ this, fence = std::move(fence) ] mutable -> submission
               {

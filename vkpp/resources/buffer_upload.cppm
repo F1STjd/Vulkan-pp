@@ -1,7 +1,3 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.buffer.upload;
 
 import std;
@@ -11,6 +7,7 @@ export import vkpp.buffer;
 import vkpp.memory;
 import vkpp.memory.vma;
 import vkpp.error;
+import vkpp.diagnostics;
 import vkpp.device;
 import vkpp.command;
 import vkpp.barrier;
@@ -227,8 +224,8 @@ submit_buffer_upload(const buffer_upload_create_info_for<Kind>& kinded,
     .src_queue_family = create_info.device.transfer_qf_index(),
     .dst_queue_family = create_info.device.graphics_qf_index(),
   };
-  return UTILS_VK(create_info.device.device().createSemaphore({}),
-    ^^vk::raii::Device::createSemaphore)
+  return map_vk_error(
+    create_info.device.device().createSemaphore({}), std::nullopt)
     .and_then(
       [ & ](vk::raii::Semaphore&& copy_done)
         -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
@@ -302,8 +299,8 @@ submit_buffer_upload(const buffer_upload_create_info_for<Kind>& kinded,
     .src_queue_family = create_info.device.transfer_qf_index(),
     .dst_queue_family = create_info.device.graphics_qf_index(),
   };
-  return UTILS_VK(create_info.device.device().createSemaphore({}),
-    ^^vk::raii::Device::createSemaphore)
+  return map_vk_error(
+    create_info.device.device().createSemaphore({}), std::nullopt)
     .and_then(
       [ & ](vk::raii::Semaphore&& copy_done)
         -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>

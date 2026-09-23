@@ -1,13 +1,10 @@
-module;
-
-#include "error/vk_error_config.hpp"
-
 export module vkpp.pipeline.gpl;
 
 import std;
 import vulkan;
 
 import vkpp.error;
+import vkpp.diagnostics;
 import vkpp.pipeline;
 
 namespace vkpp
@@ -108,9 +105,9 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
         .flags = library_flags_for(Kind),
       },
     };
-    return UTILS_VK(device.createGraphicsPipeline(
-                      cache, chain.get<vk::GraphicsPipelineCreateInfo>()),
-      ^^vk::raii::Device::createGraphicsPipeline)
+    return map_vk_error(device.createGraphicsPipeline(
+                          cache, chain.get<vk::GraphicsPipelineCreateInfo>()),
+      std::nullopt)
       .transform([](vk::raii::Pipeline&& pipeline) -> graphics_pipeline_library
         { return graphics_pipeline_library { std::move(pipeline) }; });
   }
@@ -132,8 +129,7 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
       .codeSize = runtime_args.spirv.size_bytes(),
       .pCode = std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data()),
     };
-    return UTILS_VK(device.createShaderModule(module_info),
-      ^^vk::raii::Device::createShaderModule)
+    return map_vk_error(device.createShaderModule(module_info), std::nullopt)
       .and_then(
         [ & ](vk::raii::ShaderModule&& module)
           -> std::expected<graphics_pipeline_library, error_t>
@@ -181,9 +177,9 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
               .flags = library_flags_for(Kind),
             },
           };
-          return UTILS_VK(device.createGraphicsPipeline(
-                            cache, chain.get<vk::GraphicsPipelineCreateInfo>()),
-            ^^vk::raii::Device::createGraphicsPipeline)
+          return map_vk_error(device.createGraphicsPipeline(cache,
+                                chain.get<vk::GraphicsPipelineCreateInfo>()),
+            std::nullopt)
             .transform(
               [ module = std::move(module) ](
                 vk::raii::Pipeline&& pipeline) mutable
@@ -212,8 +208,7 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
       .codeSize = runtime_args.spirv.size_bytes(),
       .pCode = std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data()),
     };
-    return UTILS_VK(device.createShaderModule(module_info),
-      ^^vk::raii::Device::createShaderModule)
+    return map_vk_error(device.createShaderModule(module_info), std::nullopt)
       .and_then(
         [ & ](vk::raii::ShaderModule&& module)
           -> std::expected<graphics_pipeline_library, error_t>
@@ -248,9 +243,9 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
               .flags = library_flags_for(Kind),
             },
           };
-          return UTILS_VK(device.createGraphicsPipeline(
-                            cache, chain.get<vk::GraphicsPipelineCreateInfo>()),
-            ^^vk::raii::Device::createGraphicsPipeline)
+          return map_vk_error(device.createGraphicsPipeline(cache,
+                                chain.get<vk::GraphicsPipelineCreateInfo>()),
+            std::nullopt)
             .transform(
               [ module = std::move(module) ](
                 vk::raii::Pipeline&& pipeline) mutable
@@ -307,9 +302,9 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
         .depthAttachmentFormat = runtime_args.depth_format,
       },
     };
-    return UTILS_VK(device.createGraphicsPipeline(
-                      cache, chain.get<vk::GraphicsPipelineCreateInfo>()),
-      ^^vk::raii::Device::createGraphicsPipeline)
+    return map_vk_error(device.createGraphicsPipeline(
+                          cache, chain.get<vk::GraphicsPipelineCreateInfo>()),
+      std::nullopt)
       .transform(
         [](vk::raii::Pipeline&& pipeline) mutable -> graphics_pipeline_library
         { return graphics_pipeline_library { std::move(pipeline) }; });
@@ -378,8 +373,8 @@ link_graphics_pipeline(const vk::raii::Device& device,
   const auto& cache_for_create =
     (capture_binary || replaying_binaries) ? null_cache : cache;
 
-  return UTILS_VK(device.createGraphicsPipeline(cache_for_create, create_info),
-    ^^vk::raii::Device::createGraphicsPipeline)
+  return map_vk_error(
+    device.createGraphicsPipeline(cache_for_create, create_info), std::nullopt)
     .transform([](vk::raii::Pipeline&& pipeline) -> vk::raii::Pipeline
       { return std::move(pipeline); });
 }
