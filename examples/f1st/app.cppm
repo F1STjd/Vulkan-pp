@@ -36,6 +36,7 @@ import vkpp.buffer.arena.upload;
 import vkpp.buffer.stage_pool;
 import vkpp.instance;
 import vkpp.device;
+import vkpp.capabilities;
 import vkpp.swapchain;
 import vkpp.command;
 import vkpp.command.record;
@@ -90,12 +91,43 @@ required_instance_extensions() -> std::vector<const char*>
   return extensions;
 }
 
-constexpr std::array required_device_extensions {
+constexpr std::array extra_device_extensions {
   vk::KHRSwapchainExtensionName,
-  vk::EXTExtendedDynamicStateExtensionName,
-  vk::KHRPipelineLibraryExtensionName,
-  vk::EXTGraphicsPipelineLibraryExtensionName,
-  vk::KHRPipelineBinaryExtensionName,
+};
+
+constexpr vkpp::device_feature_requests mandatory_features {
+  .sampler_anisotropy = vkpp::capability_requirement::required,
+  .sample_rate_shading = vkpp::capability_requirement::required,
+  .dynamic_rendering = vkpp::capability_requirement::required,
+  .synchronization2 = vkpp::capability_requirement::required,
+  .extended_dynamic_state = vkpp::capability_requirement::required,
+  .timeline_semaphore = vkpp::capability_requirement::required,
+  .host_query_reset = vkpp::capability_requirement::required,
+  .descriptor_indexing = vkpp::capability_requirement::required,
+  .buffer_device_address = vkpp::capability_requirement::required,
+  .graphics_pipeline_library = vkpp::capability_requirement::required,
+  .shader_object = vkpp::capability_requirement::disabled,
+};
+
+constexpr std::array device_profiles {
+  vkpp::device_profile {
+    .name = "heap_binary",
+    .features = mandatory_features,
+    .descriptor = vkpp::descriptor_binding_request::heap,
+    .pipeline = vkpp::pipeline_persistence_request::pipeline_binary,
+  },
+  vkpp::device_profile {
+    .name = "classic_binary",
+    .features = mandatory_features,
+    .descriptor = vkpp::descriptor_binding_request::classic,
+    .pipeline = vkpp::pipeline_persistence_request::pipeline_binary,
+  },
+  vkpp::device_profile {
+    .name = "classic_cache",
+    .features = mandatory_features,
+    .descriptor = vkpp::descriptor_binding_request::classic,
+    .pipeline = vkpp::pipeline_persistence_request::pipeline_cache,
+  },
 };
 
 constexpr std::size_t max_frames_in_flight { 2UZ };
@@ -468,40 +500,24 @@ private:
   {
     return vkpp::device_context::create(instance_,
       {
-        .extensions = required_device_extensions,
+        .profiles = device_profiles,
+        .extra_extensions = extra_device_extensions,
         .min_api_version = vk::ApiVersion14,
-        .features = {
-          .sampler_anisotropy = true,
-          .sample_rate_shading = true,
-          .dynamic_rendering = true,
-          .synchronization2 = true,
-          .extended_dynamic_state = true,
-          .timeline_semaphore = true,
-          .host_query_reset = true,
-          .descriptor_indexing = true,
-          .buffer_device_address = true,
-          .graphics_pipeline_library = true,
-          .pipeline_binary = true,
-        },
         .require_present = true,
         .request_dedicated_transfer = true,
-        .rank = {
-          .prefer_discrete = true,
-        },
+        .rank = { .prefer_discrete = true },
       },
-    diagnostic_buffer_)
-      .transform([ this ](vkpp::device_context&& device) -> void
+      diagnostic_buffer_)
+      .transform(
+        [ this ](vkpp::device_context&& device) -> void
         {
           device_ = std::move(device);
-          pipeline_binary_enabled_ = true;
-          const auto props = device_.physical_device().getProperties();
-          std::println(
-            "vkpp: selected GPU '{}' type = {}",
-            props.deviceName.data(),
-            static_cast<std::uint32_t>(props.deviceType));
-          std::println(
-            "vkpp: descriptor_heap supported = {}",
-            vkpp::descriptor_heap_supported(device_.physical_device()));
+          const auto& selected = device_.selected_capabilities();
+          std::println("vkpp: profile='{}' descriptor={} pipeline={} "
+                       "heap_enabled={} binary_enabled={}",
+            selected.profile_name, std::to_underlying(selected.descriptor),
+            std::to_underlying(selected.pipeline),
+            selected.descriptor_heap_enabled, selected.pipeline_binary_enabled);
         });
   }
 
@@ -603,7 +619,7 @@ private:
     const std::filesystem::path& binary_path)
     -> std::expected<vk::raii::Pipeline, vkpp::error_t>
   {
-    if (!pipeline_binary_enabled_)
+    if (!device_.selected_capabilities().pipeline_binary_enabled)
     {
       return vkpp::link_graphics_pipeline(device_.device(), libraries, false,
         *graphics_pipeline_layout_, pipeline_cache_.get());
@@ -2351,7 +2367,6 @@ private:
   vkpp::image_use_tracker image_uses_ {};
 
   vkpp::pipeline_cache pipeline_cache_ {};
-  bool pipeline_binary_enabled_ { false };
 
   vkpp::graphics_pipeline graphics_pipeline_ {};
   vkpp::graphics_pipeline blend_pipeline_ {};

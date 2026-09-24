@@ -48,6 +48,7 @@ target_sources(vkpp
       resources/stage_pool.cppm # module vkpp.buffer.stage_pool
 
       core/instance_context.cppm   # module vkpp.instance
+      core/capabilities.cppm       # module vkpp.capabilities
       core/device_context.cppm     # module vkpp.device
 
       present/swapchain.cppm       # module vkpp.swapchain

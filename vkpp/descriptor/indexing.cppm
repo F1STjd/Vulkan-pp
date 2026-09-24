@@ -4,6 +4,7 @@ import std;
 import vulkan;
 
 import vkpp.error;
+export import vkpp.capabilities;
 import vkpp.diagnostics;
 import vkpp.memory;
 import vkpp.memory.vma;
@@ -12,11 +13,6 @@ import vkpp.device;
 namespace vkpp
 {
 using namespace std::string_view_literals;
-
-export enum class descriptor_table_backend : std::uint8_t {
-  classic,
-  heap,
-};
 
 export struct bindless_table_create_info
 {
