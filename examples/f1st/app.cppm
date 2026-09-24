@@ -369,7 +369,11 @@ public:
         std::cerr, "pipeline cache data: {}", vkpp::message(blob.error()));
     }
     shutdown_imgui();
-    if (!result) { drain_diagnostics(); }
+    if (!result)
+    {
+      std::println(std::cerr, "error: {}", vkpp::message(result.error()));
+      drain_diagnostics();
+    }
     swap_chain_.release();
   }
 
