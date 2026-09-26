@@ -74,6 +74,7 @@ target_sources(vkpp
       pipeline/compute.cppm       # module vkpp.pipeline.compute
       pipeline/pipeline_cache.cppm # module vkpp.pipeline.cache
       pipeline/binary.cppm # module vkpp.pipeline.binary
+      pipeline/persistence.cppm # module vkpp.pipeline.persistence
       pipeline/graphics_pipeline_library.cppm # module vkpp.pipeline.gpl
       pipeline/shader_object.cppm # module vkpp.pipeline.shader_object
 
