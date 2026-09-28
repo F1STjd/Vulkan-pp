@@ -6,6 +6,9 @@ import vulkan;
 import vkpp.error;
 import vkpp.diagnostics;
 import vkpp.pipeline;
+import vkpp.pipeline.persistence;
+import vkpp.pipeline.binary;
+import vkpp.capabilities;
 
 namespace vkpp
 {
@@ -71,13 +74,167 @@ library_flags_for(graphics_pipeline_library_kind kind)
   }
 }
 
+[[nodiscard]] auto
+create_graphics_pipeline_library_application_miss(
+  const vk::raii::Device& device,
+  vk::GraphicsPipelineCreateInfo& graphics_create_info,
+  const vk::PipelineBinaryKeyKHR& pipeline_key,
+  pipeline_persistence& persistence,
+  std::optional<diagnostic_buffer&> diagnostics)
+  -> std::expected<graphics_pipeline_library, error_t>
+{
+  vk::PipelineCreateFlags2CreateInfoKHR flags2 {
+    .pNext = graphics_create_info.pNext,
+    .flags = vk::PipelineCreateFlagBits2::eLibraryKHR |
+      vk::PipelineCreateFlagBits2::eCaptureDataKHR,
+  };
+  graphics_create_info.pNext = &flags2;
+  graphics_create_info.flags = {};
+
+  return map_vk_error(device.createGraphicsPipeline(
+                        persistence.cache_for_create(), graphics_create_info),
+    diagnostics)
+    .and_then(
+      [ & ](vk::raii::Pipeline&& pipeline)
+        -> std::expected<graphics_pipeline_library, error_t>
+      {
+        return pipeline_binaries::capture(device, *pipeline)
+          .and_then(
+            [ & ](pipeline_binaries&& binaries)
+              -> std::expected<graphics_pipeline_library, error_t>
+            {
+              return binaries.extract_blobs(device).and_then(
+                [ & ](std::vector<pipeline_binary_blob>&& blobs)
+                  -> std::expected<graphics_pipeline_library, error_t>
+                {
+                  return persistence.store()
+                    ->upsert_capture(pipeline_key, blobs, diagnostics)
+                    .transform(
+                      [ & ] -> graphics_pipeline_library
+                      {
+                        persistence.mark_store_dirty();
+                        if (diagnostics)
+                        {
+                          diagnostics->report(diagnostic_severity::info,
+                            std::nullopt, std::source_location::current(),
+                            "pipeline_persistence: captured {} binaries",
+                            blobs.size());
+                        }
+                        return graphics_pipeline_library {
+                          std::move(pipeline),
+                        };
+                      });
+                });
+            });
+      });
+}
+
+[[nodiscard]] auto
+create_graphics_pipeline_library_internal(const vk::raii::Device& device,
+  vk::GraphicsPipelineCreateInfo& graphics_create_info,
+  std::optional<diagnostic_buffer&> diagnostics)
+  -> std::expected<graphics_pipeline_library, error_t>
+{
+  auto internal =
+    try_internal_pipeline_binaries(device, graphics_create_info, diagnostics);
+  if (!internal) { return std::unexpected { internal.error() }; }
+  std::optional<pipeline_binaries> held {};
+  vk::PipelineBinaryInfoKHR binary_local {};
+  if (*internal)
+  {
+    held = std::move(**internal);
+    binary_local = held->info();
+    binary_local.pNext = graphics_create_info.pNext;
+    graphics_create_info.pNext = &binary_local;
+  }
+  const vk::raii::PipelineCache null_cache { nullptr };
+  return map_vk_error(
+    device.createGraphicsPipeline(null_cache, graphics_create_info),
+    diagnostics)
+    .transform(
+      [ held = std::move(held) ](
+        vk::raii::Pipeline&& pipeline) mutable -> graphics_pipeline_library
+      {
+        (void)held;
+        return graphics_pipeline_library { std::move(pipeline) };
+      });
+}
+
+[[nodiscard]] auto
+create_graphics_pipeline_library_with_persistence(
+  const vk::raii::Device& device,
+  vk::GraphicsPipelineCreateInfo& graphics_create_info,
+  pipeline_persistence& persistence,
+  std::optional<diagnostic_buffer&> diagnostics)
+  -> std::expected<graphics_pipeline_library, error_t>
+{
+  using enum pipeline_persistence_mode;
+  switch (persistence.mode())
+  {
+  case pipeline_cache:
+    return map_vk_error(device.createGraphicsPipeline(
+                          persistence.cache_for_create(), graphics_create_info),
+      diagnostics)
+      .transform([](vk::raii::Pipeline&& pipeline) -> graphics_pipeline_library
+        { return graphics_pipeline_library { std::move(pipeline) }; });
+
+  case application_binary:
+  {
+    auto key =
+      query_pipeline_binary_key(device, graphics_create_info, diagnostics);
+    if (!key) { return std::unexpected { key.error() }; }
+    auto hit = make_pipeline_binaries_from_store(
+      device, *persistence.store(), *key, diagnostics);
+    if (!hit) { return std::unexpected { hit.error() }; }
+    if (*hit)
+    {
+      if (diagnostics)
+      {
+        diagnostics->report(diagnostic_severity::info, std::nullopt,
+          std::source_location::current(),
+          "pipeline_persistence: application-binary hit");
+      }
+      pipeline_binaries binaries = std::move(**hit);
+      vk::PipelineBinaryInfoKHR binary_local = binaries.info();
+      binary_local.pNext = graphics_create_info.pNext;
+      graphics_create_info.pNext = &binary_local;
+      return map_vk_error(
+        device.createGraphicsPipeline(
+          persistence.cache_for_create(), graphics_create_info),
+        diagnostics)
+        .transform(
+          [ binaries = std::move(binaries) ](
+            vk::raii::Pipeline&& pipeline) mutable -> graphics_pipeline_library
+          {
+            (void)binaries;
+            return graphics_pipeline_library { std::move(pipeline) };
+          });
+    }
+    if (diagnostics)
+    {
+      diagnostics->report(diagnostic_severity::info, std::nullopt,
+        std::source_location::current(),
+        "pipeline_persistence: application binary miss");
+    }
+    return create_graphics_pipeline_library_application_miss(
+      device, graphics_create_info, *key, persistence, diagnostics);
+  }
+
+  case internal_binary:
+    return create_graphics_pipeline_library_internal(
+      device, graphics_create_info, diagnostics);
+  }
+  std::unreachable();
+}
+
 export template<graphics_pipeline_library_kind Kind,
   graphics_pipeline_spec Spec = {}>
   requires(validate(Spec))
 auto
 make_graphics_pipeline_library(const vk::raii::Device& device,
   const graphics_pipeline_library_runtime_args& runtime_args,
-  const vk::raii::PipelineCache& cache = { nullptr })
+  pipeline_persistence& persistence,
+  std::optional<diagnostic_buffer&> diagnostics = {})
   -> std::expected<graphics_pipeline_library, error_t>
 {
   using enum graphics_pipeline_library_kind;
@@ -95,21 +252,17 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
     const vk::PipelineInputAssemblyStateCreateInfo input_assembly {
       .topology = Spec.topology,
     };
-    vk::StructureChain chain {
-      vk::GraphicsPipelineCreateInfo {
-        .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
-        .pVertexInputState = &vertex_input,
-        .pInputAssemblyState = &input_assembly,
-      },
-      vk::GraphicsPipelineLibraryCreateInfoEXT {
-        .flags = library_flags_for(Kind),
-      },
+    vk::GraphicsPipelineLibraryCreateInfoEXT library_info {
+      .flags = library_flags_for(Kind),
     };
-    return map_vk_error(device.createGraphicsPipeline(
-                          cache, chain.get<vk::GraphicsPipelineCreateInfo>()),
-      std::nullopt)
-      .transform([](vk::raii::Pipeline&& pipeline) -> graphics_pipeline_library
-        { return graphics_pipeline_library { std::move(pipeline) }; });
+    vk::GraphicsPipelineCreateInfo graphics_create_info {
+      .pNext = &library_info,
+      .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
+      .pVertexInputState = &vertex_input,
+      .pInputAssemblyState = &input_assembly,
+    };
+    return create_graphics_pipeline_library_with_persistence(
+      device, graphics_create_info, persistence, diagnostics);
   }
   else if constexpr (Kind == pre_rasterization)
   {
@@ -163,31 +316,21 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
               static_cast<std::uint32_t>(dynamic_states.size()),
             .pDynamicStates = dynamic_states.data(),
           };
-          vk::StructureChain chain {
-            vk::GraphicsPipelineCreateInfo {
-              .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
-              .stageCount = 1U,
-              .pStages = &stage,
-              .pViewportState = &viewport_state,
-              .pRasterizationState = &raster,
-              .pDynamicState = &dynamic,
-              .layout = runtime_args.layout,
-            },
-            vk::GraphicsPipelineLibraryCreateInfoEXT {
-              .flags = library_flags_for(Kind),
-            },
+          vk::GraphicsPipelineLibraryCreateInfoEXT library_info {
+            .flags = library_flags_for(Kind),
           };
-          return map_vk_error(device.createGraphicsPipeline(cache,
-                                chain.get<vk::GraphicsPipelineCreateInfo>()),
-            std::nullopt)
-            .transform(
-              [ module = std::move(module) ](
-                vk::raii::Pipeline&& pipeline) mutable
-                -> graphics_pipeline_library
-              {
-                (void)module;
-                return graphics_pipeline_library { std::move(pipeline) };
-              });
+          vk::GraphicsPipelineCreateInfo graphics_create_info {
+            .pNext = &library_info,
+            .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
+            .stageCount = 1U,
+            .pStages = &stage,
+            .pViewportState = &viewport_state,
+            .pRasterizationState = &raster,
+            .pDynamicState = &dynamic,
+            .layout = runtime_args.layout,
+          };
+          return create_graphics_pipeline_library_with_persistence(
+            device, graphics_create_info, persistence, diagnostics);
         });
   }
   else if constexpr (Kind == fragment)
@@ -230,30 +373,20 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
             .depthBoundsTestEnable = vk::False,
             .stencilTestEnable = vk::False,
           };
-          vk::StructureChain chain {
-            vk::GraphicsPipelineCreateInfo {
-              .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
-              .stageCount = 1U,
-              .pStages = &stage,
-              .pMultisampleState = &multisample,
-              .pDepthStencilState = &depth,
-              .layout = runtime_args.layout,
-            },
-            vk::GraphicsPipelineLibraryCreateInfoEXT {
-              .flags = library_flags_for(Kind),
-            },
+          vk::GraphicsPipelineLibraryCreateInfoEXT library_info {
+            .flags = library_flags_for(Kind),
           };
-          return map_vk_error(device.createGraphicsPipeline(cache,
-                                chain.get<vk::GraphicsPipelineCreateInfo>()),
-            std::nullopt)
-            .transform(
-              [ module = std::move(module) ](
-                vk::raii::Pipeline&& pipeline) mutable
-                -> graphics_pipeline_library
-              {
-                (void)module;
-                return graphics_pipeline_library { std::move(pipeline) };
-              });
+          vk::GraphicsPipelineCreateInfo graphics_create_info {
+            .pNext = &library_info,
+            .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
+            .stageCount = 1U,
+            .pStages = &stage,
+            .pMultisampleState = &multisample,
+            .pDepthStencilState = &depth,
+            .layout = runtime_args.layout,
+          };
+          return create_graphics_pipeline_library_with_persistence(
+            device, graphics_create_info, persistence, diagnostics);
         });
   }
   else if constexpr (Kind == fragment_output)
@@ -286,28 +419,24 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
       .attachmentCount = 1U,
       .pAttachments = &blend_attachment,
     };
-    vk::StructureChain chain {
-      vk::GraphicsPipelineCreateInfo {
-        .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
-        .pMultisampleState = &multisample,
-        .pColorBlendState = &blend,
-      },
-      vk::GraphicsPipelineLibraryCreateInfoEXT {
-        .flags = library_flags_for(Kind),
-      },
-      vk::PipelineRenderingCreateInfo {
-        .colorAttachmentCount =
-          static_cast<std::uint32_t>(runtime_args.color_formats.size()),
-        .pColorAttachmentFormats = runtime_args.color_formats.data(),
-        .depthAttachmentFormat = runtime_args.depth_format,
-      },
+    vk::PipelineRenderingCreateInfo rendering_info {
+      .colorAttachmentCount =
+        static_cast<std::uint32_t>(runtime_args.color_formats.size()),
+      .pColorAttachmentFormats = runtime_args.color_formats.data(),
+      .depthAttachmentFormat = runtime_args.depth_format,
     };
-    return map_vk_error(device.createGraphicsPipeline(
-                          cache, chain.get<vk::GraphicsPipelineCreateInfo>()),
-      std::nullopt)
-      .transform(
-        [](vk::raii::Pipeline&& pipeline) mutable -> graphics_pipeline_library
-        { return graphics_pipeline_library { std::move(pipeline) }; });
+    vk::GraphicsPipelineLibraryCreateInfoEXT library_info {
+      .pNext = &rendering_info,
+      .flags = library_flags_for(Kind),
+    };
+    vk::GraphicsPipelineCreateInfo graphics_create_info {
+      .pNext = &library_info,
+      .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
+      .pMultisampleState = &multisample,
+      .pColorBlendState = &blend,
+    };
+    return create_graphics_pipeline_library_with_persistence(
+      device, graphics_create_info, persistence, diagnostics);
   }
   else
   {
@@ -322,8 +451,8 @@ export auto
 link_graphics_pipeline(const vk::raii::Device& device,
   std::span<const vk::Pipeline> libraries, bool optimize,
   vk::PipelineLayout layout, const vk::raii::PipelineCache& cache = { nullptr },
-  const std::optional<vk::PipelineBinaryInfoKHR>& binary_info = {},
-  bool capture_binary = false) -> std::expected<vk::raii::Pipeline, error_t>
+  const std::optional<vk::PipelineBinaryInfoKHR>& binary_info = {})
+  -> std::expected<vk::raii::Pipeline, error_t>
 {
   if (libraries.size() != 4UZ)
   {
@@ -334,21 +463,9 @@ link_graphics_pipeline(const vk::raii::Device& device,
     .pLibraries = libraries.data(),
   };
 
-  vk::PipelineCreateFlags2CreateInfoKHR flags2_info {};
   const void* p_next = &library_info;
   vk::PipelineCreateFlags flags {};
-  if (capture_binary)
-  {
-    flags2_info.flags = vk::PipelineCreateFlagBits2::eCaptureDataKHR;
-    if (optimize)
-    {
-      flags2_info.flags |=
-        vk::PipelineCreateFlagBits2::eLinkTimeOptimizationEXT;
-    }
-    flags2_info.pNext = p_next;
-    p_next = &flags2_info;
-  }
-  else if (optimize)
+  if (optimize)
   {
     flags |= vk::PipelineCreateFlagBits::eLinkTimeOptimizationEXT;
   }
@@ -365,13 +482,12 @@ link_graphics_pipeline(const vk::raii::Device& device,
 
   const vk::GraphicsPipelineCreateInfo create_info {
     .pNext = p_next,
-    .flags = capture_binary ? vk::PipelineCreateFlags {} : flags,
+    .flags = flags,
     .layout = layout,
   };
 
   const vk::raii::PipelineCache null_cache { nullptr };
-  const auto& cache_for_create =
-    (capture_binary || replaying_binaries) ? null_cache : cache;
+  const auto& cache_for_create = replaying_binaries ? null_cache : cache;
 
   return map_vk_error(
     device.createGraphicsPipeline(cache_for_create, create_info), std::nullopt)

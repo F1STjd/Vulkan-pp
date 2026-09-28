@@ -628,7 +628,7 @@ public:
   }
 
   [[nodiscard]] auto
-  save_appication_store_if_dirty() -> std::expected<void, error_t>
+  save_application_store_if_dirty() -> std::expected<void, error_t>
   {
     return (mode_ != pipeline_persistence_mode::application_binary ||
              !store_dirty_)
