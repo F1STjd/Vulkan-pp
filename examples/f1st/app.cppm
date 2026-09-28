@@ -50,6 +50,7 @@ import vkpp.pipeline.compute;
 import vkpp.pipeline.cache;
 import vkpp.pipeline.gpl;
 import vkpp.pipeline.binary;
+import vkpp.pipeline.persistence;
 import vkpp.descriptor;
 import vkpp.descriptor.indexing;
 import vkpp.semaphore;
@@ -194,10 +195,8 @@ static_assert(sizeof(histogram_push_cpu) == 24UZ);
 static_assert(offsetof(histogram_push_cpu, device_address) == 16UZ);
 
 static constexpr auto k_pipeline_cache_path = "f1st_pipeline_cache.bin"sv;
-static constexpr auto k_pipeline_binary_opaque_path =
-  "f1st_pipeline_binaries_opaque.bin"sv;
-static constexpr auto k_pipeline_binary_blend_path =
-  "f1st_pipeline_binaries_blend.bin"sv;
+static constexpr auto k_pipeline_binary_store_path =
+  "f1st_pipeline_binaries.bin"sv;
 
 static constexpr vk::DeviceSize k_stage_pool_capacity =
   64ULL * 1024ULL * 1024ULL;
@@ -390,15 +389,22 @@ public:
       [ this ]() -> std::expected<void, vkpp::error_t> { return main_loop(); });
 
     (void)device_.device().waitIdle();
-    if (auto blob = pipeline_cache_.data(); blob)
+    using enum vkpp::pipeline_persistence_mode;
+    if (pipeline_persistence_.mode() == pipeline_cache)
     {
-      auto blob_byes = std::as_bytes(std::span { *blob });
-      (void)vkpp::save_pipeline_cache_file(k_pipeline_cache_path, blob_byes);
-    }
-    else
-    {
-      std::println(
-        std::cerr, "pipeline cache data: {}", vkpp::message(blob.error()));
+      if (auto* cache = pipeline_persistence_.cache(); cache)
+      {
+        if (auto blob = cache->data(); blob)
+        {
+          (void)vkpp::save_pipeline_cache_file(
+            k_pipeline_cache_path, std::as_bytes(std::span { *blob }));
+        }
+        else
+        {
+          std::println(
+            std::cerr, "pipeline cache data: {}", vkpp::message(blob.error()));
+        }
+      }
     }
     shutdown_imgui();
     if (!result)
@@ -416,7 +422,6 @@ private:
     return create_instance_context()
       .and_then(std::bind_front(&app::create_surface, this))
       .and_then(std::bind_front(&app::create_device_context, this))
-      .and_then(std::bind_front(&app::create_pipeline_cache, this))
       .and_then(std::bind_front(&app::create_sampler_cache, this))
       .and_then(std::bind_front(&app::create_swap_chain, this))
       .and_then(std::bind_front(&app::create_command_pool, this))
@@ -522,27 +527,6 @@ private:
   }
 
   auto
-  create_pipeline_cache() -> std::expected<void, vkpp::error_t>
-  {
-    return vkpp::load_pipeline_cache_file(k_pipeline_cache_path)
-      .and_then(
-        [ this ](
-          std::vector<std::byte>&& bytes) -> std::expected<void, vkpp::error_t>
-        {
-          std::span<const std::byte> initial = bytes;
-          if (!bytes.empty() &&
-            !vkpp::pipeline_cache_header_matches(
-              bytes, device_.physical_device().getProperties()))
-          {
-            initial = {};
-          }
-          return vkpp::pipeline_cache::create(device_.device(), initial)
-            .transform([ this ](vkpp::pipeline_cache&& cache) -> void
-              { pipeline_cache_ = std::move(cache); });
-        });
-  }
-
-  auto
   create_sampler_cache() -> std::expected<void, vkpp::error_t>
   {
     return vkpp::sampler_cache::create(
@@ -614,56 +598,9 @@ private:
         { ibl_arena_ = std::move(arena); });
   }
 
-  [[nodiscard]] auto
-  link_graphics_executable(std::span<const vk::Pipeline> libraries,
-    const std::filesystem::path& binary_path)
-    -> std::expected<vk::raii::Pipeline, vkpp::error_t>
-  {
-    if (!device_.selected_capabilities().pipeline_binary_enabled)
-    {
-      return vkpp::link_graphics_pipeline(device_.device(), libraries, false,
-        *graphics_pipeline_layout_, pipeline_cache_.get());
-    }
-
-    auto blobs = vkpp::load_pipeline_binary_file(binary_path);
-    if (blobs && !blobs->empty())
-    {
-      auto binaries = vkpp::pipeline_binaries::create(device_.device(), *blobs);
-      if (binaries)
-      {
-        const auto info = binaries->info();
-        if (auto linked =
-              vkpp::link_graphics_pipeline(device_.device(), libraries, false,
-                *graphics_pipeline_layout_, { nullptr }, info, false);
-          linked)
-        {
-          return linked;
-        }
-      }
-    }
-
-    auto linked = vkpp::link_graphics_pipeline(device_.device(), libraries,
-      false, *graphics_pipeline_layout_, { nullptr }, std::nullopt, true);
-    if (!linked) { return std::unexpected { std::move(linked).error() }; }
-
-    if (auto captured =
-          vkpp::pipeline_binaries::capture(device_.device(), *(*linked));
-      captured)
-    {
-      if (auto extracted = captured->extract_blobs(device_.device()); extracted)
-      {
-        (void)vkpp::save_pipeline_binary_file(binary_path, *extracted);
-      }
-    }
-
-    return linked;
-  }
-
   auto
   create_graphics_pipelines() -> std::expected<void, vkpp::error_t>
   {
-    using enum vkpp::graphics_pipeline_library_kind;
-
     constexpr std::array vertex_bindings {
       vkpp::vertex::get_binding_description(),
     };
@@ -739,21 +676,35 @@ private:
       .samples = device_.msaa_samples(),
     };
 
+    auto persistence = vkpp::pipeline_persistence::create(device_.device(),
+      device_.physical_device().getProperties(),
+      device_.selected_capabilities(), k_pipeline_cache_path,
+      k_pipeline_binary_store_path, diagnostic_buffer_);
+    if (!persistence)
+    {
+      return std::unexpected { std::move(persistence).error() };
+    }
+    pipeline_persistence_ = std::move(*persistence);
+    diagnostic_buffer_.report(vkpp::diagnostic_severity::info, std::nullopt,
+      std::source_location::current(), "pipeline_persistence: mode={}",
+      std::to_underlying(pipeline_persistence_.mode()));
+
+    using enum vkpp::graphics_pipeline_library_kind;
     auto vi =
       vkpp::make_graphics_pipeline_library<vertex_input, k_pipeline_spec>(
-        device_.device(), lib_args, pipeline_cache_.get());
+        device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
     if (!vi) { return std::unexpected { std::move(vi).error() }; }
     gpl_vertex_input_ = std::move(*vi);
 
     auto pre =
       vkpp::make_graphics_pipeline_library<pre_rasterization, k_pipeline_spec>(
-        device_.device(), lib_args, pipeline_cache_.get());
+        device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
     if (!pre) { return std::unexpected { std::move(pre).error() }; }
     gpl_pre_raster_ = std::move(*pre);
 
     auto frag_opaque =
       vkpp::make_graphics_pipeline_library<fragment, k_pipeline_spec>(
-        device_.device(), lib_args, pipeline_cache_.get());
+        device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
     if (!frag_opaque)
     {
       return std::unexpected { std::move(frag_opaque).error() };
@@ -762,7 +713,7 @@ private:
 
     auto out_opaque =
       vkpp::make_graphics_pipeline_library<fragment_output, k_pipeline_spec>(
-        device_.device(), lib_args, pipeline_cache_.get());
+        device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
     if (!out_opaque)
     {
       return std::unexpected { std::move(out_opaque).error() };
@@ -771,7 +722,7 @@ private:
 
     auto frag_blend =
       vkpp::make_graphics_pipeline_library<fragment, k_blend_pipeline_spec>(
-        device_.device(), lib_args, pipeline_cache_.get());
+        device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
     if (!frag_blend)
     {
       return std::unexpected { std::move(frag_blend).error() };
@@ -779,22 +730,21 @@ private:
     gpl_fragment_blend_ = std::move(*frag_blend);
 
     auto out_blend = vkpp::make_graphics_pipeline_library<fragment_output,
-      k_blend_pipeline_spec>(device_.device(), lib_args, pipeline_cache_.get());
+      k_blend_pipeline_spec>(
+      device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
     if (!out_blend) { return std::unexpected { std::move(out_blend).error() }; }
     gpl_fragment_output_blend_ = std::move(*out_blend);
 
+    const auto& link_cache = pipeline_persistence_.cache_for_create();
     const std::array opaque_libs {
       *gpl_vertex_input_.pipeline(),
       *gpl_pre_raster_.pipeline(),
       *gpl_fragment_opaque_.pipeline(),
       *gpl_fragment_output_opaque_.pipeline(),
     };
-    auto opaque_executable =
-      link_graphics_executable(opaque_libs, k_pipeline_binary_opaque_path);
-    if (!opaque_executable)
-    {
-      return std::unexpected { std::move(opaque_executable).error() };
-    }
+    auto opaque = vkpp::link_graphics_pipeline(device_.device(), opaque_libs,
+      false, *graphics_pipeline_layout_, link_cache);
+    if (!opaque) { return std::unexpected { std::move(opaque).error() }; }
 
     const std::array blend_libs {
       *gpl_vertex_input_.pipeline(),
@@ -802,22 +752,19 @@ private:
       *gpl_fragment_blend_.pipeline(),
       *gpl_fragment_output_blend_.pipeline(),
     };
-    auto blend_executable =
-      link_graphics_executable(blend_libs, k_pipeline_binary_blend_path);
-    if (!blend_executable)
-    {
-      return std::unexpected { std::move(blend_executable).error() };
-    }
+    auto blend = vkpp::link_graphics_pipeline(device_.device(), blend_libs,
+      false, *graphics_pipeline_layout_, link_cache);
+    if (!blend) { return std::unexpected { std::move(blend).error() }; }
 
     graphics_pipeline_ = vkpp::graphics_pipeline {
       std::move(*layout_opaque),
-      std::move(*opaque_executable),
+      std::move(*opaque),
     };
     blend_pipeline_ = vkpp::graphics_pipeline {
       std::move(*layout_blend),
-      std::move(*blend_executable),
+      std::move(*blend),
     };
-    return {};
+    return pipeline_persistence_.save_application_store_if_dirty();
   }
 
   auto
@@ -1461,7 +1408,7 @@ private:
         .spirv = *spirv,
         .entry = "histogram_main",
       },
-      pipeline_cache_.get())
+      pipeline_persistence_.cache_for_create())
       .transform([ this ](vkpp::compute_pipeline&& pipeline) -> void
         { histogram_pipeline_ = std::move(pipeline); });
   }
@@ -2366,7 +2313,7 @@ private:
 
   vkpp::image_use_tracker image_uses_ {};
 
-  vkpp::pipeline_cache pipeline_cache_ {};
+  vkpp::pipeline_persistence pipeline_persistence_ {};
 
   vkpp::graphics_pipeline graphics_pipeline_ {};
   vkpp::graphics_pipeline blend_pipeline_ {};
