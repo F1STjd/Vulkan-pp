@@ -5,6 +5,8 @@ import vulkan;
 
 import vkpp.error;
 import vkpp.diagnostics;
+import vkpp.capabilities;
+import vkpp.descriptor.indexing;
 
 namespace vkpp
 {
@@ -29,9 +31,12 @@ public:
   : shader_ { std::move(shader) }
   {}
 
+  template<descriptor_table_backend Backend = descriptor_table_backend::classic>
+    requires(Backend == descriptor_table_backend::classic)
   [[nodiscard]] static auto
   create(const vk::raii::Device& device,
-    const shader_stage_object_create_info& create_info)
+    const shader_stage_object_create_info& create_info,
+    std::optional<diagnostic_buffer&> diagnostics = {})
     -> std::expected<shader_stage_object, error_t>
   {
     if (create_info.spirv.empty())
@@ -54,7 +59,42 @@ public:
         static_cast<std::uint32_t>(create_info.push_constant_ranges.size()),
       .pPushConstantRanges = create_info.push_constant_ranges.data(),
     };
-    return map_vk_error(device.createShaderEXT(info), std::nullopt)
+    return map_vk_error(device.createShaderEXT(info), diagnostics)
+      .transform([](vk::raii::ShaderEXT&& shader) -> shader_stage_object
+        { return shader_stage_object { std::move(shader) }; });
+  }
+
+  template<descriptor_table_backend Backend>
+    requires(Backend == descriptor_table_backend::heap)
+  [[nodiscard]] static auto
+  create(const vk::raii::Device& device,
+    const shader_stage_object_create_info& create_info,
+    const descriptor_heap_arena& arena,
+    std::optional<diagnostic_buffer&> diagnostics = {})
+    -> std::expected<shader_stage_object, error_t>
+  {
+    if (create_info.spirv.empty())
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::missing_required_argument),
+      };
+    }
+    auto mapping = arena.shader_and_mapping_info();
+    const vk::ShaderCreateInfoEXT info {
+      .pNext = &mapping,
+      .flags = vk::ShaderCreateFlagBitsEXT::eDescriptorHeap,
+      .stage = create_info.stage,
+      .nextStage = create_info.next_stage,
+      .codeType = vk::ShaderCodeTypeEXT::eSpirv,
+      .codeSize = create_info.spirv.size_bytes(),
+      .pCode = create_info.spirv.data(),
+      .pName = create_info.entry,
+      .setLayoutCount = 0U,
+      .pSetLayouts = nullptr,
+      .pushConstantRangeCount = 0U,
+      .pPushConstantRanges = nullptr,
+    };
+    return map_vk_error(device.createShaderEXT(info), diagnostics)
       .transform([](vk::raii::ShaderEXT&& shader) -> shader_stage_object
         { return shader_stage_object { std::move(shader) }; });
   }
