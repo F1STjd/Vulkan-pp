@@ -61,9 +61,8 @@ public:
       .error = error,
       .location = location,
     };
-    auto [ out, count ] = std::format_to_n(
+    auto [ _, count ] = std::format_to_n(
       record.text.begin(), 255, fmt, std::forward<Args>(args)...);
-    (void)out;
     const auto written = static_cast<std::size_t>(count);
     record.text_size = static_cast<std::uint16_t>(std::min(written, 255UZ));
     record.truncated = written > 255UZ;
@@ -127,7 +126,10 @@ map_vk_error(std::expected<T, vk::Result>&& result,
   if (result)
   {
     if constexpr (std::is_void_v<T>) { return {}; }
-    else { return std::move(*result); }
+    else
+    {
+      return std::move(*result);
+    }
   }
   const error_t error = make_vk_error(result.error());
   if (diagnostics.has_value())
