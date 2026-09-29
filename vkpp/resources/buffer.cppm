@@ -23,6 +23,8 @@ export enum class buffer_kind : std::uint8_t {
   readback,
   indirect,
   device_address,
+  uniform_device_address,
+  storage_device_address,
 };
 
 export struct buffer_type_spec
@@ -110,6 +112,28 @@ struct buffer_traits<buffer_kind::device_address>
     .usage = vk::BufferUsageFlagBits::eShaderDeviceAddress |
       vk::BufferUsageFlagBits::eStorageBuffer |
       vk::BufferUsageFlagBits::eTransferDst,
+    .intent = memory_intent::gpu_only,
+  };
+};
+
+template<>
+struct buffer_traits<buffer_kind::uniform_device_address>
+{
+  static constexpr buffer_type_spec spec {
+    .usage = vk::BufferUsageFlagBits::eUniformBuffer |
+      vk::BufferUsageFlagBits::eShaderDeviceAddress,
+    .intent = memory_intent::cpu_to_gpu,
+  };
+};
+
+template<>
+struct buffer_traits<buffer_kind::storage_device_address>
+{
+  static constexpr buffer_type_spec spec {
+    .usage = vk::BufferUsageFlagBits::eStorageBuffer |
+      vk::BufferUsageFlagBits::eShaderDeviceAddress |
+      vk::BufferUsageFlagBits::eTransferDst |
+      vk::BufferUsageFlagBits::eTransferSrc,
     .intent = memory_intent::gpu_only,
   };
 };
@@ -342,6 +366,10 @@ export using readback_buffer = buffer_resource<buffer_kind::readback>;
 export using indirect_buffer = buffer_resource<buffer_kind::indirect>;
 export using device_address_buffer =
   buffer_resource<buffer_kind::device_address>;
+export using heap_uniform_buffer =
+  buffer_resource<buffer_kind::uniform_device_address>;
+export using heap_storage_buffer =
+  buffer_resource<buffer_kind::storage_device_address>;
 
 export template<device_allocator Alloc = vma_policy>
 class buffer_resource_custom
