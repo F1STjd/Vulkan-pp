@@ -9,6 +9,7 @@ import vkpp.pipeline;
 import vkpp.pipeline.persistence;
 import vkpp.pipeline.binary;
 import vkpp.capabilities;
+import vkpp.descriptor.indexing;
 
 namespace vkpp
 {
@@ -74,6 +75,7 @@ library_flags_for(graphics_pipeline_library_kind kind)
   }
 }
 
+template<descriptor_table_backend Backend>
 [[nodiscard]] auto
 create_graphics_pipeline_library_application_miss(
   const vk::raii::Device& device,
@@ -83,13 +85,22 @@ create_graphics_pipeline_library_application_miss(
   std::optional<diagnostic_buffer&> diagnostics)
   -> std::expected<graphics_pipeline_library, error_t>
 {
+  vk::PipelineCreateFlags2KHR bits = vk::PipelineCreateFlagBits2::eLibraryKHR |
+    vk::PipelineCreateFlagBits2::eCaptureDataKHR;
+  if constexpr (Backend == descriptor_table_backend::heap)
+  {
+    bits |= vk::PipelineCreateFlagBits2::eDescriptorHeapEXT;
+  }
   vk::PipelineCreateFlags2CreateInfoKHR flags2 {
     .pNext = graphics_create_info.pNext,
-    .flags = vk::PipelineCreateFlagBits2::eLibraryKHR |
-      vk::PipelineCreateFlagBits2::eCaptureDataKHR,
+    .flags = bits,
   };
   graphics_create_info.pNext = &flags2;
   graphics_create_info.flags = {};
+  if constexpr (Backend == descriptor_table_backend::heap)
+  {
+    graphics_create_info.layout = vk::PipelineLayout {};
+  }
 
   return map_vk_error(device.createGraphicsPipeline(
                         persistence.cache_for_create(), graphics_create_info),
@@ -129,12 +140,24 @@ create_graphics_pipeline_library_application_miss(
       });
 }
 
+template<descriptor_table_backend Backend>
 [[nodiscard]] auto
 create_graphics_pipeline_library_internal(const vk::raii::Device& device,
   vk::GraphicsPipelineCreateInfo& graphics_create_info,
-  std::optional<diagnostic_buffer&> diagnostics)
+  [[maybe_unused]] std::optional<const descriptor_heap_arena&> arena = {},
+  std::optional<diagnostic_buffer&> diagnostics = {})
   -> std::expected<graphics_pipeline_library, error_t>
 {
+  vk::PipelineCreateFlags2CreateInfoKHR flags2 {};
+  if constexpr (Backend == descriptor_table_backend::heap)
+  {
+    flags2.flags = vk::PipelineCreateFlagBits2::eDescriptorHeapEXT |
+      vk::PipelineCreateFlagBits2::eLibraryKHR;
+    flags2.pNext = graphics_create_info.pNext;
+    graphics_create_info.pNext = &flags2;
+    graphics_create_info.flags = {};
+    graphics_create_info.layout = vk::PipelineLayout {};
+  }
   auto internal =
     try_internal_pipeline_binaries(device, graphics_create_info, diagnostics);
   if (!internal) { return std::unexpected { internal.error() }; }
@@ -152,32 +175,42 @@ create_graphics_pipeline_library_internal(const vk::raii::Device& device,
     device.createGraphicsPipeline(null_cache, graphics_create_info),
     diagnostics)
     .transform(
-      [ held = std::move(held) ](
+      [ _ = std::move(held) ](
         vk::raii::Pipeline&& pipeline) mutable -> graphics_pipeline_library
-      {
-        (void)held;
-        return graphics_pipeline_library { std::move(pipeline) };
-      });
+      { return graphics_pipeline_library { std::move(pipeline) }; });
 }
 
+template<descriptor_table_backend Backend>
 [[nodiscard]] auto
 create_graphics_pipeline_library_with_persistence(
   const vk::raii::Device& device,
   vk::GraphicsPipelineCreateInfo& graphics_create_info,
   pipeline_persistence& persistence,
-  std::optional<diagnostic_buffer&> diagnostics)
+  [[maybe_unused]] std::optional<const descriptor_heap_arena&> arena = {},
+  std::optional<diagnostic_buffer&> diagnostics = {})
   -> std::expected<graphics_pipeline_library, error_t>
 {
   using enum pipeline_persistence_mode;
   switch (persistence.mode())
   {
   case pipeline_cache:
+  {
+    vk::PipelineCreateFlags2CreateInfoKHR flags2 {};
+    if constexpr (Backend == descriptor_table_backend::heap)
+    {
+      flags2.flags = vk::PipelineCreateFlagBits2::eDescriptorHeapEXT |
+        vk::PipelineCreateFlagBits2::eLibraryKHR;
+      flags2.pNext = graphics_create_info.pNext;
+      graphics_create_info.pNext = &flags2;
+      graphics_create_info.flags = {};
+      graphics_create_info.layout = vk::PipelineLayout {};
+    }
     return map_vk_error(device.createGraphicsPipeline(
                           persistence.cache_for_create(), graphics_create_info),
       diagnostics)
       .transform([](vk::raii::Pipeline&& pipeline) -> graphics_pipeline_library
         { return graphics_pipeline_library { std::move(pipeline) }; });
-
+  }
   case application_binary:
   {
     auto key =
@@ -194,6 +227,16 @@ create_graphics_pipeline_library_with_persistence(
           std::source_location::current(),
           "pipeline_persistence: application-binary hit");
       }
+      vk::PipelineCreateFlags2CreateInfoKHR flags2 {};
+      if constexpr (Backend == descriptor_table_backend::heap)
+      {
+        flags2.flags = vk::PipelineCreateFlagBits2::eDescriptorHeapEXT |
+          vk::PipelineCreateFlagBits2::eLibraryKHR;
+        flags2.pNext = graphics_create_info.pNext;
+        graphics_create_info.pNext = &flags2;
+        graphics_create_info.flags = {};
+        graphics_create_info.layout = vk::PipelineLayout {};
+      }
       pipeline_binaries binaries = std::move(**hit);
       vk::PipelineBinaryInfoKHR binary_local = binaries.info();
       binary_local.pNext = graphics_create_info.pNext;
@@ -202,13 +245,9 @@ create_graphics_pipeline_library_with_persistence(
         device.createGraphicsPipeline(
           persistence.cache_for_create(), graphics_create_info),
         diagnostics)
-        .transform(
-          [ binaries = std::move(binaries) ](
-            vk::raii::Pipeline&& pipeline) mutable -> graphics_pipeline_library
-          {
-            (void)binaries;
-            return graphics_pipeline_library { std::move(pipeline) };
-          });
+        .transform([ _ = std::move(binaries) ](
+                     vk::raii::Pipeline&& pipeline) -> graphics_pipeline_library
+          { return graphics_pipeline_library { std::move(pipeline) }; });
     }
     if (diagnostics)
     {
@@ -216,20 +255,20 @@ create_graphics_pipeline_library_with_persistence(
         std::source_location::current(),
         "pipeline_persistence: application binary miss");
     }
-    return create_graphics_pipeline_library_application_miss(
+    return create_graphics_pipeline_library_application_miss<Backend>(
       device, graphics_create_info, *key, persistence, diagnostics);
   }
-
   case internal_binary:
-    return create_graphics_pipeline_library_internal(
-      device, graphics_create_info, diagnostics);
+    return create_graphics_pipeline_library_internal<Backend>(
+      device, graphics_create_info, arena, diagnostics);
   }
   std::unreachable();
 }
 
 export template<graphics_pipeline_library_kind Kind,
-  graphics_pipeline_spec Spec = {}>
-  requires(validate(Spec))
+  graphics_pipeline_spec Spec = {},
+  descriptor_table_backend Backend = descriptor_table_backend::classic>
+  requires(validate(Spec) && Backend == descriptor_table_backend::classic)
 auto
 make_graphics_pipeline_library(const vk::raii::Device& device,
   const graphics_pipeline_library_runtime_args& runtime_args,
@@ -261,8 +300,8 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
       .pVertexInputState = &vertex_input,
       .pInputAssemblyState = &input_assembly,
     };
-    return create_graphics_pipeline_library_with_persistence(
-      device, graphics_create_info, persistence, diagnostics);
+    return create_graphics_pipeline_library_with_persistence<Backend>(
+      device, graphics_create_info, persistence, {}, diagnostics);
   }
   else if constexpr (Kind == pre_rasterization)
   {
@@ -282,7 +321,7 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
       .codeSize = runtime_args.spirv.size_bytes(),
       .pCode = std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data()),
     };
-    return map_vk_error(device.createShaderModule(module_info), std::nullopt)
+    return map_vk_error(device.createShaderModule(module_info), diagnostics)
       .and_then(
         [ & ](vk::raii::ShaderModule&& module)
           -> std::expected<graphics_pipeline_library, error_t>
@@ -329,8 +368,8 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
             .pDynamicState = &dynamic,
             .layout = runtime_args.layout,
           };
-          return create_graphics_pipeline_library_with_persistence(
-            device, graphics_create_info, persistence, diagnostics);
+          return create_graphics_pipeline_library_with_persistence<Backend>(
+            device, graphics_create_info, persistence, {}, diagnostics);
         });
   }
   else if constexpr (Kind == fragment)
@@ -351,7 +390,7 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
       .codeSize = runtime_args.spirv.size_bytes(),
       .pCode = std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data()),
     };
-    return map_vk_error(device.createShaderModule(module_info), std::nullopt)
+    return map_vk_error(device.createShaderModule(module_info), diagnostics)
       .and_then(
         [ & ](vk::raii::ShaderModule&& module)
           -> std::expected<graphics_pipeline_library, error_t>
@@ -385,8 +424,8 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
             .pDepthStencilState = &depth,
             .layout = runtime_args.layout,
           };
-          return create_graphics_pipeline_library_with_persistence(
-            device, graphics_create_info, persistence, diagnostics);
+          return create_graphics_pipeline_library_with_persistence<Backend>(
+            device, graphics_create_info, persistence, {}, diagnostics);
         });
   }
   else if constexpr (Kind == fragment_output)
@@ -435,8 +474,8 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
       .pMultisampleState = &multisample,
       .pColorBlendState = &blend,
     };
-    return create_graphics_pipeline_library_with_persistence(
-      device, graphics_create_info, persistence, diagnostics);
+    return create_graphics_pipeline_library_with_persistence<Backend>(
+      device, graphics_create_info, persistence, {}, diagnostics);
   }
   else
   {
@@ -447,7 +486,221 @@ make_graphics_pipeline_library(const vk::raii::Device& device,
   }
 }
 
-export auto
+export template<graphics_pipeline_library_kind Kind,
+  graphics_pipeline_spec Spec = {}, descriptor_table_backend Backend>
+  requires(validate(Spec) && Backend == descriptor_table_backend::heap)
+auto
+make_graphics_pipeline_library(const vk::raii::Device& device,
+  const graphics_pipeline_library_runtime_args& runtime_args,
+  pipeline_persistence& persistence, const descriptor_heap_arena& arena,
+  std::optional<diagnostic_buffer&> diagnostics = {})
+  -> std::expected<graphics_pipeline_library, error_t>
+{
+  using enum graphics_pipeline_library_kind;
+
+  if constexpr (Kind == vertex_input)
+  {
+    const vk::PipelineVertexInputStateCreateInfo vertex_input {
+      .vertexBindingDescriptionCount =
+        static_cast<std::uint32_t>(runtime_args.vertex_bindings.size()),
+      .pVertexBindingDescriptions = runtime_args.vertex_bindings.data(),
+      .vertexAttributeDescriptionCount =
+        static_cast<std::uint32_t>(runtime_args.vertex_attributes.size()),
+      .pVertexAttributeDescriptions = runtime_args.vertex_attributes.data(),
+    };
+    const vk::PipelineInputAssemblyStateCreateInfo input_assembly {
+      .topology = Spec.topology,
+    };
+    vk::GraphicsPipelineLibraryCreateInfoEXT library_info {
+      .flags = library_flags_for(Kind),
+    };
+    vk::GraphicsPipelineCreateInfo graphics_create_info {
+      .pNext = &library_info,
+      .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
+      .pVertexInputState = &vertex_input,
+      .pInputAssemblyState = &input_assembly,
+    };
+    return create_graphics_pipeline_library_with_persistence<Backend>(
+      device, graphics_create_info, persistence, arena, diagnostics);
+  }
+  else if constexpr (Kind == pre_rasterization)
+  {
+    if (runtime_args.spirv.empty())
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::missing_required_argument),
+      };
+    }
+    const vk::ShaderModuleCreateInfo module_info {
+      .codeSize = runtime_args.spirv.size_bytes(),
+      .pCode = std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data()),
+    };
+    return map_vk_error(device.createShaderModule(module_info), diagnostics)
+      .and_then(
+        [ & ](vk::raii::ShaderModule&& module)
+          -> std::expected<graphics_pipeline_library, error_t>
+        {
+          auto mapping = arena.shader_and_mapping_info();
+          const vk::PipelineShaderStageCreateInfo stage {
+            .pNext = &mapping,
+            .stage = vk::ShaderStageFlagBits::eVertex,
+            .module = *module,
+            .pName = runtime_args.vertex_entry,
+          };
+          const vk::PipelineViewportStateCreateInfo viewport_state {
+            .viewportCount = 1U,
+            .scissorCount = 1U,
+          };
+          const vk::PipelineRasterizationStateCreateInfo raster {
+            .depthClampEnable = vk::False,
+            .rasterizerDiscardEnable = vk::False,
+            .polygonMode = Spec.polygon_mode,
+            .cullMode = Spec.cull_mode,
+            .frontFace = Spec.front_face,
+            .depthBiasEnable = vk::False,
+            .lineWidth = 1.0F,
+          };
+          const std::array dynamic_states {
+            vk::DynamicState::eViewport,
+            vk::DynamicState::eScissor,
+            vk::DynamicState::eCullMode,
+            vk::DynamicState::eFrontFace,
+          };
+          vk::PipelineDynamicStateCreateInfo dynamic {
+            .dynamicStateCount =
+              static_cast<std::uint32_t>(dynamic_states.size()),
+            .pDynamicStates = dynamic_states.data(),
+          };
+          vk::GraphicsPipelineLibraryCreateInfoEXT library_info {
+            .flags = library_flags_for(Kind),
+          };
+          vk::GraphicsPipelineCreateInfo graphics_create_info {
+            .pNext = &library_info,
+            .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
+            .stageCount = 1U,
+            .pStages = &stage,
+            .pViewportState = &viewport_state,
+            .pRasterizationState = &raster,
+            .pDynamicState = &dynamic,
+            .layout = {},
+          };
+          return create_graphics_pipeline_library_with_persistence<Backend>(
+            device, graphics_create_info, persistence, arena, diagnostics);
+        });
+  }
+  else if constexpr (Kind == fragment)
+  {
+    if (runtime_args.spirv.empty())
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::missing_required_argument),
+      };
+    }
+    const vk::ShaderModuleCreateInfo module_info {
+      .codeSize = runtime_args.spirv.size_bytes(),
+      .pCode = std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data()),
+    };
+    return map_vk_error(device.createShaderModule(module_info), diagnostics)
+      .and_then(
+        [ & ](vk::raii::ShaderModule&& module)
+          -> std::expected<graphics_pipeline_library, error_t>
+        {
+          auto mapping = arena.shader_and_mapping_info();
+          const vk::PipelineShaderStageCreateInfo stage {
+            .pNext = &mapping,
+            .stage = vk::ShaderStageFlagBits::eFragment,
+            .module = *module,
+            .pName = runtime_args.fragment_entry,
+          };
+          const vk::PipelineMultisampleStateCreateInfo multisample {
+            .rasterizationSamples = runtime_args.samples,
+            .sampleShadingEnable = vk::Bool32 { Spec.sample_shading },
+            .minSampleShading = Spec.min_sample_shading,
+          };
+          const vk::PipelineDepthStencilStateCreateInfo depth {
+            .depthTestEnable = vk::Bool32 { Spec.depth_test },
+            .depthWriteEnable = vk::Bool32 { Spec.depth_write },
+            .depthCompareOp = Spec.depth_compare,
+            .depthBoundsTestEnable = vk::False,
+            .stencilTestEnable = vk::False,
+          };
+          vk::GraphicsPipelineLibraryCreateInfoEXT library_info {
+            .flags = library_flags_for(Kind),
+          };
+          vk::GraphicsPipelineCreateInfo graphics_create_info {
+            .pNext = &library_info,
+            .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
+            .stageCount = 1U,
+            .pStages = &stage,
+            .pMultisampleState = &multisample,
+            .pDepthStencilState = &depth,
+            .layout = {},
+          };
+          return create_graphics_pipeline_library_with_persistence<Backend>(
+            device, graphics_create_info, persistence, arena, diagnostics);
+        });
+  }
+  else if constexpr (Kind == fragment_output)
+  {
+    if (runtime_args.color_formats.empty())
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::missing_required_argument),
+      };
+    }
+    const vk::PipelineMultisampleStateCreateInfo multisample {
+      .rasterizationSamples = runtime_args.samples,
+      .sampleShadingEnable = vk::Bool32 { Spec.sample_shading },
+      .minSampleShading = Spec.min_sample_shading,
+    };
+    const vk::PipelineColorBlendAttachmentState blend_attachment {
+      .blendEnable = vk::Bool32 { Spec.blend_enable },
+      .srcColorBlendFactor = Spec.src_color_blend_factor,
+      .dstColorBlendFactor = Spec.dst_color_blend_factor,
+      .colorBlendOp = Spec.color_blend_op,
+      .srcAlphaBlendFactor = Spec.src_alpha_blend_factor,
+      .dstAlphaBlendFactor = Spec.dst_alpha_blend_factor,
+      .alphaBlendOp = Spec.alpha_blend_op,
+      .colorWriteMask = vk::ColorComponentFlagBits::eR |
+        vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB |
+        vk::ColorComponentFlagBits::eA,
+    };
+    const vk::PipelineColorBlendStateCreateInfo blend {
+      .logicOpEnable = vk::False,
+      .attachmentCount = 1U,
+      .pAttachments = &blend_attachment,
+    };
+    vk::PipelineRenderingCreateInfo rendering_info {
+      .colorAttachmentCount =
+        static_cast<std::uint32_t>(runtime_args.color_formats.size()),
+      .pColorAttachmentFormats = runtime_args.color_formats.data(),
+      .depthAttachmentFormat = runtime_args.depth_format,
+    };
+    vk::GraphicsPipelineLibraryCreateInfoEXT library_info {
+      .pNext = &rendering_info,
+      .flags = library_flags_for(Kind),
+    };
+    vk::GraphicsPipelineCreateInfo graphics_create_info {
+      .pNext = &library_info,
+      .flags = vk::PipelineCreateFlagBits::eLibraryKHR,
+      .pMultisampleState = &multisample,
+      .pColorBlendState = &blend,
+    };
+    return create_graphics_pipeline_library_with_persistence<Backend>(
+      device, graphics_create_info, persistence, arena, diagnostics);
+  }
+  else
+  {
+    static_assert(Kind == vertex_input || Kind == pre_rasterization ||
+        Kind == fragment || Kind == fragment_output,
+      "unhandled graphics_pipeline_library_kind");
+    return std::unexpected { make_app_error(app_error_code::invalid_state) };
+  }
+}
+
+export template<
+  descriptor_table_backend Backend = descriptor_table_backend::classic>
+auto
 link_graphics_pipeline(const vk::raii::Device& device,
   std::span<const vk::Pipeline> libraries, bool optimize,
   vk::PipelineLayout layout, const vk::raii::PipelineCache& cache = { nullptr },
@@ -465,9 +718,12 @@ link_graphics_pipeline(const vk::raii::Device& device,
 
   const void* p_next = &library_info;
   vk::PipelineCreateFlags flags {};
-  if (optimize)
+  if constexpr (Backend == descriptor_table_backend::classic)
   {
-    flags |= vk::PipelineCreateFlagBits::eLinkTimeOptimizationEXT;
+    if (optimize)
+    {
+      flags |= vk::PipelineCreateFlagBits::eLinkTimeOptimizationEXT;
+    }
   }
 
   vk::PipelineBinaryInfoKHR binary_local {};
@@ -480,11 +736,25 @@ link_graphics_pipeline(const vk::raii::Device& device,
     p_next = &binary_local;
   }
 
-  const vk::GraphicsPipelineCreateInfo create_info {
+  vk::GraphicsPipelineCreateInfo create_info {
     .pNext = p_next,
     .flags = flags,
     .layout = layout,
   };
+
+  vk::PipelineCreateFlags2CreateInfoKHR flags2 {};
+  if constexpr (Backend == descriptor_table_backend::heap)
+  {
+    flags2.flags = vk::PipelineCreateFlagBits2::eDescriptorHeapEXT;
+    if (optimize)
+    {
+      flags |= vk::PipelineCreateFlagBits::eLinkTimeOptimizationEXT;
+    }
+    flags2.pNext = create_info.pNext;
+    create_info.pNext = &flags2;
+    create_info.flags = {};
+    create_info.layout = vk::PipelineLayout {};
+  }
 
   const vk::raii::PipelineCache null_cache { nullptr };
   const auto& cache_for_create = replaying_binaries ? null_cache : cache;
