@@ -286,7 +286,8 @@ public:
   {}
 
   template<typename T>
-    requires(Kind == buffer_kind::uniform)
+    requires(Kind == buffer_kind::uniform ||
+      Kind == buffer_kind::uniform_device_address)
   [[nodiscard]] static auto
   create(Alloc& allocator, vk::DeviceSize min_ubo_alignment = 1UZ,
     std::span<const std::uint32_t> sharing_families = {})
@@ -307,7 +308,8 @@ public:
   create(Alloc& allocator, vk::DeviceSize size,
     std::span<const std::uint32_t> sharing_families = {})
     -> std::expected<mapped_buffer, error_t>
-    requires(Kind == buffer_kind::uniform)
+    requires(Kind == buffer_kind::uniform ||
+      Kind == buffer_kind::uniform_device_address)
   {
     return buffer_resource<Kind, Alloc>::create(
       allocator, size, sharing_families)
@@ -367,7 +369,7 @@ export using indirect_buffer = buffer_resource<buffer_kind::indirect>;
 export using device_address_buffer =
   buffer_resource<buffer_kind::device_address>;
 export using heap_uniform_buffer =
-  buffer_resource<buffer_kind::uniform_device_address>;
+  mapped_buffer<buffer_kind::uniform_device_address>;
 export using heap_storage_buffer =
   buffer_resource<buffer_kind::storage_device_address>;
 
