@@ -41,28 +41,28 @@ public:
   {}
 
   [[nodiscard]] auto
-  image(this auto&& self) -> decltype(auto)
-  { return std::forward_like<decltype(self)>(self.image_.image()); }
+  image() const -> vk::Image
+  { return image_.image(); }
 
   [[nodiscard]] auto
   view(this auto&& self) -> decltype(auto)
   { return std::forward_like<decltype(self)>(self.image_.view()); }
 
   [[nodiscard]] auto
-  sampler() -> vk::Sampler
+  sampler() const -> vk::Sampler
   { return sampler_; }
 
   [[nodiscard]] auto
-  extent(this auto&& self) -> decltype(auto)
-  { return std::forward_like<decltype(self)>(self.image_.extent()); }
+  extent() const -> vk::Extent2D
+  { return image_.extent(); }
 
   [[nodiscard]] auto
-  format(this auto&& self) -> decltype(auto)
-  { return std::forward_like<decltype(self)>(self.image_.format()); }
+  format() const -> vk::Format
+  { return image_.format(); }
 
   [[nodiscard]] auto
-  mip_levels(this auto&& self) -> decltype(auto)
-  { return std::forward_like<decltype(self)>(self.mip_levels_); }
+  mip_levels() const -> std::uint32_t
+  { return mip_levels_; }
 
   [[nodiscard]] auto
   resource(this auto&& self) -> decltype(auto)
