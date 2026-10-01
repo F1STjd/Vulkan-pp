@@ -207,20 +207,28 @@ enum class alpha_mode : std::uint8_t
   blend,
 };
 
+struct texture_use_cpu
+{
+  std::uint32_t texture_index {};
+  std::uint32_t texcoord_index {};
+  image_color_space color_space { image_color_space::srgb };
+};
+
 // PBR structs from https://www.khronos.org/gltf/pbr/
 struct transmission_t
 {
   float factor { 0.0F };
-  std::optional<texture_ref_cpu> texture {};
+  std::optional<texture_use_cpu> texture {};
 };
 
 struct clearcoat_t
 {
   float factor { 0.0F };
   float roughness_factor { 0.0F };
-  std::optional<texture_ref_cpu> texture {};
-  std::optional<texture_ref_cpu> roughness_texture {};
-  std::optional<texture_ref_cpu> normal_texture {};
+  float normal_scale { 1.0F };
+  std::optional<texture_use_cpu> texture {};
+  std::optional<texture_use_cpu> roughness_texture {};
+  std::optional<texture_use_cpu> normal_texture {};
 };
 
 // clang-format off
@@ -256,13 +264,13 @@ struct material_cpu
   dispersion_t dispersion {};
   emissive_strenght_t emissive_strenght {};
   unlit_t unlit {};
-  std::optional<texture_ref_cpu> base_color_texture {};
-  std::optional<texture_ref_cpu> metallic_roughness_texture {};
-  std::optional<texture_ref_cpu> normal_texture {};
+  std::optional<texture_use_cpu> base_color_texture {};
+  std::optional<texture_use_cpu> metallic_roughness_texture {};
+  std::optional<texture_use_cpu> normal_texture {};
   float normal_scale { 1.0F };
-  std::optional<texture_ref_cpu> occlusion_texture {};
+  std::optional<texture_use_cpu> occlusion_texture {};
   float occlusion_strength { 1.0F };
-  std::optional<texture_ref_cpu> emissive_texture {};
+  std::optional<texture_use_cpu> emissive_texture {};
   std::array<float, 3> emissive_factor {
     0.0F,
     0.0F,
@@ -300,7 +308,6 @@ enum class image_kind : std::uint8_t
 struct image_source_cpu
 {
   image_kind kind {};
-  image_color_space color_space { image_color_space::srgb };
   std::vector<std::byte> encoded_bytes {};
   std::filesystem::path debug_uri {};
 };
@@ -311,15 +318,32 @@ struct host_image_cpu
   std::optional<host_image_mip_chain> mip_chain {};
 };
 
+struct realized_host_image_cpu
+{
+  std::uint32_t source_index {};
+  image_color_space color_space { image_color_space::srgb };
+  host_image_cpu image {};
+};
+
 struct asset_cpu
 {
   mesh_cpu meshes {};
   std::vector<material_cpu> materials {};
   std::vector<texture_ref_cpu> textures {};
   std::vector<image_source_cpu> image_sources {};
-  std::vector<host_image_cpu> host_images {};
+  std::vector<realized_host_image_cpu> host_images {};
   std::vector<sampler_cpu> samplers {};
   std::vector<draw_item_cpu> draw_list {};
+};
+
+struct host_image_realization_key
+{
+  std::uint32_t source_index {};
+  image_color_space color_space { image_color_space::srgb };
+
+  [[nodiscard]] friend auto
+  operator==(const host_image_realization_key&,
+    const host_image_realization_key&) -> bool = default;
 };
 
 } // namespace gltf
