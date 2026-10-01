@@ -479,10 +479,10 @@ public:
     vk::DeviceAddress address, vk::DeviceSize size)
     -> std::expected<void, error_t>
   {
-    const vk::DeviceSize base =
-      ((binding == 1U) ? resource_storage_b1_base_ : (binding == 3U))
-      ? resource_storage_b3_base_
-      : vk::DeviceSize { ~0ULL };
+    const vk::DeviceSize base = //
+      (binding == 1U)   ? resource_storage_b1_base_
+      : (binding == 3U) ? resource_storage_b3_base_
+                        : vk::DeviceSize { ~0ULL };
     if (base == vk::DeviceSize { ~0ULL })
     {
       return std::unexpected { make_app_error(app_error_code::out_of_range) };
@@ -772,7 +772,7 @@ public:
   [[nodiscard]] auto
   register_combined_image_sampler(const vk::raii::Device& device,
     [[maybe_unused]] const vk::SamplerCreateInfo& sampler_info,
-    [[maybe_unused]] const vk::SamplerCreateInfo& image_view_info,
+    [[maybe_unused]] const vk::ImageViewCreateInfo& image_view_info,
     vk::Sampler sampler, vk::ImageView view)
     -> std::expected<std::uint32_t, error_t>
   { return register_combined_image_sampler(device, sampler, view); }
@@ -820,7 +820,7 @@ public:
       };
     }
     const auto index = arena_->acquire_bindless_index();
-    if (index)
+    if (!index)
     {
       return std::unexpected {
         make_app_error(app_error_code::capacity_exhausted),
