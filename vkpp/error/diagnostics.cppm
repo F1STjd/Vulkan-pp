@@ -71,7 +71,7 @@ public:
     const std::scoped_lock loc { mutex_ };
     if (count_ < storage_.size())
     {
-      storage_[ count++ ] = std::move(record);
+      storage_[ count_++ ] = std::move(record);
       return;
     }
     storage_[ head_ ] = std::move(record);
