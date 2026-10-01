@@ -106,4 +106,21 @@ export struct selected_device_capabilities
   bool pipeline_binary_enabled { false };
 };
 
+export template<class Callable>
+decltype(auto)
+dispatch_descriptor_backend(
+  const selected_device_capabilities& capabilities, Callable&& callable)
+{
+  switch (capabilities.descriptor)
+  {
+  case descriptor_table_backend::classic:
+    return std::forward<Callable>(callable)
+      .template operator()<descriptor_table_backend::classic>();
+  case descriptor_table_backend::heap:
+    return std::forward<Callable>(callable)
+      .template operator()<descriptor_table_backend::heap>();
+  }
+  std::unreachable();
+}
+
 } // namespace vkpp
