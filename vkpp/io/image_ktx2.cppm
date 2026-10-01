@@ -37,6 +37,43 @@ make_ktx_error(KTX_error_code code) -> error_t
   };
 }
 
+[[nodiscard]] auto
+validate_ktx2_dfd_role(ktxTexture2* texture, image_color_space role)
+  -> std::expected<void, error_t>
+{
+  const auto transfer = ktxTexture2_GetTransferFunction_e(texture);
+  const auto primaries = ktxTexture2_GetPrimaries_e(texture);
+
+  switch (role)
+  {
+  case image_color_space::srgb:
+  {
+    if (transfer != KHR_DF_TRANSFER_SRGB ||
+      (primaries != KHR_DF_PRIMARIES_BT709 &&
+        primaries != KHR_DF_PRIMARIES_SRGB))
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::unsupported_model_data),
+      };
+    }
+    return {};
+  }
+  case image_color_space::linear:
+  {
+    if (transfer != KHR_DF_TRANSFER_LINEAR)
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::unsupported_model_data),
+      };
+    }
+    return {};
+  }
+  }
+  return std::unexpected {
+    make_app_error(app_error_code::unsupported_model_data),
+  };
+}
+
 struct ktx_texture2_deleter
 {
   void
@@ -47,11 +84,20 @@ struct ktx_texture2_deleter
 };
 
 [[nodiscard]] auto
-chain_from_ktx_texture(
-  ktxTexture2* raw, const ktx2_load_runtime_args& runtime_args)
+chain_from_ktx_texture(ktxTexture2* raw,
+  const ktx2_load_runtime_args& runtime_args,
+  std::optional<image_color_space> required_role = {})
   -> std::expected<host_image_mip_chain, error_t>
 {
   std::unique_ptr<ktxTexture2, ktx_texture2_deleter> held { raw };
+
+  if (required_role.has_value())
+  {
+    if (auto ok = validate_ktx2_dfd_role(held.get(), *required_role); !ok)
+    {
+      return std::unexpected { ok.error() };
+    }
+  }
 
   if (ktxTexture2_NeedsTranscoding(held.get()))
   {
@@ -97,8 +143,9 @@ chain_from_ktx_texture(
 }
 
 export [[nodiscard]] auto
-load_host_image_ktx2_from_memory(
-  std::span<const std::byte> bytes, const ktx2_load_runtime_args& runtime_args)
+load_host_image_ktx2_from_memory(std::span<const std::byte> bytes,
+  const ktx2_load_runtime_args& runtime_args,
+  std::optional<image_color_space> required_role = {})
   -> std::expected<host_image_mip_chain, error_t>
 {
   ktxTexture2* texture { nullptr };
@@ -110,7 +157,7 @@ load_host_image_ktx2_from_memory(
   {
     return std::unexpected { make_ktx_error(create_result) };
   }
-  return chain_from_ktx_texture(texture, runtime_args);
+  return chain_from_ktx_texture(texture, runtime_args, required_role);
 }
 
 template<>
