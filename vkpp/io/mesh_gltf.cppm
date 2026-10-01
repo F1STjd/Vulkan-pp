@@ -272,17 +272,55 @@ map_texture_ref(const fastgltf::Texture& texture) -> gltf::texture_ref_cpu
 }
 
 [[nodiscard]] constexpr auto
-map_texture_ref(const fastgltf::Asset& gltf, std::size_t texture_index)
-  -> gltf::texture_ref_cpu
-{ return map_texture_ref(gltf.textures[ texture_index ]); }
-
-[[nodiscard]] constexpr auto
-map_optional_texture(
-  const fastgltf::Asset& gltf, const std::optional<fastgltf::TextureInfo>& info)
-  -> std::optional<gltf::texture_ref_cpu>
+map_texture_use(const std::optional<fastgltf::TextureInfo>& info,
+  image_color_space role, std::size_t texture_count)
+  -> std::expected<std::optional<gltf::texture_use_cpu>, error_t>
 {
   if (!info.has_value()) { return std::nullopt; }
-  return map_texture_ref(gltf, info->textureIndex);
+  if (info->textureIndex >= texture_count)
+  {
+    return std::unexpected { make_app_error(app_error_code::out_of_range) };
+  }
+  return gltf::texture_use_cpu {
+    .texture_index = static_cast<std::uint32_t>(info->textureIndex),
+    .texcoord_index = static_cast<std::uint32_t>(info->texCoordIndex),
+    .color_space = role,
+  };
+}
+
+[[nodiscard]] constexpr auto
+map_normal_texture_use(const std::optional<fastgltf::NormalTextureInfo>& info,
+  image_color_space role, std::size_t texture_count)
+  -> std::expected<std::optional<gltf::texture_use_cpu>, error_t>
+{
+  if (!info.has_value()) { return std::nullopt; }
+  if (info->textureIndex >= texture_count)
+  {
+    return std::unexpected { make_app_error(app_error_code::out_of_range) };
+  }
+  return gltf::texture_use_cpu {
+    .texture_index = static_cast<std::uint32_t>(info->textureIndex),
+    .texcoord_index = static_cast<std::uint32_t>(info->texCoordIndex),
+    .color_space = role,
+  };
+}
+
+[[nodiscard]] constexpr auto
+map_occlusion_texture_use(
+  const std::optional<fastgltf::OcclusionTextureInfo>& info,
+  image_color_space role, std::size_t texture_count)
+  -> std::expected<std::optional<gltf::texture_use_cpu>, error_t>
+{
+  if (!info.has_value()) { return std::nullopt; }
+  if (info->textureIndex >= texture_count)
+  {
+    return std::unexpected { make_app_error(app_error_code::out_of_range) };
+  }
+  return gltf::texture_use_cpu {
+    .texture_index = static_cast<std::uint32_t>(info->textureIndex),
+    .texcoord_index = static_cast<std::uint32_t>(info->texCoordIndex),
+    .color_space = role,
+  };
 }
 
 [[nodiscard]] constexpr auto
@@ -463,41 +501,44 @@ extract_image_source(const fastgltf::Asset& gltf, const fastgltf::Image& image,
     image.data);
 }
 
-void
-mark_linear_images(std::span<const gltf::material_cpu> materials,
-  std::span<const gltf::texture_ref_cpu> textures,
-  std::span<gltf::image_source_cpu> sources)
-{
-  const auto mark = [ & ](const std::optional<gltf::texture_ref_cpu>& ref)
-  {
-    if (!ref.has_value()) { return; }
-    const auto image_index = ref->basisu_image_index.has_value()
-      ? ref->basisu_image_index
-      : ref->image_index;
-    if (!image_index.has_value() || *image_index >= sources.size()) { return; }
-    sources[ *image_index ].color_space = image_color_space::linear;
-  };
-  for (const auto& material : materials)
-  {
-    mark(material.metallic_roughness_texture);
-    mark(material.normal_texture);
-    mark(material.occlusion_texture);
-    mark(material.clearcoat.texture);
-    mark(material.clearcoat.roughness_texture);
-    mark(material.clearcoat.normal_texture);
-  }
-}
-
 export [[nodiscard]] auto
 realize_gltf_host_images(std::span<const gltf::image_source_cpu> sources,
+  std::span<const gltf::host_image_realization_key> keys,
   const gltf::load_runtime_args& runtime_args)
-  -> std::expected<std::vector<gltf::host_image_cpu>, error_t>
+  -> std::expected<std::vector<gltf::realized_host_image_cpu>, error_t>
 {
-  std::vector<gltf::host_image_cpu> out {};
-  out.resize(sources.size());
-  for (auto index : std::views::indices(sources.size()))
+  for (auto index : std::views::indices(keys.size()))
   {
-    const gltf::image_source_cpu& source = sources[ index ];
+    for (auto later : std::views::iota(index + 1UZ, keys.size()))
+    {
+      if (keys[ index ].source_index != keys[ later ].source_index)
+      {
+        continue;
+      }
+      if (keys[ index ].color_space != keys[ later ].color_space) { continue; }
+      if (sources[ keys[ index ].source_index ].kind ==
+        gltf::image_kind::encoded_ktx2)
+      {
+        return std::unexpected {
+          make_app_error(app_error_code::unsupported_model_data),
+        };
+      }
+    }
+  }
+
+  std::vector<gltf::realized_host_image_cpu> out {};
+  out.reserve(keys.size());
+  for (const auto& key : keys)
+  {
+    if (key.source_index >= sources.size())
+    {
+      return std::unexpected { make_app_error(app_error_code::out_of_range) };
+    }
+    const auto& source = sources[ key.source_index ];
+    gltf::realized_host_image_cpu realized {
+      .source_index = key.source_index,
+      .color_space = key.color_space,
+    };
     switch (source.kind)
     {
     case gltf::image_kind::encoded_png:
@@ -505,15 +546,19 @@ realize_gltf_host_images(std::span<const gltf::image_source_cpu> sources,
     {
       auto decoded = load_host_image_stb_from_memory(source.encoded_bytes);
       if (!decoded) { return std::unexpected { std::move(decoded).error() }; }
-      out[ index ].decoded = std::move(*decoded);
+      if (key.color_space == image_color_space::linear)
+      {
+        decoded->format = to_linear_format(decoded->format);
+      }
+      realized.image.decoded = std::move(*decoded);
       break;
     }
     case gltf::image_kind::encoded_ktx2:
     {
       auto chain = load_host_image_ktx2_from_memory(
-        source.encoded_bytes, runtime_args.ktx2);
+        source.encoded_bytes, runtime_args.ktx2, key.color_space);
       if (!chain) { return std::unexpected { std::move(chain).error() }; }
-      out[ index ].mip_chain = std::move(*chain);
+      realized.image.mip_chain = std::move(*chain);
       break;
     }
     case gltf::image_kind::encoded_other:
@@ -521,22 +566,92 @@ realize_gltf_host_images(std::span<const gltf::image_source_cpu> sources,
         make_app_error(app_error_code::unsupported_image_format),
       };
     }
-
-    if (source.color_space == image_color_space::linear)
-    {
-      if (out[ index ].decoded.has_value())
-      {
-        out[ index ].decoded->format =
-          to_linear_format(out[ index ].decoded->format);
-      }
-      if (out[ index ].mip_chain.has_value())
-      {
-        out[ index ].mip_chain->format =
-          to_linear_format(out[ index ].mip_chain->format);
-      }
-    }
+    out.push_back(std::move(realized));
   }
   return out;
+}
+
+[[nodiscard]] auto
+selected_image_index(const gltf::texture_ref_cpu& texture)
+  -> std::optional<std::uint32_t>
+{
+  return texture.basisu_image_index.has_value() ? texture.basisu_image_index
+                                                : texture.image_index;
+}
+
+[[nodiscard]] auto
+collect_gltf_host_image_realization_keys(
+  std::span<const gltf::material_cpu> materials,
+  std::span<const gltf::texture_ref_cpu> textures)
+  -> std::expected<std::vector<gltf::host_image_realization_key>, error_t>
+{
+  std::vector<gltf::host_image_realization_key> keys {};
+  const auto consider = [ & ](const std::optional<gltf::texture_use_cpu>& use)
+    -> std::expected<void, error_t>
+  {
+    if (!use.has_value()) { return {}; }
+    if (use->texture_index >= textures.size())
+    {
+      return std::unexpected { make_app_error(app_error_code::out_of_range) };
+    }
+    const auto source = selected_image_index(textures[ use->texture_index ]);
+    if (!source.has_value()) { return {}; }
+    keys.push_back({
+      .source_index = *source,
+      .color_space = use->color_space,
+    });
+    return {};
+  };
+
+  for (const auto& material : materials)
+  {
+    if (auto _ = consider(material.base_color_texture); !_)
+    {
+      return std::unexpected { _.error() };
+    }
+    if (auto _ = consider(material.metallic_roughness_texture); !_)
+    {
+      return std::unexpected { _.error() };
+    }
+    if (auto _ = consider(material.normal_texture); !_)
+    {
+      return std::unexpected { _.error() };
+    }
+    if (auto _ = consider(material.occlusion_texture); !_)
+    {
+      return std::unexpected { _.error() };
+    }
+    if (auto _ = consider(material.emissive_texture); !_)
+    {
+      return std::unexpected { _.error() };
+    }
+    if (auto _ = consider(material.transmission.texture); !_)
+    {
+      return std::unexpected { _.error() };
+    }
+    if (auto _ = consider(material.clearcoat.texture); !_)
+    {
+      return std::unexpected { _.error() };
+    }
+    if (auto _ = consider(material.clearcoat.roughness_texture); !_)
+    {
+      return std::unexpected { _.error() };
+    }
+    if (auto _ = consider(material.clearcoat.normal_texture); !_)
+    {
+      return std::unexpected { _.error() };
+    }
+  }
+
+  std::ranges::sort(keys, {},
+    [](const gltf::host_image_realization_key& key)
+    {
+      return std::pair { key.source_index,
+        static_cast<std::uint8_t>(key.color_space) };
+    });
+  const auto unique_end = std::ranges::unique(keys).begin();
+  keys.erase(unique_end, keys.end());
+  return keys;
 }
 
 export [[nodiscard]] auto
@@ -573,6 +688,45 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
       out.materials.reserve(gltf.materials.size());
       for (const auto& material : gltf.materials)
       {
+        const auto texture_count = gltf.textures.size();
+
+        auto base_color_texture =
+          map_texture_use(material.pbrData.baseColorTexture,
+            image_color_space::srgb, texture_count);
+        if (!base_color_texture)
+        {
+          return std::unexpected { base_color_texture.error() };
+        }
+
+        auto metallic_roughness_texture =
+          map_texture_use(material.pbrData.metallicRoughnessTexture,
+            image_color_space::linear, texture_count);
+        if (!metallic_roughness_texture)
+        {
+          return std::unexpected { metallic_roughness_texture.error() };
+        }
+
+        auto normal_texture = map_normal_texture_use(
+          material.normalTexture, image_color_space::linear, texture_count);
+        if (!normal_texture)
+        {
+          return std::unexpected { normal_texture.error() };
+        }
+
+        auto occlusion_texture = map_occlusion_texture_use(
+          material.occlusionTexture, image_color_space::linear, texture_count);
+        if (!occlusion_texture)
+        {
+          return std::unexpected { occlusion_texture.error() };
+        }
+
+        auto emissive_texture = map_texture_use(
+          material.emissiveTexture, image_color_space::srgb, texture_count);
+        if (!emissive_texture)
+        {
+          return std::unexpected { emissive_texture.error() };
+        }
+
         gltf::material_cpu mapped {
           .base_color_factor = {
             material.pbrData.baseColorFactor[ 0 ],
@@ -582,8 +736,17 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
           },
           .metallic_factor = material.pbrData.metallicFactor,
           .roughness_factor = material.pbrData.roughnessFactor,
-          .base_color_texture = map_optional_texture(gltf, material.pbrData.baseColorTexture),
-          .metallic_roughness_texture = map_optional_texture(gltf, material.pbrData.metallicRoughnessTexture),
+          .base_color_texture = std::move(*base_color_texture),
+          .metallic_roughness_texture = std::move(*metallic_roughness_texture),
+          .normal_texture = std::move(*normal_texture),
+          .normal_scale = material.normalTexture.has_value()
+            ? material.normalTexture->scale
+            : 1.0F,
+          .occlusion_texture = std::move(*occlusion_texture),
+          .occlusion_strength = material.occlusionTexture.has_value()
+            ? material.occlusionTexture->strength
+            : 1.0F,
+          .emissive_texture = std::move(*emissive_texture),
           .emissive_factor = {
             material.emissiveFactor[0],
             material.emissiveFactor[1],
@@ -593,44 +756,61 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
           .alpha_cutoff = material.alphaCutoff,
           .double_sided = material.doubleSided,
         };
-        if (material.normalTexture.has_value())
-        {
-          mapped.normal_texture =
-            map_texture_ref(gltf, material.normalTexture->textureIndex);
-          mapped.normal_scale = material.normalTexture->scale;
-        }
-        if (material.occlusionTexture.has_value())
-        {
-          mapped.occlusion_texture =
-            map_texture_ref(gltf, material.occlusionTexture->textureIndex);
-          mapped.occlusion_strength = material.occlusionTexture->strength;
-        }
-        if (material.emissiveTexture.has_value())
-        {
-          mapped.emissive_texture =
-            map_texture_ref(gltf, material.emissiveTexture->textureIndex);
-        }
+
         if (material.transmission)
         {
+          auto transmission_texture =
+            map_texture_use(material.transmission->transmissionTexture,
+              image_color_space::linear, texture_count);
+          if (!transmission_texture)
+          {
+            return std::unexpected { transmission_texture.error() };
+          }
           mapped.transmission.factor =
             static_cast<float>(material.transmission->transmissionFactor);
+          mapped.transmission.texture = std::move(*transmission_texture);
         }
+
         if (material.clearcoat)
         {
+          auto clearcoat_texture =
+            map_texture_use(material.clearcoat->clearcoatTexture,
+              image_color_space::linear, texture_count);
+          if (!clearcoat_texture)
+          {
+            return std::unexpected { clearcoat_texture.error() };
+          }
+          auto clearcoat_roughness_texture =
+            map_texture_use(material.clearcoat->clearcoatRoughnessTexture,
+              image_color_space::linear, texture_count);
+          if (!clearcoat_roughness_texture)
+          {
+            return std::unexpected { clearcoat_roughness_texture.error() };
+          }
+          auto clearcoat_normal_texture =
+            map_normal_texture_use(material.clearcoat->clearcoatNormalTexture,
+              image_color_space::linear, texture_count);
+          if (!clearcoat_normal_texture)
+          {
+            return std::unexpected { clearcoat_normal_texture.error() };
+          }
+
           mapped.clearcoat.factor =
             static_cast<float>(material.clearcoat->clearcoatFactor);
           mapped.clearcoat.roughness_factor =
             static_cast<float>(material.clearcoat->clearcoatRoughnessFactor);
-          mapped.clearcoat.texture =
-            map_optional_texture(gltf, material.clearcoat->clearcoatTexture);
-          mapped.clearcoat.roughness_texture = map_optional_texture(
-            gltf, material.clearcoat->clearcoatRoughnessTexture);
-          if (material.clearcoat->clearcoatNormalTexture.has_value())
-          {
-            mapped.clearcoat.normal_texture = map_texture_ref(
-              gltf, material.clearcoat->clearcoatNormalTexture->textureIndex);
-          }
+          mapped.clearcoat.normal_scale =
+            material.clearcoat->clearcoatNormalTexture.has_value()
+            ? material.clearcoat->clearcoatNormalTexture->scale
+            : 1.0F;
+
+          mapped.clearcoat.texture = std::move(*clearcoat_texture);
+          mapped.clearcoat.roughness_texture =
+            std::move(*clearcoat_roughness_texture);
+          mapped.clearcoat.normal_texture =
+            std::move(*clearcoat_normal_texture);
         }
+
         out.materials.push_back(std::move(mapped));
       }
 
@@ -657,13 +837,21 @@ load_gltf_asset_cpu(const std::filesystem::path& path,
         if (!source) { return std::unexpected { std::move(source).error() }; }
         out.image_sources.push_back(std::move(*source));
       }
-      mark_linear_images(out.materials, out.textures, out.image_sources);
-      return realize_gltf_host_images(out.image_sources, runtime_args)
-        .transform(
-          [ & ](std::vector<gltf::host_image_cpu>&& images) -> gltf::asset_cpu
+      return collect_gltf_host_image_realization_keys(
+        out.materials, out.textures)
+        .and_then(
+          [ & ](std::vector<gltf::host_image_realization_key>&& keys)
+            -> std::expected<gltf::asset_cpu, error_t>
           {
-            out.host_images = std::move(images);
-            return std::move(out);
+            return realize_gltf_host_images(
+              out.image_sources, keys, runtime_args)
+              .transform(
+                [ & ](std::vector<gltf::realized_host_image_cpu>&& images)
+                  -> gltf::asset_cpu
+                {
+                  out.host_images = std::move(images);
+                  return std::move(out);
+                });
           });
     });
 }
