@@ -1344,14 +1344,13 @@ private:
               .material_index = material_index,
             });
           }
-          auto uploaded_draws =
-            vkpp::upload_device_local_buffer<vkpp::buffer_kind::storage>({
-              .device = device_,
-              .pool = upload_pool_,
-              .transfer_pool = transfer_upload_pool_,
-              .bytes = std::as_bytes(std::span<const draw_gpu> { draws_gpu }),
-              .stage_pool = stage_pool_,
-            });
+          auto uploaded_draws = vkpp::upload_storage_buffer<Backend>({
+            .device = device_,
+            .pool = upload_pool_,
+            .transfer_pool = transfer_upload_pool_,
+            .bytes = std::as_bytes(std::span<const draw_gpu> { draws_gpu }),
+            .stage_pool = stage_pool_,
+          });
           if (!uploaded_draws)
           {
             return std::unexpected { std::move(uploaded_draws).error() };
@@ -2372,14 +2371,13 @@ private:
     }
     materials_gpu.emplace_back();
 
-    auto uploaded_materials =
-      vkpp::upload_device_local_buffer<vkpp::buffer_kind::storage>({
-        .device = device_,
-        .pool = upload_pool_,
-        .transfer_pool = transfer_upload_pool_,
-        .bytes = std::as_bytes(std::span<const material_gpu> { materials_gpu }),
-        .stage_pool = stage_pool_,
-      });
+    auto uploaded_materials = vkpp::upload_storage_buffer<Backend>({
+      .device = device_,
+      .pool = upload_pool_,
+      .transfer_pool = transfer_upload_pool_,
+      .bytes = std::as_bytes(std::span<const material_gpu> { materials_gpu }),
+      .stage_pool = stage_pool_,
+    });
     if (!uploaded_materials)
     {
       return std::unexpected {
