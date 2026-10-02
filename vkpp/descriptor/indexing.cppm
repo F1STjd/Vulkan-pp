@@ -9,6 +9,7 @@ import vkpp.diagnostics;
 import vkpp.memory;
 import vkpp.memory.vma;
 import vkpp.device;
+import vkpp.buffer;
 
 namespace vkpp
 {
@@ -442,10 +443,10 @@ public:
         });
   }
 
+  template<buffer_kind Kind, class T>
   [[nodiscard]] auto
   write_uniform_slot(const vk::raii::Device& device, std::uint32_t frame_index,
-    vk::DeviceAddress buffer_address, vk::DeviceSize size)
-    -> std::expected<void, error_t>
+    const buffer_view<Kind, T, addressed>& view) -> std::expected<void, error_t>
   {
     if (frame_index >= frames_in_flight_)
     {
@@ -458,8 +459,8 @@ public:
       return std::unexpected { make_app_error(app_error_code::mapping_failed) };
     }
     const vk::DeviceAddressRangeEXT address_range {
-      .address = buffer_address,
-      .size = size,
+      .address = view.device_address(),
+      .size = view.size(),
     };
     const vk::ResourceDescriptorInfoEXT resource_info {
       .type = vk::DescriptorType::eUniformBuffer,
@@ -474,10 +475,10 @@ public:
       device.writeResourceDescriptorsEXT({ resource_info }, { host_range }));
   }
 
+  template<buffer_kind Kind, class T>
   [[nodiscard]] auto
   write_storage_binding(const vk::raii::Device& device, std::uint32_t binding,
-    vk::DeviceAddress address, vk::DeviceSize size)
-    -> std::expected<void, error_t>
+    const buffer_view<Kind, T, addressed>& view) -> std::expected<void, error_t>
   {
     const vk::DeviceSize base = //
       (binding == 1U)   ? resource_storage_b1_base_
@@ -493,8 +494,10 @@ public:
     {
       return std::unexpected { make_app_error(app_error_code::mapping_failed) };
     }
-    const vk::DeviceAddressRangeEXT address_range { .address = address,
-      .size = size };
+    const vk::DeviceAddressRangeEXT address_range {
+      .address = view.device_address(),
+      .size = view.size(),
+    };
     const vk::ResourceDescriptorInfoEXT resource_info {
       .type = vk::DescriptorType::eStorageBuffer,
       .data = &address_range,

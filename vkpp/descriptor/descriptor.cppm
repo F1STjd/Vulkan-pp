@@ -5,6 +5,7 @@ import vulkan;
 
 import vkpp.error;
 import vkpp.diagnostics;
+import vkpp.buffer;
 
 namespace vkpp
 {
@@ -245,6 +246,15 @@ write_storage_buffer(const vk::raii::Device& device, vk::DescriptorSet set,
 {
   write_buffer_descriptor(device, set, binding,
     vk::DescriptorType::eStorageBuffer, buffer, offset, range);
+}
+
+export template<buffer_kind Kind, class T, class Address>
+void
+write_storage_buffer(const vk::raii::Device& device, vk::DescriptorSet set,
+  std::uint32_t binding, const buffer_view<Kind, T, Address>& view)
+{
+  write_storage_buffer(
+    device, set, binding, view.buffer(), view.size(), view.offset());
 }
 
 export void
