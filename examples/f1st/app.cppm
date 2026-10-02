@@ -1682,8 +1682,10 @@ private:
       device_.allocator(), histogram_bins * sizeof(std::uint32_t));
     if (!bins) { return std::unexpected { std::move(bins).error() }; }
     histogram_bins_ = std::move(*bins);
-    histogram_device_address_ = vkpp::get_buffer_device_address(
-      device_.device(), histogram_bins_.buffer());
+
+    auto histogram_view = bindable(histogram_bins_);
+    if (!histogram_view) { return std::unexpected { histogram_view.error() }; }
+    histogram_device_address_ = histogram_view->device_address();
 
     for (auto index : std::views::indices(max_frames_in_flight))
     {
