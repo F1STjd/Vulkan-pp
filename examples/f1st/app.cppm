@@ -1479,7 +1479,7 @@ private:
         device_.min_uniform_buffer_offset_alignment());
     const auto ring_size =
       uniform_ring_stride_ * static_cast<vk::DeviceSize>(max_frames_in_flight);
-    auto ring = vkpp::uniform_buffer::create(device_.allocator(), ring_size);
+    auto ring = create_uniform_buffer(ring_size);
     if (!ring) { return std::unexpected { std::move(ring).error() }; }
     if (ring->mapped() == nullptr)
     {
