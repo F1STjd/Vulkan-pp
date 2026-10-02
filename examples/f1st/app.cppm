@@ -2475,13 +2475,13 @@ private:
     {
       return std::unexpected { std::move(uploaded.error()) };
     }
-    const auto material_address = vkpp::get_buffer_device_address(
-      device_.device(), material_buffer_.buffer());
-    if (auto written = this->heap_arena_.write_storage_binding(
-          device_.device(), 1U, material_address, material_buffer_.size());
-      !written)
+    const auto material_bound = bindable(material_buffer_);
+    if (!material_bound) { return std::unexpected { material_bound.error() }; }
+    if (auto write = this->heap_arena_.write_storage_binding(
+          device_.device(), 1U, *material_bound);
+      !write)
     {
-      return std::unexpected { std::move(written).error() };
+      return std::unexpected { std::move(write).error() };
     }
     rebuild_bindless_pending_ = false;
     return {};
