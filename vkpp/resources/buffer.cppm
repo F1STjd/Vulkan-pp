@@ -115,6 +115,67 @@ struct buffer_traits<buffer_kind::device_address>
   };
 };
 
+export struct unaddressed
+{};
+
+export struct addressed
+{
+  vk::DeviceAddress value {};
+};
+
+export template<buffer_kind Kind, class T = std::byte,
+  class Address = unaddressed>
+class buffer_view
+{
+public:
+  using element_type = T;
+  using address_policy = Address;
+
+  buffer_view() = default;
+
+  buffer_view(const buffer_view<Kind, T, addressed>& other)
+    requires std::same_as<Address, unaddressed>
+  : buffer_ { other.buffer() }, offset_ { other.offset() },
+    size_ { other.size() }
+  {}
+
+  [[nodiscard]] auto
+  buffer() const -> vk::Buffer
+  { return buffer_; }
+
+  [[nodiscard]] auto
+  offset() const -> vk::DeviceSize
+  { return offset_; }
+
+  [[nodiscard]] auto
+  size() const -> vk::DeviceSize
+  { return size_; }
+
+  [[nodiscard]] auto
+  device_address() const -> vk::DeviceAddress
+    requires std::same_as<Address, addressed>
+  { return address_.value; }
+
+private:
+  template<buffer_kind, device_allocator>
+  friend class buffer_resource;
+
+  buffer_view(vk::Buffer buffer, vk::DeviceSize offset, vk::DeviceSize size,
+    Address address = {})
+  : buffer_ { buffer }, offset_ { offset }, size_ { size }, address_ { address }
+  {}
+
+  vk::Buffer buffer_ {};
+  vk::DeviceSize offset_ {};
+  vk::DeviceSize size_ {};
+  [[no_unique_address]] Address address_ {};
+};
+
+export template<class V>
+concept addressed_buffer_view = requires(const V& v) {
+  { v.device_address() } -> std::same_as<vk::DeviceAddress>;
+};
+
 export enum class shader_address_policy : std::uint8_t {
   never,
   auto_for_session,
@@ -292,6 +353,39 @@ public:
       });
   }
 
+  template<class T = std::byte>
+  [[nodiscard]] auto
+  view(vk::DeviceSize offset = 0UZ, vk::DeviceSize size = vk::WholeSize) const
+    -> buffer_view<Kind, T, unaddressed>
+  {
+    const auto extent = (size == vk::WholeSize) ? (size_ - offset) : size;
+    return buffer_view<Kind, T, unaddressed> { buffer(), offset, extent };
+  }
+
+  template<class T = std::byte>
+  [[nodiscard]] auto
+  addressed_view(const device_context& device, vk::DeviceSize offset = 0UZ,
+    vk::DeviceSize size = vk::WholeSize) const
+    -> std::expected<buffer_view<Kind, T, addressed>, error_t>
+  {
+    if (!device.selected_capabilities().enabled.buffer_device_address)
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::feature_not_enabled),
+      };
+    }
+    if (!has_device_address())
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::feature_not_enabled),
+      };
+    }
+    const auto extent = (size == vk::WholeSize) ? (size_ - offset) : size;
+    const auto base = get_buffer_device_Address(device.device(), buffer());
+    return buffer_view<Kind, T, addressed> { buffer(), offset, extent,
+      addressed { .value = base + offset } };
+  }
+
   explicit buffer_resource(typename Alloc::buffer_handle&& handle,
     vk::DeviceSize size, vk::BufferUsageFlags usage)
   : handle_ { std::move(handle) }, size_ { size }, usage_ { usage }
@@ -411,6 +505,19 @@ public:
   copy_mapped_into(std::span<T> destination) const
     -> std::expected<void, error_t>
   { return resource_.copy_mapped_into(destination); }
+
+  template<class T = std::byte>
+  [[nodiscard]] auto
+  view(vk::DeviceSize offset = 0UZ, vk::DeviceSize size = vk::WholeSize) const
+    -> buffer_view<Kind, T, unaddressed>
+  { return resource_.template view<T>(offset, size); }
+
+  template<class T = std::byte>
+  [[nodiscard]] auto
+  addressed_view(const device_context& device, vk::DeviceSize offset = 0UZ,
+    vk::DeviceSize size = vk::WholeSize) const
+    -> std::expected<buffer_view<Kind, T, addressed>, error_t>
+  { return resource_.template addressed_view<T>(device, offset, size); }
 
 private:
   buffer_resource<Kind, Alloc> resource_ {};
@@ -605,66 +712,5 @@ export [[nodiscard]] constexpr auto
 uniform_slice_offset(std::uint32_t index, vk::DeviceSize stride)
   -> vk::DeviceSize
 { return static_cast<vk::DeviceSize>(index) * stride; }
-
-export struct unaddressed
-{};
-
-export struct addressed
-{
-  vk::DeviceAddress value {};
-};
-
-export template<buffer_kind Kind, class T = std::byte,
-  class Address = unaddressed>
-class buffer_view
-{
-public:
-  using element_type = T;
-  using address_policy = Address;
-
-  buffer_view() = default;
-
-  buffer_view(const buffer_view<Kind, T, addressed>& other)
-    requires std::same_as<Address, unaddressed>
-  : buffer_ { other.buffer() }, offset_ { other.offset() },
-    size_ { other.size() }
-  {}
-
-  [[nodiscard]] auto
-  buffer() const -> vk::Buffer
-  { return buffer_; }
-
-  [[nodiscard]] auto
-  offset() const -> vk::DeviceSize
-  { return offset_; }
-
-  [[nodiscard]] auto
-  size() const -> vk::DeviceSize
-  { return size_; }
-
-  [[nodiscard]] auto
-  device_address() const -> vk::DeviceAddress
-    requires std::same_as<Address, addressed>
-  { return address_.value(); }
-
-private:
-  template<buffer_kind, device_allocator>
-  friend class buffer_resource;
-
-  buffer_view(vk::Buffer buffer, vk::DeviceSize offset, vk::DeviceSize size,
-    Address address = {})
-  : buffer_ { buffer }, offset_ { offset }, size_ { size }, address_ { address }
-  {}
-
-  vk::Buffer buffer_ {};
-  vk::DeviceSize offset_ {};
-  vk::DeviceSize size_ {};
-  [[no_unique_address]] Address address_ {};
-};
-
-export template<class V>
-concept addressed_buffer_view = requires(const V& v) {
-  { v.device_address() } -> std::same_as<vk::DeviceAddress>;
-};
 
 }; // namespace vkpp
