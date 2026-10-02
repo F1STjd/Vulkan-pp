@@ -3,6 +3,7 @@ module;
 export module vkpp.io;
 
 export import vkpp.io.types;
+export import vkpp.io.material_transport;
 export import vkpp.io.channels;
 export import vkpp.io.shader;
 export import vkpp.io.mesh;

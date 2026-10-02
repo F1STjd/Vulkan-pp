@@ -346,5 +346,11 @@ struct host_image_realization_key
     const host_image_realization_key&) -> bool = default;
 };
 
+struct texture_role_slots
+{
+  std::optional<std::uint32_t> srgb {};
+  std::optional<std::uint32_t> linear {};
+};
+
 } // namespace gltf
 } // namespace vkpp

@@ -25,6 +25,7 @@ target_sources(vkpp
       io/load.cppm              # module vkpp.io
       io/shader.cppm            # module vkpp.io.shader
       io/types.cppm             # module vkpp.io.types
+      io/material_transport.cppm # module vkpp.io.material_transport
       io/mesh_tags.cppm
       io/mesh_gltf.cppm
       io/mesh_obj.cppm
