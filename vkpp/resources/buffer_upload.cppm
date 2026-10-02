@@ -12,6 +12,7 @@ import vkpp.device;
 import vkpp.command;
 import vkpp.barrier;
 import vkpp.buffer.stage_pool;
+import vkpp.capabilities;
 
 namespace vkpp
 {
@@ -100,6 +101,7 @@ struct buffer_upload_create_info_for
   std::optional<command_pool&> transfer_pool {};
   std::span<const std::byte> bytes {};
   std::optional<stage_pool&> stage_pool {};
+  resource_create_options options {};
 };
 
 [[nodiscard]] auto
@@ -347,8 +349,9 @@ upload_device_local_buffer(
           -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
         {
           std::memcpy(allocation.mapped, create_info.bytes.data(), byte_size);
-          return buffer_resource<Kind>::create(
-            create_info.device.allocator(), byte_size)
+          return buffer_resource<Kind>::create(create_info.device.allocator(),
+            byte_size, create_info.options,
+            create_info.device.selected_capabilities().descriptor)
             .and_then(
               [ &, allocation = std::move(allocation) ](
                 buffer_resource<Kind>&& device_local) mutable
@@ -377,8 +380,9 @@ upload_device_local_buffer(
         }
 
         std::memcpy(staging.mapped(), create_info.bytes.data(), byte_size);
-        return buffer_resource<Kind>::create(
-          create_info.device.allocator(), byte_size)
+        return buffer_resource<Kind>::create(create_info.device.allocator(),
+          byte_size, create_info.options,
+          create_info.device.selected_capabilities().descriptor)
           .and_then(
             [ &, staging = std::move(staging) ](
               buffer_resource<Kind>&& device_local) mutable
@@ -391,6 +395,21 @@ upload_device_local_buffer(
     .and_then([](pending_upload<buffer_resource<Kind>>&& pending)
                 -> std::expected<buffer_resource<Kind>, error_t>
       { return std::move(pending).join(); });
+}
+
+export template<descriptor_table_backend Backend>
+[[nodiscard]] auto
+upload_storage_buffer(
+  const buffer_upload_create_info_for<buffer_kind::storage>& create_info)
+  -> std::expected<storage_buffer, error_t>
+{
+  auto info = create_info;
+  if (!info.options.address_policy.has_value())
+  {
+    info.options.address_policy =
+      default_shader_address_policy_for(Backend, buffer_kind::storage);
+  }
+  return upload_device_local_buffer<buffer_kind::storage>(info);
 }
 
 } // namespace vkpp

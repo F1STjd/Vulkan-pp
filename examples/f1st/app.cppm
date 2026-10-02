@@ -1002,6 +1002,24 @@ private:
         { stage_pool_ = std::move(pool); });
   }
 
+  [[nodiscard]] auto
+  create_storage_buffer(
+    vk::DeviceSize size, vkpp::resource_create_options options = {})
+    -> std::expected<vkpp::storage_buffer, vkpp::error_t>
+  {
+    return vkpp::create_storage_buffer<Backend>(
+      device_.allocator(), size, options);
+  }
+
+  [[nodiscard]] auto
+  create_uniform_buffer(
+    vk::DeviceSize size, vkpp::resource_create_options options = {})
+    -> std::expected<vkpp::uniform_buffer, vkpp::error_t>
+  {
+    return vkpp::create_uniform_buffer<Backend>(
+      device_.allocator(), size, options);
+  }
+
   auto
   create_buffers() -> std::expected<void, vkpp::error_t>
   {

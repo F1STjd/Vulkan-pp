@@ -9,6 +9,7 @@ import vkpp.error;
 import vkpp.device;
 import vkpp.command;
 import vkpp.barrier;
+import vkpp.capabilities;
 
 namespace vkpp
 {
@@ -23,8 +24,6 @@ export enum class buffer_kind : std::uint8_t {
   readback,
   indirect,
   device_address,
-  uniform_device_address,
-  storage_device_address,
 };
 
 export struct buffer_type_spec
@@ -116,27 +115,56 @@ struct buffer_traits<buffer_kind::device_address>
   };
 };
 
-template<>
-struct buffer_traits<buffer_kind::uniform_device_address>
-{
-  static constexpr buffer_type_spec spec {
-    .usage = vk::BufferUsageFlagBits::eUniformBuffer |
-      vk::BufferUsageFlagBits::eShaderDeviceAddress,
-    .intent = memory_intent::cpu_to_gpu,
-  };
+export enum class shader_address_policy : std::uint8_t {
+  never,
+  auto_for_session,
+  required,
 };
 
-template<>
-struct buffer_traits<buffer_kind::storage_device_address>
+export struct resource_create_options
 {
-  static constexpr buffer_type_spec spec {
-    .usage = vk::BufferUsageFlagBits::eStorageBuffer |
-      vk::BufferUsageFlagBits::eShaderDeviceAddress |
-      vk::BufferUsageFlagBits::eTransferDst |
-      vk::BufferUsageFlagBits::eTransferSrc,
-    .intent = memory_intent::gpu_only,
-  };
+  std::optional<shader_address_policy> address_policy {};
+
+  [[nodiscard]] constexpr auto
+  shader_address(shader_address_policy policy) const -> resource_create_options
+  {
+    auto copy = *this;
+    copy.address_policy = policy;
+    return copy;
+  }
 };
+
+export [[nodiscard]] constexpr auto
+default_shader_address_policy_for(
+  descriptor_table_backend backend, buffer_kind kind) -> shader_address_policy
+{
+  if (backend != descriptor_table_backend::heap)
+  {
+    return shader_address_policy::never;
+  }
+  if (kind == buffer_kind::uniform || kind == buffer_kind::storage)
+  {
+    return shader_address_policy::auto_for_session;
+  }
+  return shader_address_policy::never;
+}
+
+export [[nodiscard]] constexpr auto
+resolve_shader_address_policy(descriptor_table_backend backend,
+  buffer_kind kind, const resource_create_options& options)
+  -> shader_address_policy
+{
+  return options.address_policy.value_or(
+    default_shader_address_policy_for(backend, kind));
+}
+
+export [[nodiscard]] constexpr auto
+buffer_usage_with_address_policy(vk::BufferUsageFlags base,
+  shader_address_policy policy) -> vk::BufferUsageFlags
+{
+  if (policy == shader_address_policy::never) { return base; }
+  return base | vk::BufferUsageFlagBits::eShaderDeviceAddress;
+}
 
 export template<buffer_kind Kind>
 inline constexpr bool is_host_visible_buffer_kind_v =
@@ -161,6 +189,20 @@ public:
     constexpr buffer_type_spec spec = buffer_traits<Kind>::spec;
     return create_with_flags(
       allocator, size, spec.usage, spec.intent, sharing_families);
+  }
+
+  [[nodiscard]] static auto
+  create(Alloc& allocator, vk::DeviceSize size,
+    const resource_create_options& options,
+    descriptor_table_backend backend = descriptor_table_backend::classic,
+    std::span<const std::uint32_t> sharing_families = {})
+    -> std::expected<buffer_resource, error_t>
+  {
+    constexpr buffer_type_spec spec = buffer_traits<Kind>::spec;
+    const auto policy = resolve_shader_address_policy(backend, Kind, options);
+    const auto usage = buffer_usage_with_address_policy(spec.usage, policy);
+    return create_with_flags(
+      allocator, size, usage, spec.intent, sharing_families);
   }
 
   template<typename T>
@@ -192,6 +234,14 @@ public:
   [[nodiscard]] auto
   mapped() const -> void*
   { return handle_.mapped(); }
+
+  [[nodiscard]] auto
+  usage() const -> vk::BufferUsageFlags
+  { return usage_; }
+
+  [[nodiscard]] auto
+  has_device_address() const -> bool
+  { return bool { usage_ & vk::BufferUsageFlagBits::eShaderDeviceAddress }; }
 
   template<typename T>
     requires host_visible_buffer_kind<Kind>
@@ -242,9 +292,9 @@ public:
       });
   }
 
-  explicit buffer_resource(
-    typename Alloc::buffer_handle&& handle, vk::DeviceSize size)
-  : handle_ { std::move(handle) }, size_ { size }
+  explicit buffer_resource(typename Alloc::buffer_handle&& handle,
+    vk::DeviceSize size, vk::BufferUsageFlags usage)
+  : handle_ { std::move(handle) }, size_ { size }, usage_ { usage }
   {}
 
 private:
@@ -267,11 +317,12 @@ private:
     return allocator.create_buffer(buffer_info, intent)
       .transform(
         [ & ](typename Alloc::buffer_handle&& handle) -> buffer_resource
-        { return buffer_resource { std::move(handle), size }; });
+        { return buffer_resource { std::move(handle), size, usage }; });
   }
 
   typename Alloc::buffer_handle handle_ {};
   vk::DeviceSize size_ {};
+  vk::BufferUsageFlags usage_ {};
 };
 
 export template<buffer_kind Kind, device_allocator Alloc = vma_policy>
@@ -286,8 +337,7 @@ public:
   {}
 
   template<typename T>
-    requires(Kind == buffer_kind::uniform ||
-      Kind == buffer_kind::uniform_device_address)
+    requires(Kind == buffer_kind::uniform)
   [[nodiscard]] static auto
   create(Alloc& allocator, vk::DeviceSize min_ubo_alignment = 1UZ,
     std::span<const std::uint32_t> sharing_families = {})
@@ -308,8 +358,7 @@ public:
   create(Alloc& allocator, vk::DeviceSize size,
     std::span<const std::uint32_t> sharing_families = {})
     -> std::expected<mapped_buffer, error_t>
-    requires(Kind == buffer_kind::uniform ||
-      Kind == buffer_kind::uniform_device_address)
+    requires(Kind == buffer_kind::uniform)
   {
     return buffer_resource<Kind, Alloc>::create(
       allocator, size, sharing_families)
@@ -344,6 +393,14 @@ public:
   resource() && -> buffer_resource<Kind, Alloc>&&
   { return std::move(resource_); }
 
+  [[nodiscard]] auto
+  usage() const -> vk::BufferUsageFlags
+  { return resource_.usage(); }
+
+  [[nodiscard]] auto
+  has_device_address() const -> bool
+  { return resource_.has_device_address(); }
+
   template<typename T>
   [[nodiscard]] auto
   mapped_span() const -> std::expected<std::span<T>, error_t>
@@ -368,10 +425,33 @@ export using readback_buffer = buffer_resource<buffer_kind::readback>;
 export using indirect_buffer = buffer_resource<buffer_kind::indirect>;
 export using device_address_buffer =
   buffer_resource<buffer_kind::device_address>;
-export using heap_uniform_buffer =
-  mapped_buffer<buffer_kind::uniform_device_address>;
-export using heap_storage_buffer =
-  buffer_resource<buffer_kind::storage_device_address>;
+
+export template<descriptor_table_backend Backend,
+  device_allocator Alloc = vma_policy>
+auto
+create_storage_buffer(Alloc& allocator, vk::DeviceSize size,
+  resource_create_options options = {},
+  std::span<const std::uint32_t> sharing_families = {})
+  -> std::expected<storage_buffer, error_t>
+{
+  return storage_buffer::create(
+    allocator, size, options, Backend, sharing_families);
+}
+
+export template<descriptor_table_backend Backend,
+  device_allocator Alloc = vma_policy>
+auto
+create_uniform_buffer(Alloc& allocator, vk::DeviceSize size,
+  resource_create_options options = {},
+  std::span<const std::uint32_t> sharing_families = {})
+  -> std::expected<uniform_buffer, error_t>
+{
+  return buffer_resource<buffer_kind::uniform, Alloc>::create(
+    allocator, size, options, Backend, sharing_families)
+    .transform([](buffer_resource<buffer_kind::uniform, Alloc>&& resource)
+                 -> uniform_buffer
+      { return uniform_buffer { std::move(resource) }; });
+}
 
 export template<device_allocator Alloc = vma_policy>
 class buffer_resource_custom
