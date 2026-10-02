@@ -258,6 +258,25 @@ write_storage_buffer(const vk::raii::Device& device, vk::DescriptorSet set,
 }
 
 export void
+write_uniform_buffer_dynamic(const vk::raii::Device& device,
+  vk::DescriptorSet set, std::uint32_t binding, vk::Buffer buffer,
+  vk::DeviceSize range, vk::DeviceSize offset = 0UZ)
+{
+  write_buffer_descriptor(device, set, binding,
+    vk::DescriptorType::eUniformBufferDynamic, buffer, offset, range);
+}
+
+export template<buffer_kind Kind, class T, class Address>
+void
+write_uniform_buffer_dynamic(const vk::raii::Device& device,
+  vk::DescriptorSet set, std::uint32_t binding,
+  const buffer_view<Kind, T, Address>& view)
+{
+  write_uniform_buffer_dynamic(
+    device, set, binding, view.buffer(), view.size(), view.offset());
+}
+
+export void
 write_combined_image_sampler(const vk::raii::Device& device,
   vk::DescriptorSet set, std::uint32_t binding, vk::Sampler sampler,
   vk::ImageView view,
@@ -287,15 +306,6 @@ write_ubo_and_combined_image(const vk::raii::Device& device,
 {
   write_uniform_buffer(device, destination, 0U, ubo, ubo_range);
   write_combined_image_sampler(device, destination, 1U, sampler, view, layout);
-}
-
-export void
-write_uniform_buffer_dynamic(const vk::raii::Device& device,
-  vk::DescriptorSet set, std::uint32_t binding, vk::Buffer buffer,
-  vk::DeviceSize range, vk::DeviceSize offset = 0UZ)
-{
-  write_buffer_descriptor(device, set, binding,
-    vk::DescriptorType::eUniformBufferDynamic, buffer, offset, range);
 }
 
 } // namespace vkpp
