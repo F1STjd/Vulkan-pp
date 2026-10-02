@@ -1020,6 +1020,43 @@ private:
       device_.allocator(), size, options);
   }
 
+  template<class T = std::byte>
+  [[nodiscard]] auto
+  bindable(const vkpp::storage_buffer& buffer)
+  {
+    if constexpr (Backend == vkpp::descriptor_table_backend::heap)
+    {
+      return buffer.template addressed_view<T>(device_);
+    }
+    else
+    {
+      return std::expected<
+        vkpp::buffer_view<vkpp::buffer_kind::storage, T, vkpp::unaddressed>,
+        vkpp::error_t> { buffer.template view<T>() };
+    }
+  }
+
+  template<class T = std::byte>
+  [[nodiscard]] auto
+  bindable(const vkpp::uniform_buffer& buffer)
+  {
+    if constexpr (Backend == vkpp::descriptor_table_backend::heap)
+    {
+      return buffer.template addressed_view<T>(device_);
+    }
+    else
+    {
+      return std::expected<
+        vkpp::buffer_view<vkpp::buffer_kind::uniform, T, vkpp::unaddressed>,
+        vkpp::error_t> { buffer.template view<T>() };
+    }
+  }
+
+  template<class T = std::byte>
+  [[nodiscard]] auto
+  bindable(const vkpp::device_address_buffer& buffer)
+  { return buffer.template addressed_view<T>(device_); }
+
   auto
   create_buffers() -> std::expected<void, vkpp::error_t>
   {
