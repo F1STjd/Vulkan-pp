@@ -69,6 +69,7 @@ target_sources(vkpp
       graph/attachment_use.cppm  # module vkpp.graph.attachment_use
 
       descriptor/descriptor.cppm   # module vkpp.descriptor
+      descriptor/layout_decl.cppm # module vkpp.descriptor.layout_decl
       descriptor/indexing.cppm # module vkpp.descriptor.indexing
 
       pipeline/pipeline.cppm       # module vkpp.pipeline
