@@ -832,14 +832,6 @@ public:
   }
 
   [[nodiscard]] auto
-  register_combined_image_sampler(const vk::raii::Device& device,
-    [[maybe_unused]] const vk::SamplerCreateInfo& sampler_info,
-    [[maybe_unused]] const vk::ImageViewCreateInfo& image_view_info,
-    vk::Sampler sampler, vk::ImageView view)
-    -> std::expected<std::uint32_t, error_t>
-  { return register_combined_image_sampler(device, sampler, view); }
-
-  [[nodiscard]] auto
   layout() const -> const vk::raii::DescriptorSetLayout&
   { return layout_; }
 
@@ -871,8 +863,7 @@ public:
   [[nodiscard]] auto
   register_combined_image_sampler(const vk::raii::Device& device,
     const vk::SamplerCreateInfo& sampler_create_info,
-    const vk::ImageViewCreateInfo& image_view_create_info,
-    [[maybe_unused]] vk::Sampler sampler, [[maybe_unused]] vk::ImageView view)
+    const vk::ImageViewCreateInfo& image_view_create_info)
     -> std::expected<std::uint32_t, error_t>
   {
     if (!arena_.has_value())
