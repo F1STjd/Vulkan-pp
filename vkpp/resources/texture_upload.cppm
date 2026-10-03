@@ -368,6 +368,7 @@ make_texture(const texture_create_info& create_info)
               std::move(image),
               *create_info.borrowed_sampler,
               create_info.mip_levels,
+              create_info.array_layers,
             };
           }
           return make_sampler(create_info.device.device(),
@@ -380,6 +381,7 @@ make_texture(const texture_create_info& create_info)
                   std::move(image),
                   std::move(sampler),
                   create_info.mip_levels,
+                  create_info.array_layers,
                 };
               });
         });
