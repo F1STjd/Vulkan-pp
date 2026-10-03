@@ -26,14 +26,12 @@ export struct sampler_create_info
   operator==(const sampler_create_info&) const -> bool = default;
 };
 
-export auto
-make_sampler(const vk::raii::Device& device,
-  const vk::raii::PhysicalDevice& physical,
-  const sampler_create_info& create_info)
-  -> std::expected<vk::raii::Sampler, error_t>
+export [[nodiscard]] auto
+to_vk(const vk::raii::PhysicalDevice& physical,
+  const sampler_create_info& create_info) -> vk::SamplerCreateInfo
 {
   const auto properties = physical.getProperties();
-  const vk::SamplerCreateInfo sampler_info {
+  return vk::SamplerCreateInfo {
     .magFilter = create_info.mag_filter,
     .minFilter = create_info.min_filter,
     .mipmapMode = create_info.mipmap_mode,
@@ -50,8 +48,16 @@ make_sampler(const vk::raii::Device& device,
     .borderColor = vk::BorderColor::eIntOpaqueBlack,
     .unnormalizedCoordinates = vk::False,
   };
+}
+
+export auto
+make_sampler(const vk::raii::Device& device,
+  const vk::raii::PhysicalDevice& physical,
+  const sampler_create_info& create_info)
+  -> std::expected<vk::raii::Sampler, error_t>
+{
   return map_vk_error(
-    device.createSampler(sampler_info), std::nullopt);
+    device.createSampler(to_vk(physical, sampler_info)), std::nullopt);
 }
 
 export class sampler_cache
