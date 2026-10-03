@@ -5,6 +5,7 @@ import vulkan;
 
 import vkpp.capabilities;
 import vkpp.descriptor.indexing;
+import vkpp.descriptor.layout_decl;
 
 namespace vkpp
 {
@@ -124,5 +125,25 @@ push_data(
   };
   command_buffer.pushDataEXT(info);
 }
+
+export template<descriptor_table_backend Backend, class PushLayout, class Tag,
+  class T>
+  requires(Backend == descriptor_table_backend::classic)
+void
+push(vk::raii::CommandBuffer& command_buffer, vk::PipelineLayout layout,
+  vk::ShaderStageFlags stages, const T& value)
+{
+  static_assert(std::is_trivially_copyable_v<T>);
+  command_buffer.pushConstants(layout, stages,
+    PushLayout::template offset_of<Tag>(), sizeof(T),
+    static_cast<const void*>(&value));
+}
+
+export template<descriptor_table_backend Backend, class PushLayout, class Tag,
+  class T>
+  requires(Backend == descriptor_table_backend::heap)
+void
+push(vk::raii::CommandBuffer& command_buffer, const T& value)
+{ push_data(command_buffer, PushLayout::template offset_of<Tag>(), value); }
 
 } // namespace vkpp
