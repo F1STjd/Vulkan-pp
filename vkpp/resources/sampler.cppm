@@ -57,7 +57,7 @@ make_sampler(const vk::raii::Device& device,
   -> std::expected<vk::raii::Sampler, error_t>
 {
   return map_vk_error(
-    device.createSampler(to_vk(physical, sampler_info)), std::nullopt);
+    device.createSampler(to_vk(physical, create_info)), std::nullopt);
 }
 
 export class sampler_cache
