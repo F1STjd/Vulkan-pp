@@ -53,6 +53,7 @@ import vkpp.pipeline.binary;
 import vkpp.pipeline.persistence;
 import vkpp.descriptor;
 import vkpp.descriptor.indexing;
+import vkpp.descriptor.layout_decl;
 import vkpp.semaphore;
 import vkpp.graph;
 import vkpp.query;
@@ -420,6 +421,28 @@ make_texture_view_create_info(const vkpp::texture<>& texture,
       },
   };
 }
+
+struct f1st_draw_tag
+{};
+struct f1st_frame_slot_tag
+{};
+
+using f1st_push_layout = vkpp::push_layout<f1st_frame_slot_tag,
+  vkpp::push_field<f1st_draw_tag, std::uint32_t>,
+  vkpp::push_field<f1st_frame_slot_tag, std::uint32_t>>;
+
+using f1st_regions =
+  vkpp::logical_resource_pack<vkpp::logical_resource_role::frame_uniform_ring,
+    vkpp::logical_resource_role::material_storage,
+    vkpp::logical_resource_role::draw_storage,
+    vkpp::logical_resource_role::bindless_cis,
+    vkpp::logical_resource_role::ibl_cis,
+    vkpp::logical_resource_role::compute_cis>;
+
+static_assert(f1st_push_layout::template offset_of<f1st_draw_tag>() == 0U);
+static_assert(
+  f1st_push_layout::template offset_of<f1st_frame_slot_tag>() == 4U);
+static_assert(f1st_push_layout::total_bytes == 8U);
 
 template<vkpp::descriptor_table_backend Backend>
 class app_session_bindings;
@@ -1948,8 +1971,8 @@ private:
     requires(Backend == vkpp::descriptor_table_backend::heap)
   {
     const auto frame_slot = frame_index_;
-    vkpp::push_data(command_buffer,
-      vkpp::descriptor_heap_push_data_layout::frame_slot_offset, frame_slot);
+    vkpp::push<Backend, f1st_push_layout, f1st_frame_slot_tag>(
+      command_buffer, frame_slot);
     vkpp::bind_graphics_descriptors<Backend>(
       command_buffer, *pipeline.pipeline(), {}, {}, {}, this->heap_arena_);
   }
@@ -1966,9 +1989,10 @@ private:
     command_buffer.bindIndexBuffer(
       geometry_arena_.buffer(), draw.index_slice.offset, draw.index_type);
     const draw_push push_constants { .draw_index = draw_index };
-    vkpp::push_constants(command_buffer, *pipeline.layout(),
+    vkpp::push<Backend, f1st_push_layout, f1st_draw_tag>(command_buffer,
+      *pipeline.layout(),
       vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
-      push_constants);
+      push_constants.draw_index);
     command_buffer.setCullMode(draw.double_sided //
         ? vk::CullModeFlagBits::eNone
         : vk::CullModeFlagBits::eBack);
@@ -1990,8 +2014,8 @@ private:
     command_buffer.bindIndexBuffer(
       geometry_arena_.buffer(), draw.index_slice.offset, draw.index_type);
     const draw_push push_constants { .draw_index = draw_index };
-    vkpp::push_data(command_buffer,
-      vkpp::descriptor_heap_push_data_layout::draw_offset, push_constants);
+    vkpp::push<Backend, f1st_push_layout, f1st_draw_tag>(
+      command_buffer, push_constants);
     command_buffer.setCullMode(draw.double_sided //
         ? vk::CullModeFlagBits::eNone
         : vk::CullModeFlagBits::eBack);
