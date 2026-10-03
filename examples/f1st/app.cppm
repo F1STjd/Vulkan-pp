@@ -497,14 +497,15 @@ public:
           vkpp::make_app_error(vkpp::app_error_code::feature_not_enabled),
         };
       }
-      auto arena = vkpp::descriptor_heap_arena::create(device_.device(),
-        device_.physical_device(), device_.allocator(),
-        device_.selected_capabilities(),
-        {
-          .bindless_capacity = 1024U,
-          .frames_in_flight = max_frames_in_flight,
-        },
-        diagnostic_buffer_);
+      auto arena =
+        vkpp::descriptor_heap_arena::create<f1st_push_layout, f1st_regions>(
+          device_.device(), device_.physical_device(), device_.allocator(),
+          device_.selected_capabilities(),
+          {
+            .bindless_capacity = 1024U,
+            .frames_in_flight = max_frames_in_flight,
+          },
+          diagnostic_buffer_);
       if (!arena) { return std::unexpected { arena.error() }; }
       this->heap_arena_ = std::move(*arena);
       bindless_table_ = vkpp::heap_bindless_table { this->heap_arena_ };
