@@ -132,6 +132,12 @@ public:
   using address_policy = Address;
 
   buffer_view() = default;
+  buffer_view(const buffer_view&) = default;
+  buffer_view(buffer_view&&) = default;
+  auto
+  operator=(const buffer_view&) -> buffer_view& = default;
+  auto
+  operator=(buffer_view&&) -> buffer_view& = default;
 
   buffer_view(const buffer_view<Kind, T, addressed>& other)
     requires std::same_as<Address, unaddressed>
@@ -225,6 +231,15 @@ buffer_usage_with_address_policy(vk::BufferUsageFlags base,
 {
   if (policy == shader_address_policy::never) { return base; }
   return base | vk::BufferUsageFlagBits::eShaderDeviceAddress;
+}
+
+export [[nodiscard]] auto
+get_buffer_device_address(const vk::raii::Device& device, vk::Buffer buffer)
+  -> vk::DeviceAddress
+{
+  return device.getBufferAddress({
+    .buffer = buffer,
+  });
 }
 
 export template<buffer_kind Kind>
@@ -381,9 +396,13 @@ public:
       };
     }
     const auto extent = (size == vk::WholeSize) ? (size_ - offset) : size;
-    const auto base = get_buffer_device_Address(device.device(), buffer());
-    return buffer_view<Kind, T, addressed> { buffer(), offset, extent,
-      addressed { .value = base + offset } };
+    const auto base = get_buffer_device_address(device.device(), buffer());
+    return buffer_view<Kind, T, addressed> {
+      buffer(),
+      offset,
+      extent,
+      addressed { .value = base + offset },
+    };
   }
 
   explicit buffer_resource(typename Alloc::buffer_handle&& handle,
@@ -686,15 +705,6 @@ make_device_address_buffer(Alloc& allocator, vk::DeviceSize size,
   std::span<const std::uint32_t> sharing_families = {})
   -> std::expected<device_address_buffer, error_t>
 { return device_address_buffer::create(allocator, size, sharing_families); }
-
-export [[nodiscard]] auto
-get_buffer_device_address(const vk::raii::Device& device, vk::Buffer buffer)
-  -> vk::DeviceAddress
-{
-  return device.getBufferAddress({
-    .buffer = buffer,
-  });
-}
 
 export [[nodiscard]] constexpr auto
 align_up(vk::DeviceSize value, vk::DeviceSize alignment) -> vk::DeviceSize

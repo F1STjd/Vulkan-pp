@@ -401,10 +401,10 @@ private:
     std::array<vk::DescriptorSetAndBindingMappingEXT, Regions::count>
       mappings {};
 
-    for (auto index : std::views::indices(Regions::count))
+    const auto emit_mapping = [ & ]<std::size_t index>()
     {
-      const logical_resource_role role = Regions::roles[ index ];
-      const auto binding = classic_binding_for(role);
+      constexpr logical_resource_role role = Regions::roles[ index ];
+      constexpr auto binding = classic_binding_for(role);
 
       switch (role)
       {
@@ -557,7 +557,11 @@ private:
         break;
       }
       }
-    }
+    };
+
+    [ & ]<std::size_t... Is>(std::index_sequence<Is...>)
+    { (emit_mapping.template operator()<Is>(), ...); }(
+      std::make_index_sequence<Regions::count> {});
 
     if (resource_uniform_base == unset || resource_storage_b1_base == unset ||
       resource_storage_b3_base == unset || resource_bindless_base == unset ||

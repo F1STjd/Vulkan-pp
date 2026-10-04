@@ -200,7 +200,7 @@ static_assert(offsetof(material_record_transmission_clearcoat,
                 clearcoat_normal_slot) == 104UZ);
 static_assert(offsetof(material_record_transmission_clearcoat, pad0) == 108UZ);
 
-export template<>
+template<>
 struct material_transport_traits<material_transport_core_spec>
 {
   using record_type = material_record_core;
@@ -220,7 +220,7 @@ struct material_transport_traits<material_transport_core_spec>
   static constexpr std::size_t offset_texture_presence_mask { 72UZ };
 };
 
-export template<>
+template<>
 struct material_transport_traits<material_transport_transmission_spec>
 {
   using record_type = material_record_transmission;
@@ -242,7 +242,7 @@ struct material_transport_traits<material_transport_transmission_spec>
   static constexpr std::size_t offset_transmission_slot { 80UZ };
 };
 
-export template<>
+template<>
 struct material_transport_traits<material_transport_clearcoat_spec>
 {
   using record_type = material_record_clearcoat;
@@ -268,7 +268,7 @@ struct material_transport_traits<material_transport_clearcoat_spec>
   static constexpr std::size_t offset_clearcoat_normal_slot = 96UZ;
 };
 
-export template<>
+template<>
 struct material_transport_traits<material_transport_transmission_clearcoat_spec>
 {
   using record_type = material_record_transmission_clearcoat;

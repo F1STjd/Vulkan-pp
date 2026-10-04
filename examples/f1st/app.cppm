@@ -190,7 +190,7 @@ struct histogram_push_cpu
   std::uint32_t extent_x;
   std::uint32_t extent_y;
   std::uint32_t bin_count;
-  std::uint32_t _;
+  std::uint32_t _ {};
   std::uint64_t device_address;
 };
 static_assert(sizeof(histogram_push_cpu) == 24UZ);
@@ -1536,7 +1536,6 @@ private:
     for (auto index : std::views::indices(max_frames_in_flight))
     {
       frames_[ index ].descriptor_set = set;
-      const vk::DescriptorSet set = frames_[ index ].descriptor_set;
     }
     vkpp::write_uniform_buffer_dynamic(device_.device(), set, 0U,
       uniform_ring_.buffer(), sizeof(uniform_buffer_object));
@@ -1948,7 +1947,8 @@ private:
 
   void
   record_draw_item(vk::raii::CommandBuffer& command_buffer,
-    std::uint32_t draw_index, const vkpp::graphics_pipeline& pipeline)
+    std::uint32_t draw_index,
+    [[maybe_unused]] const vkpp::graphics_pipeline& pipeline)
     requires(Backend == vkpp::descriptor_table_backend::heap)
   {
     const auto& item = draw_list_[ draw_index ];
@@ -2225,35 +2225,26 @@ private:
   auto
   reupload_materials_from_slots() -> std::expected<void, vkpp::error_t>
   {
-    const auto same_texture_reference =
-      [](const vkpp::gltf::texture_ref_cpu& lhs,
-        const vkpp::gltf::texture_ref_cpu& rhs) -> bool
-    {
-      return lhs.image_index == rhs.image_index &&
-        lhs.basisu_image_index == rhs.basisu_image_index &&
-        lhs.sampler_index == rhs.sampler_index;
-    };
-
     const auto resolve_slot =
-      [ & ](const std::optional<vkpp::gltf::texture_ref_cpu>& ref,
+      [ & ](const std::optional<vkpp::gltf::texture_use_cpu>& use,
         std::uint32_t bit,
         std::uint32_t& mask) -> std::expected<std::uint32_t, vkpp::error_t>
     {
-      if (!ref.has_value()) { return 0U; }
-      for (auto texture_index : std::views::indices(gltf_textures_.size()))
+      if (!use.has_value()) { return 0U; }
+      if (use->texture_index >= texture_bindless_slots_.size())
       {
-        if (!same_texture_reference(*ref, gltf_textures_[ texture_index ]))
-        {
-          continue;
-        }
-        if (texture_bindless_slots_[ texture_index ] == ~0U) { break; }
-        mask |= bit;
-        return texture_bindless_slots_[ texture_index ];
+        return std::unexpected {
+          vkpp::make_app_error(vkpp::app_error_code::out_of_range),
+        };
       }
-
-      return std::unexpected {
-        vkpp::make_app_error(vkpp::app_error_code::invalid_state),
-      };
+      if (texture_bindless_slots_[ use->texture_index ] == ~0U)
+      {
+        return std::unexpected {
+          vkpp::make_app_error(vkpp::app_error_code::invalid_state),
+        };
+      }
+      mask |= bit;
+      return texture_bindless_slots_[ use->texture_index ];
     };
 
     std::vector<material_gpu> materials_gpu {};
@@ -2413,9 +2404,9 @@ private:
       if (texture_bindless_image_indices_[ texture_index ] == ~0U) { continue; }
       if (texture_bindless_slots_[ texture_index ] != ~0U) { continue; }
       const auto image_index = texture_bindless_image_indices_[ texture_index ];
-      const auto slot = bindless_table_.register_bindless_cis(
-        texture_bindless_samplers_[ texture_index ],
-        texture_sampler_infos_[ texture_index ], textures_[ image_index ]);
+      const auto slot =
+        register_bindless_cis(texture_bindless_samplers_[ texture_index ],
+          texture_sampler_infos_[ texture_index ], textures_[ image_index ]);
       if (!slot)
       {
         if (slot.error().domain == vkpp::error_domain::application &&
@@ -2705,9 +2696,10 @@ private:
     std::array<float, 16> world {};
     std::array<float, 12> normal_matrix_columns {};
     std::uint32_t material_index {};
-    std::uint32_t _;
-    std::uint32_t _;
-    std::uint32_t _;
+
+    std::uint32_t _ {};
+    std::uint32_t _ {};
+    std::uint32_t _ {};
   };
   static_assert(sizeof(draw_gpu) == 128UZ);
 
@@ -2758,9 +2750,9 @@ private:
     std::uint32_t has_texture_mask { 0U };
     material_gpu_transmission transmission {};
     material_gpu_clearcoat clearcoat {};
-    std::uint32_t _;
-    std::uint32_t _;
-    std::uint32_t _;
+    std::uint32_t _ {};
+    std::uint32_t _ {};
+    std::uint32_t _ {};
   };
   static_assert(sizeof(material_gpu) == 112UZ);
 
