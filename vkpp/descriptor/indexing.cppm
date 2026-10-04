@@ -72,13 +72,276 @@ public:
     sampler_compute_base_ { sampler_compute_base }, mappings_ { mappings }
   {}
 
-  template<class PushLayout, class Regions>
+  template<class PushLayout, class Regions, class DiagnosticsPolicy>
   [[nodiscard]] static auto
   create(const vk::raii::Device& device,
     const vk::raii::PhysicalDevice& physical, vma_policy& allocator,
     const selected_device_capabilities& capabilities,
     const descriptor_heap_arena_create_info& create_info,
-    std::optional<diagnostic_buffer&> diagnostics = {})
+    [[maybe_unused]] diagnostic_buffer& diagnostics)
+    -> std::expected<descriptor_heap_arena, error_t>
+    requires(PushLayout::field_count >= 1UZ && Regions::count >= 1UZ &&
+      DiagnosticsPolicy::enabled)
+  {
+    return create_impl<PushLayout, Regions>(
+      device, physical, allocator, capabilities, create_info);
+  }
+
+  template<class PushLayout, class Regions, class DiagnosticsPolicy>
+  [[nodiscard]] static auto
+  create(const vk::raii::Device& device,
+    const vk::raii::PhysicalDevice& physical, vma_policy& allocator,
+    const selected_device_capabilities& capabilities,
+    const descriptor_heap_arena_create_info& create_info)
+    -> std::expected<descriptor_heap_arena, error_t>
+    requires(PushLayout::field_count >= 1UZ && Regions::count >= 1UZ &&
+      !DiagnosticsPolicy::enabled)
+  {
+    return create_impl<PushLayout, Regions>(
+      device, physical, allocator, capabilities, create_info);
+  }
+
+  void
+  bind(vk::raii::CommandBuffer& command_buffer) const
+  {
+    const vk::BindHeapInfoEXT sampler_info {
+      .heapRange = {
+        .address = sampler_heap_address_,
+        .size = sampler_heap_size_,
+      },
+      .reservedRangeOffset = sampler_reserved_offset_,
+      .reservedRangeSize = sampler_reserved_size_,
+    };
+    const vk::BindHeapInfoEXT resource_info {
+      .heapRange = {
+        .address = resource_heap_address_,
+        .size = resource_heap_size_,
+      },
+      .reservedRangeOffset = resource_reserved_offset_,
+      .reservedRangeSize = resource_reserved_size_,
+    };
+    command_buffer.bindSamplerHeapEXT(sampler_info);
+    command_buffer.bindSamplerHeapEXT(resource_info);
+  }
+
+  [[nodiscard]] auto
+  mapping() const -> std::span<const vk::DescriptorSetAndBindingMappingEXT>
+  { return mappings_; }
+
+  [[nodiscard]] auto
+  shader_and_mapping_info() const
+    -> vk::ShaderDescriptorSetAndBindingMappingInfoEXT
+  {
+    return vk::ShaderDescriptorSetAndBindingMappingInfoEXT {
+      .mappingCount = static_cast<std::uint32_t>(mappings_.size()),
+      .pMappings = mappings_.data(),
+    };
+  }
+
+  [[nodiscard]] auto
+  acquire_bindless_index() -> std::optional<std::uint32_t>
+  {
+    if (!free_list_.empty())
+    {
+      const auto index = free_list_.back();
+      free_list_.pop_back();
+      return index;
+    }
+    if (next_bindless_index_ >= bindless_capacity_) { return std::nullopt; }
+    return next_bindless_index_++;
+  }
+
+  void
+  release_bindless_index(
+    std::uint32_t index, std::uint64_t earliest_reuse_timeline_value)
+  { pending_retire_.emplace_back(index, earliest_reuse_timeline_value); }
+
+  void
+  retire(std::uint64_t completed_timeline_value)
+  {
+    const auto split = std::ranges::stable_partition(pending_retire_,
+      [ completed_timeline_value ](
+        const std::pair<std::uint32_t, std::uint64_t>& entry) -> bool
+      { return entry.second > completed_timeline_value; });
+    for (const auto& entry : split)
+    {
+      free_list_.push_back(entry.first);
+    }
+    pending_retire_.erase(split.begin(), split.end());
+  }
+
+  [[nodiscard]] auto
+  write_bindless_cis(const vk::raii::Device& device, std::uint32_t index,
+    const vk::SamplerCreateInfo& sampler_info,
+    const vk::ImageViewCreateInfo& view_info,
+    vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal)
+    -> std::expected<void, error_t>
+  {
+    if (index >= bindless_capacity_)
+    {
+      return std::unexpected { make_app_error(app_error_code::out_of_range) };
+    }
+    auto* const sampler_base = static_cast<std::byte*>(sampler_heap_.mapped());
+    auto* const resource_base =
+      static_cast<std::byte*>(resource_heap_.mapped());
+    if (sampler_base == nullptr || resource_base == nullptr)
+    {
+      return std::unexpected { make_app_error(app_error_code::mapping_failed) };
+    }
+    const vk::HostAddressRangeEXT sampler_range {
+      .address = sampler_base + sampler_bindless_base_ +
+        index * sampler_descriptor_size_,
+      .size = static_cast<std::uint32_t>(sampler_descriptor_size_),
+    };
+    const vk::HostAddressRangeEXT resource_range {
+      .address = resource_base + resource_bindless_base_ +
+        index * image_descriptor_size_,
+      .size = static_cast<std::uint32_t>(image_descriptor_size_),
+    };
+    const vk::ImageDescriptorInfoEXT image_descriptor {
+      .pView = &view_info,
+      .layout = layout,
+    };
+    const vk::ResourceDescriptorInfoEXT resource_info {
+      .type = vk::DescriptorType::eSampledImage,
+      .data = &image_descriptor,
+    };
+    return map_vk_error(
+      device.writeSamplerDescriptorsEXT({ sampler_info }, { sampler_range }))
+      .and_then(
+        [ & ]() -> std::expected<void, error_t>
+        {
+          return map_vk_error(device.writeResourceDescriptorsEXT(
+            { resource_info }, { resource_range }));
+        });
+  }
+
+  template<buffer_kind Kind, class T>
+  [[nodiscard]] auto
+  write_uniform_slot(const vk::raii::Device& device, std::uint32_t frame_index,
+    const buffer_view<Kind, T, addressed>& view) -> std::expected<void, error_t>
+  {
+    if (frame_index >= frames_in_flight_)
+    {
+      return std::unexpected { make_app_error(app_error_code::out_of_range) };
+    }
+    auto* const resource_base =
+      static_cast<std::byte*>(resource_heap_.mapped());
+    if (resource_base == nullptr)
+    {
+      return std::unexpected { make_app_error(app_error_code::mapping_failed) };
+    }
+    const vk::DeviceAddressRangeEXT address_range {
+      .address = view.device_address(),
+      .size = view.size(),
+    };
+    const vk::ResourceDescriptorInfoEXT resource_info {
+      .type = vk::DescriptorType::eUniformBuffer,
+      .data = &address_range,
+    };
+    const vk::HostAddressRangeEXT host_range {
+      .address = resource_base + resource_uniform_base_ +
+        frame_index * uniform_descriptor_size_,
+      .size = static_cast<std::uint32_t>(uniform_descriptor_size_),
+    };
+    return map_vk_error(
+      device.writeResourceDescriptorsEXT({ resource_info }, { host_range }));
+  }
+
+  template<buffer_kind Kind, class T>
+  [[nodiscard]] auto
+  write_storage_binding(const vk::raii::Device& device, std::uint32_t binding,
+    const buffer_view<Kind, T, addressed>& view) -> std::expected<void, error_t>
+  {
+    const vk::DeviceSize base = //
+      (binding == 1U)   ? resource_storage_b1_base_
+      : (binding == 3U) ? resource_storage_b3_base_
+                        : vk::DeviceSize { ~0ULL };
+    if (base == vk::DeviceSize { ~0ULL })
+    {
+      return std::unexpected { make_app_error(app_error_code::out_of_range) };
+    }
+    auto* const resource_base =
+      static_cast<std::byte*>(resource_heap_.mapped());
+    if (resource_base == nullptr)
+    {
+      return std::unexpected { make_app_error(app_error_code::mapping_failed) };
+    }
+    const vk::DeviceAddressRangeEXT address_range {
+      .address = view.device_address(),
+      .size = view.size(),
+    };
+    const vk::ResourceDescriptorInfoEXT resource_info {
+      .type = vk::DescriptorType::eStorageBuffer,
+      .data = &address_range,
+    };
+    const vk::HostAddressRangeEXT host_range {
+      .address = resource_base + base,
+      .size = static_cast<std::uint32_t>(buffer_descriptor_size_),
+    };
+    return map_vk_error(
+      device.writeResourceDescriptorsEXT({ resource_info }, { host_range }));
+  }
+
+  enum class fixed_cis_region : std::uint8_t
+  {
+    ibl,
+    compute
+  };
+
+  [[nodiscard]] auto
+  write_fixed_cis(const vk::raii::Device& device, fixed_cis_region region,
+    const vk::SamplerCreateInfo& sampler_info,
+    const vk::ImageViewCreateInfo& view_info,
+    vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal)
+    -> std::expected<void, error_t>
+  {
+    const vk::DeviceSize sampler_base_off = (region == fixed_cis_region::ibl)
+      ? sampler_ibl_base_
+      : sampler_compute_base_;
+    const vk::DeviceSize resource_base_off = (region == fixed_cis_region::ibl)
+      ? resource_ibl_base_
+      : resource_compute_base_;
+    auto* const sampler_base = static_cast<std::byte*>(sampler_heap_.mapped());
+    auto* const resource_base =
+      static_cast<std::byte*>(resource_heap_.mapped());
+    if (sampler_base == nullptr || resource_base == nullptr)
+    {
+      return std::unexpected { make_app_error(app_error_code::mapping_failed) };
+    }
+    const vk::HostAddressRangeEXT sampler_range {
+      .address = sampler_base + sampler_base_off,
+      .size = static_cast<std::uint32_t>(sampler_descriptor_size_),
+    };
+    const vk::HostAddressRangeEXT resource_range {
+      .address = resource_base + resource_base_off,
+      .size = static_cast<std::uint32_t>(image_descriptor_size_),
+    };
+    const vk::ImageDescriptorInfoEXT image_descriptor {
+      .pView = &view_info,
+      .layout = layout,
+    };
+    const vk::ResourceDescriptorInfoEXT resource_info {
+      .type = vk::DescriptorType::eSampledImage,
+      .data = &image_descriptor,
+    };
+    return map_vk_error(
+      device.writeSamplerDescriptorsEXT({ sampler_info }, { sampler_range }))
+      .and_then(
+        [ & ]() -> std::expected<void, error_t>
+        {
+          return map_vk_error(device.writeResourceDescriptorsEXT(
+            { resource_info }, { resource_range }));
+        });
+  }
+
+private:
+  template<class PushLayout, class Regions>
+  [[nodiscard]] static auto
+  create_impl(const vk::raii::Device& device,
+    const vk::raii::PhysicalDevice& physical, vma_policy& allocator,
+    const selected_device_capabilities& capabilities,
+    const descriptor_heap_arena_create_info& create_info)
     -> std::expected<descriptor_heap_arena, error_t>
     requires(PushLayout::field_count >= 1UZ && Regions::count >= 1UZ)
   {
@@ -387,241 +650,6 @@ public:
         });
   }
 
-  void
-  bind(vk::raii::CommandBuffer& command_buffer) const
-  {
-    const vk::BindHeapInfoEXT sampler_info {
-      .heapRange = {
-        .address = sampler_heap_address_,
-        .size = sampler_heap_size_,
-      },
-      .reservedRangeOffset = sampler_reserved_offset_,
-      .reservedRangeSize = sampler_reserved_size_,
-    };
-    const vk::BindHeapInfoEXT resource_info {
-      .heapRange = {
-        .address = resource_heap_address_,
-        .size = resource_heap_size_,
-      },
-      .reservedRangeOffset = resource_reserved_offset_,
-      .reservedRangeSize = resource_reserved_size_,
-    };
-    command_buffer.bindSamplerHeapEXT(sampler_info);
-    command_buffer.bindSamplerHeapEXT(resource_info);
-  }
-
-  [[nodiscard]] auto
-  mapping() const -> std::span<const vk::DescriptorSetAndBindingMappingEXT>
-  { return mappings_; }
-
-  [[nodiscard]] auto
-  shader_and_mapping_info() const
-    -> vk::ShaderDescriptorSetAndBindingMappingInfoEXT
-  {
-    return vk::ShaderDescriptorSetAndBindingMappingInfoEXT {
-      .mappingCount = static_cast<std::uint32_t>(mappings_.size()),
-      .pMappings = mappings_.data(),
-    };
-  }
-
-  [[nodiscard]] auto
-  acquire_bindless_index() -> std::optional<std::uint32_t>
-  {
-    if (!free_list_.empty())
-    {
-      const auto index = free_list_.back();
-      free_list_.pop_back();
-      return index;
-    }
-    if (next_bindless_index_ >= bindless_capacity_) { return std::nullopt; }
-    return next_bindless_index_++;
-  }
-
-  void
-  release_bindless_index(
-    std::uint32_t index, std::uint64_t earliest_reuse_timeline_value)
-  { pending_retire_.emplace_back(index, earliest_reuse_timeline_value); }
-
-  void
-  retire(std::uint64_t completed_timeline_value)
-  {
-    const auto split = std::ranges::stable_partition(pending_retire_,
-      [ completed_timeline_value ](
-        const std::pair<std::uint32_t, std::uint64_t>& entry) -> bool
-      { return entry.second > completed_timeline_value; });
-    for (const auto& entry : split)
-    {
-      free_list_.push_back(entry.first);
-    }
-    pending_retire_.erase(split.begin(), split.end());
-  }
-
-  [[nodiscard]] auto
-  write_bindless_cis(const vk::raii::Device& device, std::uint32_t index,
-    const vk::SamplerCreateInfo& sampler_info,
-    const vk::ImageViewCreateInfo& view_info,
-    vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal)
-    -> std::expected<void, error_t>
-  {
-    if (index >= bindless_capacity_)
-    {
-      return std::unexpected { make_app_error(app_error_code::out_of_range) };
-    }
-    auto* const sampler_base = static_cast<std::byte*>(sampler_heap_.mapped());
-    auto* const resource_base =
-      static_cast<std::byte*>(resource_heap_.mapped());
-    if (sampler_base == nullptr || resource_base == nullptr)
-    {
-      return std::unexpected { make_app_error(app_error_code::mapping_failed) };
-    }
-    const vk::HostAddressRangeEXT sampler_range {
-      .address = sampler_base + sampler_bindless_base_ +
-        index * sampler_descriptor_size_,
-      .size = static_cast<std::uint32_t>(sampler_descriptor_size_),
-    };
-    const vk::HostAddressRangeEXT resource_range {
-      .address = resource_base + resource_bindless_base_ +
-        index * image_descriptor_size_,
-      .size = static_cast<std::uint32_t>(image_descriptor_size_),
-    };
-    const vk::ImageDescriptorInfoEXT image_descriptor {
-      .pView = &view_info,
-      .layout = layout,
-    };
-    const vk::ResourceDescriptorInfoEXT resource_info {
-      .type = vk::DescriptorType::eSampledImage,
-      .data = &image_descriptor,
-    };
-    return map_vk_error(
-      device.writeSamplerDescriptorsEXT({ sampler_info }, { sampler_range }))
-      .and_then(
-        [ & ]() -> std::expected<void, error_t>
-        {
-          return map_vk_error(device.writeResourceDescriptorsEXT(
-            { resource_info }, { resource_range }));
-        });
-  }
-
-  template<buffer_kind Kind, class T>
-  [[nodiscard]] auto
-  write_uniform_slot(const vk::raii::Device& device, std::uint32_t frame_index,
-    const buffer_view<Kind, T, addressed>& view) -> std::expected<void, error_t>
-  {
-    if (frame_index >= frames_in_flight_)
-    {
-      return std::unexpected { make_app_error(app_error_code::out_of_range) };
-    }
-    auto* const resource_base =
-      static_cast<std::byte*>(resource_heap_.mapped());
-    if (resource_base == nullptr)
-    {
-      return std::unexpected { make_app_error(app_error_code::mapping_failed) };
-    }
-    const vk::DeviceAddressRangeEXT address_range {
-      .address = view.device_address(),
-      .size = view.size(),
-    };
-    const vk::ResourceDescriptorInfoEXT resource_info {
-      .type = vk::DescriptorType::eUniformBuffer,
-      .data = &address_range,
-    };
-    const vk::HostAddressRangeEXT host_range {
-      .address = resource_base + resource_uniform_base_ +
-        frame_index * uniform_descriptor_size_,
-      .size = static_cast<std::uint32_t>(uniform_descriptor_size_),
-    };
-    return map_vk_error(
-      device.writeResourceDescriptorsEXT({ resource_info }, { host_range }));
-  }
-
-  template<buffer_kind Kind, class T>
-  [[nodiscard]] auto
-  write_storage_binding(const vk::raii::Device& device, std::uint32_t binding,
-    const buffer_view<Kind, T, addressed>& view) -> std::expected<void, error_t>
-  {
-    const vk::DeviceSize base = //
-      (binding == 1U)   ? resource_storage_b1_base_
-      : (binding == 3U) ? resource_storage_b3_base_
-                        : vk::DeviceSize { ~0ULL };
-    if (base == vk::DeviceSize { ~0ULL })
-    {
-      return std::unexpected { make_app_error(app_error_code::out_of_range) };
-    }
-    auto* const resource_base =
-      static_cast<std::byte*>(resource_heap_.mapped());
-    if (resource_base == nullptr)
-    {
-      return std::unexpected { make_app_error(app_error_code::mapping_failed) };
-    }
-    const vk::DeviceAddressRangeEXT address_range {
-      .address = view.device_address(),
-      .size = view.size(),
-    };
-    const vk::ResourceDescriptorInfoEXT resource_info {
-      .type = vk::DescriptorType::eStorageBuffer,
-      .data = &address_range,
-    };
-    const vk::HostAddressRangeEXT host_range {
-      .address = resource_base + base,
-      .size = static_cast<std::uint32_t>(buffer_descriptor_size_),
-    };
-    return map_vk_error(
-      device.writeResourceDescriptorsEXT({ resource_info }, { host_range }));
-  }
-
-  enum class fixed_cis_region : std::uint8_t
-  {
-    ibl,
-    compute
-  };
-
-  [[nodiscard]] auto
-  write_fixed_cis(const vk::raii::Device& device, fixed_cis_region region,
-    const vk::SamplerCreateInfo& sampler_info,
-    const vk::ImageViewCreateInfo& view_info,
-    vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal)
-    -> std::expected<void, error_t>
-  {
-    const vk::DeviceSize sampler_base_off = (region == fixed_cis_region::ibl)
-      ? sampler_ibl_base_
-      : sampler_compute_base_;
-    const vk::DeviceSize resource_base_off = (region == fixed_cis_region::ibl)
-      ? resource_ibl_base_
-      : resource_compute_base_;
-    auto* const sampler_base = static_cast<std::byte*>(sampler_heap_.mapped());
-    auto* const resource_base =
-      static_cast<std::byte*>(resource_heap_.mapped());
-    if (sampler_base == nullptr || resource_base == nullptr)
-    {
-      return std::unexpected { make_app_error(app_error_code::mapping_failed) };
-    }
-    const vk::HostAddressRangeEXT sampler_range {
-      .address = sampler_base + sampler_base_off,
-      .size = static_cast<std::uint32_t>(sampler_descriptor_size_),
-    };
-    const vk::HostAddressRangeEXT resource_range {
-      .address = resource_base + resource_base_off,
-      .size = static_cast<std::uint32_t>(image_descriptor_size_),
-    };
-    const vk::ImageDescriptorInfoEXT image_descriptor {
-      .pView = &view_info,
-      .layout = layout,
-    };
-    const vk::ResourceDescriptorInfoEXT resource_info {
-      .type = vk::DescriptorType::eSampledImage,
-      .data = &image_descriptor,
-    };
-    return map_vk_error(
-      device.writeSamplerDescriptorsEXT({ sampler_info }, { sampler_range }))
-      .and_then(
-        [ & ]() -> std::expected<void, error_t>
-        {
-          return map_vk_error(device.writeResourceDescriptorsEXT(
-            { resource_info }, { resource_range }));
-        });
-  }
-
-private:
   vma_policy::buffer_handle sampler_heap_ {};
   vma_policy::buffer_handle resource_heap_ {};
   vk::DeviceAddress sampler_heap_address_ {};

@@ -16,6 +16,16 @@ export enum class diagnostic_severity : std::uint8_t {
   verbose,
 };
 
+export struct diagnostics_on
+{
+  static constexpr bool enabled { true };
+};
+
+export struct diagnostics_off
+{
+  static constexpr bool enabled { false };
+};
+
 export struct diagnostic_record
 {
   diagnostic_severity severity { diagnostic_severity::error };

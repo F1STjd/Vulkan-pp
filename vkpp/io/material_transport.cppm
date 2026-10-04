@@ -303,6 +303,7 @@ struct material_transport_cpu
   std::uint32_t default_material_index {};
 };
 
+template<class DiagnosticsPolicy>
 [[nodiscard]] auto
 resolve_texture_use_slot(const std::optional<texture_use_cpu>& use,
   std::span<const texture_role_slots> texture_slots, std::uint32_t mask_bit,
@@ -313,7 +314,7 @@ resolve_texture_use_slot(const std::optional<texture_use_cpu>& use,
   if (!use.has_value()) { return 0U; }
   if (use->texture_index >= texture_slots.size())
   {
-    if (diagnostics.has_value())
+    if constexpr (DiagnosticsPolicy::enabled)
     {
       diagnostics->report(diagnostic_severity::error,
         make_app_error(app_error_code::out_of_range), location,
@@ -324,7 +325,7 @@ resolve_texture_use_slot(const std::optional<texture_use_cpu>& use,
   }
   if (use->texcoord_index != 0U)
   {
-    if (diagnostics.has_value())
+    if constexpr (DiagnosticsPolicy::enabled)
     {
       diagnostics->report(diagnostic_severity::error,
         make_app_error(app_error_code::unsupported_operation), location,
@@ -340,7 +341,7 @@ resolve_texture_use_slot(const std::optional<texture_use_cpu>& use,
     use->color_space == image_color_space::srgb ? slots.srgb : slots.linear;
   if (!slot.has_value())
   {
-    if (diagnostics.has_value())
+    if constexpr (DiagnosticsPolicy::enabled)
     {
       diagnostics->report(diagnostic_severity::error,
         make_app_error(app_error_code::invalid_state), location,
@@ -353,7 +354,7 @@ resolve_texture_use_slot(const std::optional<texture_use_cpu>& use,
   return *slot;
 }
 
-template<material_transport_spec Spec>
+template<material_transport_spec Spec, class DiagnosticsPolicy>
 [[nodiscard]] auto
 extension_bags_supported(const material_cpu& material,
   std::optional<diagnostic_buffer&> diagnostics,
@@ -364,7 +365,7 @@ extension_bags_supported(const material_cpu& material,
                         std::string_view what) -> std::expected<void, error_t>
   {
     if (!bad) { return {}; }
-    if (diagnostics.has_value())
+    if constexpr (DiagnosticsPolicy::enabled)
     {
       diagnostics->report(diagnostic_severity::error,
         make_app_error(app_error_code::unsupported_operation), location,
@@ -401,7 +402,7 @@ extension_bags_supported(const material_cpu& material,
   return {};
 }
 
-template<typename Record>
+template<typename Record, class DiagnosticsPolicy>
 [[nodiscard]] auto
 fill_common_fields(Record& record, const material_cpu& material,
   std::span<const texture_role_slots> texture_slots,
@@ -421,42 +422,46 @@ fill_common_fields(Record& record, const material_cpu& material,
   record.alpha_mode = static_cast<std::uint32_t>(material.alpha_mode);
   record.texture_presence_mask = 0U;
 
-  auto base_color_slot = resolve_texture_use_slot(material.base_color_texture,
-    texture_slots, 0U, record.texture_presence_mask, diagnostics);
+  auto base_color_slot =
+    resolve_texture_use_slot<DiagnosticsPolicy>(material.base_color_texture,
+      texture_slots, 0U, record.texture_presence_mask, diagnostics);
   if (!base_color_slot) { return std::unexpected { base_color_slot.error() }; }
   record.base_color_slot = *base_color_slot;
 
-  auto metallic_roughness_slot =
-    resolve_texture_use_slot(material.metallic_roughness_texture, texture_slots,
-      1U, record.texture_presence_mask, diagnostics);
+  auto metallic_roughness_slot = resolve_texture_use_slot<DiagnosticsPolicy>(
+    material.metallic_roughness_texture, texture_slots, 1U,
+    record.texture_presence_mask, diagnostics);
   if (!metallic_roughness_slot)
   {
     return std::unexpected { metallic_roughness_slot.error() };
   }
   record.metallic_roughness_slot = *metallic_roughness_slot;
 
-  auto normal_slot = resolve_texture_use_slot(material.normal_texture,
-    texture_slots, 2U, record.texture_presence_mask, diagnostics);
+  auto normal_slot =
+    resolve_texture_use_slot<DiagnosticsPolicy>(material.normal_texture,
+      texture_slots, 2U, record.texture_presence_mask, diagnostics);
   if (!normal_slot) { return std::unexpected { normal_slot.error() }; }
   record.normal_slot = *normal_slot;
 
-  auto occlusion_slot = resolve_texture_use_slot(material.occlusion_texture,
-    texture_slots, 3U, record.texture_presence_mask, diagnostics);
+  auto occlusion_slot =
+    resolve_texture_use_slot<DiagnosticsPolicy>(material.occlusion_texture,
+      texture_slots, 3U, record.texture_presence_mask, diagnostics);
   if (!occlusion_slot) { return std::unexpected { occlusion_slot.error() }; }
   record.occlusion_slot = *occlusion_slot;
 
-  auto emissive_slot = resolve_texture_use_slot(material.emissive_texture,
-    texture_slots, 4U, record.texture_presence_mask, diagnostics);
+  auto emissive_slot =
+    resolve_texture_use_slot<DiagnosticsPolicy>(material.emissive_texture,
+      texture_slots, 4U, record.texture_presence_mask, diagnostics);
   if (!emissive_slot) { return std::unexpected { emissive_slot.error() }; }
   record.emissive_slot = *emissive_slot;
   return {};
 }
 
-export template<material_transport_spec Spec>
+template<material_transport_spec Spec, class DiagnosticsPolicy>
 [[nodiscard]] auto
-pack_material_records(std::span<const material_cpu> materials,
+pack_material_records_impl(std::span<const material_cpu> materials,
   std::span<const texture_role_slots> texture_slots,
-  std::optional<diagnostic_buffer&> diagnostics = {})
+  std::optional<diagnostic_buffer&> diagnostics)
   -> std::expected<material_transport_cpu<Spec>, error_t>
 {
   using traits = material_transport_traits<Spec>;
@@ -467,15 +472,16 @@ pack_material_records(std::span<const material_cpu> materials,
 
   for (const auto& material : materials)
   {
-    if (auto supported = extension_bags_supported<Spec>(material, diagnostics);
+    if (auto supported = extension_bags_supported<Spec, DiagnosticsPolicy>(
+          material, diagnostics);
       !supported)
     {
       return std::unexpected { supported.error() };
     }
 
     record_type record {};
-    if (auto filled =
-          fill_common_fields(record, material, texture_slots, diagnostics);
+    if (auto filled = fill_common_fields<record_type, DiagnosticsPolicy>(
+          record, material, texture_slots, diagnostics);
       !filled)
     {
       return std::unexpected { filled.error() };
@@ -484,9 +490,9 @@ pack_material_records(std::span<const material_cpu> materials,
     if constexpr (Spec.transmission)
     {
       record.transmission_factor = material.transmission.factor;
-      auto transmission =
-        resolve_texture_use_slot(material.transmission.texture, texture_slots,
-          5U, record.texture_presence_mask, diagnostics);
+      auto transmission = resolve_texture_use_slot<DiagnosticsPolicy>(
+        material.transmission.texture, texture_slots, 5U,
+        record.texture_presence_mask, diagnostics);
       if (!transmission) { return std::unexpected { transmission.error() }; }
       record.transmission_slot = *transmission;
     }
@@ -495,21 +501,22 @@ pack_material_records(std::span<const material_cpu> materials,
       record.clearcoat_factor = material.clearcoat.factor;
       record.clearcoat_roughness_factor = material.clearcoat.roughness_factor;
       record.clearcoat_normal_scale = material.clearcoat.normal_scale;
-      auto clearcoat = resolve_texture_use_slot(material.clearcoat.texture,
-        texture_slots, 6U, record.texture_presence_mask, diagnostics);
+      auto clearcoat =
+        resolve_texture_use_slot<DiagnosticsPolicy>(material.clearcoat.texture,
+          texture_slots, 6U, record.texture_presence_mask, diagnostics);
       if (!clearcoat) { return std::unexpected { clearcoat.error() }; }
       record.clearcoat_slot = *clearcoat;
-      auto clearcoat_roughness =
-        resolve_texture_use_slot(material.clearcoat.roughness_texture,
-          texture_slots, 7U, record.texture_presence_mask, diagnostics);
+      auto clearcoat_roughness = resolve_texture_use_slot<DiagnosticsPolicy>(
+        material.clearcoat.roughness_texture, texture_slots, 7U,
+        record.texture_presence_mask, diagnostics);
       if (!clearcoat_roughness)
       {
         return std::unexpected { clearcoat_roughness.error() };
       }
       record.clearcoat_roughness_slot = *clearcoat_roughness;
-      auto clearcoat_normal =
-        resolve_texture_use_slot(material.clearcoat.normal_texture,
-          texture_slots, 8U, record.texture_presence_mask, diagnostics);
+      auto clearcoat_normal = resolve_texture_use_slot<DiagnosticsPolicy>(
+        material.clearcoat.normal_texture, texture_slots, 8U,
+        record.texture_presence_mask, diagnostics);
       if (!clearcoat_normal)
       {
         return std::unexpected { clearcoat_normal.error() };
@@ -523,6 +530,29 @@ pack_material_records(std::span<const material_cpu> materials,
   out.records.push_back(record_type {});
   out.default_material_index = static_cast<std::uint32_t>(materials.size());
   return out;
+}
+
+export template<material_transport_spec Spec, class DiagnosticsPolicy>
+[[nodiscard]] auto
+pack_material_records(std::span<const material_cpu> materials,
+  std::span<const texture_role_slots> texture_slots,
+  diagnostic_buffer& diagnostics)
+  -> std::expected<material_transport_cpu<Spec>, error_t>
+  requires(DiagnosticsPolicy::enabled)
+{
+  return pack_material_records_impl<Spec, DiagnosticsPolicy>(
+    materials, texture_slots, diagnostics);
+}
+
+export template<material_transport_spec Spec, class DiagnosticsPolicy>
+[[nodiscard]] auto
+pack_material_records(std::span<const material_cpu> materials,
+  std::span<const texture_role_slots> texture_slots)
+  -> std::expected<material_transport_cpu<Spec>, error_t>
+  requires(!DiagnosticsPolicy::enabled)
+{
+  return pack_material_records_impl<Spec, DiagnosticsPolicy>(
+    materials, texture_slots, std::nullopt);
 }
 
 } // namespace vkpp::gltf

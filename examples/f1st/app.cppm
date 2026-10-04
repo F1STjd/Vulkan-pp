@@ -455,9 +455,9 @@ public:
         };
       }
       auto arena =
-        vkpp::descriptor_heap_arena::create<f1st_push_layout, f1st_regions>(
-          device_.device(), device_.physical_device(), device_.allocator(),
-          device_.selected_capabilities(),
+        vkpp::descriptor_heap_arena::create<f1st_push_layout, f1st_regions,
+          vkpp::diagnostics_on>(device_.device(), device_.physical_device(),
+          device_.allocator(), device_.selected_capabilities(),
           {
             .bindless_capacity = 1024U,
             .frames_in_flight = max_frames_in_flight,
