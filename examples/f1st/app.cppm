@@ -1044,23 +1044,21 @@ private:
     -> std::expected<void, vkpp::error_t>
     requires(Backend == vkpp::descriptor_table_backend::classic)
   {
+    vkpp::write_combined_image_sampler(device_.device(),
+      this->ibl_arena_.set(0U), 0U, sampler, *ibl_radiance_.view());
+    return {};
+  }
 
+  auto
+  write_ibl_radiance_cis(
+    vk::Sampler sampler, const vkpp::sampler_create_info& sampler_info)
+    -> std::expected<void, vkpp::error_t>
+    requires(Backend == vkpp::descriptor_table_backend::heap)
+  {
     return vkpp::write_fixed_cis(this->heap_arena_, device_.device(),
       device_.physical_device(),
       vkpp::descriptor_heap_arena::fixed_cis_region::ibl, sampler_info,
       ibl_radiance_);
-  }
-
-  auto
-  write_ibl_radiance_cis(vk::Sampler sampler,
-    [[maybe_unused]] const vkpp::sampler_create_info& sampler_info)
-    -> std::expected<void, vkpp::error_t>
-    requires(Backend == vkpp::descriptor_table_backend::heap)
-  {
-
-    vkpp::write_combined_image_sampler(device_.device(),
-      this->ibl_arena_.set(0U), 0U, sampler, *ibl_radiance_.view());
-    return {};
   }
 
   auto
@@ -1086,13 +1084,12 @@ private:
 
           textures_.clear();
           textures_.reserve(asset.host_images.size());
-          for (auto image_index : std::views::indices(asset.host_images.size()))
+          for (const auto& host : asset.host_images)
           {
-            const auto& host = asset.host_images[ image_index ];
             std::expected<vkpp::texture<>, vkpp::error_t> made;
-            if (host.decoded.has_value())
+            if (host.image.decoded.has_value())
             {
-              const auto& image = *host.decoded;
+              const auto& image = *host.image.decoded;
               made = vkpp::make_texture({
                 .device = device_,
                 .pool = upload_pool_,
@@ -1107,9 +1104,9 @@ private:
                 .stage_pool = stage_pool_,
               });
             }
-            else if (host.mip_chain.has_value())
+            else if (host.image.mip_chain.has_value())
             {
-              const auto& chain = *host.mip_chain;
+              const auto& chain = *host.image.mip_chain;
               made = vkpp::make_texture({
                 .device = device_,
                 .pool = upload_pool_,
@@ -1165,40 +1162,55 @@ private:
 
           materials_cpu_ = asset.materials;
           gltf_textures_ = asset.textures;
-          texture_bindless_slots_.assign(gltf_textures_.size(), ~0U);
-          texture_bindless_samplers_.assign(
-            gltf_textures_.size(), vk::Sampler {});
-          texture_bindless_image_indices_.assign(gltf_textures_.size(), ~0U);
+          host_images_ = asset.host_images;
+          texture_role_slots_.assign(gltf_textures_.size(), {});
+          texture_bindless_samplers_.assign(gltf_textures_.size(), {});
           texture_sampler_infos_.assign(gltf_textures_.size(), {});
-          for (auto texture_index : std::views::indices(gltf_textures_.size()))
+          for (auto host_index : std::views::indices(asset.host_images.size()))
           {
-            const auto& reference = gltf_textures_[ texture_index ];
-            const std::optional<std::uint32_t> image_index =
-              reference.basisu_image_index.has_value()
-              ? reference.basisu_image_index
-              : reference.image_index;
-            if (!image_index.has_value()) { continue; }
-            if (*image_index >= textures_.size())
+            const auto& host = asset.host_images[ host_index ];
+            if (host_index >= textures_.size())
             {
               return std::unexpected {
                 vkpp::make_app_error(vkpp::app_error_code::out_of_range),
               };
             }
 
-            auto sampler_create_info = sampler_create_info_for(reference);
-            if (!sampler_create_info)
+            for (auto texture_index :
+              std::views::indices(gltf_textures_.size()))
             {
-              return std::unexpected { sampler_create_info.error() };
+              const auto reference = gltf_textures_[ texture_index ];
+              const std::optional<std::uint32_t> source_index =
+                reference.basisu_image_index.has_value()
+                ? reference.basisu_image_index
+                : reference.image_index;
+              if (!source_index.has_value() ||
+                *source_index != host.source_index)
+              {
+                continue;
+              }
+              auto sampler_create_info = sampler_create_info_for(reference);
+              if (!sampler_create_info)
+              {
+                return std::unexpected { sampler_create_info.error() };
+              }
+              auto sampler =
+                sampler_cache_->get_or_create(*sampler_create_info);
+              if (!sampler) { return std::unexpected { sampler.error() }; }
+              const auto slot = register_bindless_cis(
+                *sampler, *sampler_create_info, textures_[ host_index ]);
+              if (!slot) { return std::unexpected { slot.error() }; }
+              if (host.color_space == vkpp::image_color_space::srgb)
+              {
+                texture_role_slots_[ texture_index ].srgb = *slot;
+              }
+              else
+              {
+                texture_role_slots_[ texture_index ].linear = *slot;
+              }
+              texture_bindless_samplers_[ texture_index ] = *sampler;
+              texture_sampler_infos_[ texture_index ] = *sampler_create_info;
             }
-            auto sampler = sampler_cache_->get_or_create(*sampler_create_info);
-            if (!sampler) { return std::unexpected { sampler.error() }; }
-            const auto slot = register_bindless_cis(
-              *sampler, *sampler_create_info, textures_[ *image_index ]);
-            if (!slot) { return std::unexpected { slot.error() }; }
-            texture_bindless_slots_[ texture_index ] = *slot;
-            texture_bindless_samplers_[ texture_index ] = *sampler;
-            texture_bindless_image_indices_[ texture_index ] = *image_index;
-            texture_sampler_infos_[ texture_index ] = *sampler_create_info;
           }
 
           std::vector<std::byte> radiance_bytes {};
@@ -2245,20 +2257,24 @@ private:
         std::uint32_t& mask) -> std::expected<std::uint32_t, vkpp::error_t>
     {
       if (!use.has_value()) { return 0U; }
-      if (use->texture_index >= texture_bindless_slots_.size())
+      if (use->texture_index >= texture_role_slots_.size())
       {
         return std::unexpected {
           vkpp::make_app_error(vkpp::app_error_code::out_of_range),
         };
       }
-      if (texture_bindless_slots_[ use->texture_index ] == ~0U)
+      const auto& slots = texture_role_slots_[ use->texture_index ];
+      const auto& slot = use->color_space == vkpp::image_color_space::srgb
+        ? slots.srgb
+        : slots.linear;
+      if (!slot.has_value())
       {
         return std::unexpected {
           vkpp::make_app_error(vkpp::app_error_code::invalid_state),
         };
       }
       mask |= bit;
-      return texture_bindless_slots_[ use->texture_index ];
+      return *slot;
     };
 
     std::vector<material_gpu> materials_gpu {};
@@ -2374,29 +2390,50 @@ private:
     requires(Backend == vkpp::descriptor_table_backend::classic)
   {
     bool all_acquired = true;
-    for (auto texture_index :
-      std::views::indices(texture_bindless_slots_.size()))
+    for (auto host_index : std::views::indices(host_images_.size()))
     {
-      if (texture_bindless_image_indices_[ texture_index ] == ~0U) { continue; }
-      if (texture_bindless_slots_[ texture_index ] != ~0U) { continue; }
-      const auto image_index = texture_bindless_image_indices_[ texture_index ];
-      const auto slot =
-        register_bindless_cis(texture_bindless_samplers_[ texture_index ],
-          texture_sampler_infos_[ texture_index ], textures_[ image_index ]);
-      if (!slot)
+      const auto& host = host_images_[ host_index ];
+      for (auto texture_index : std::views::indices(gltf_textures_.size()))
       {
-        if (slot.error().domain == vkpp::error_domain::application &&
-          slot.error().code ==
-            std::to_underlying(vkpp::app_error_code::capacity_exhausted))
+        const auto& reference = gltf_textures_[ texture_index ];
+        const std::optional<std::uint32_t> source_index =
+          reference.basisu_image_index.has_value()
+          ? reference.basisu_image_index
+          : reference.image_index;
+        if (!source_index.has_value() || *source_index != host.source_index)
         {
-          all_acquired = false;
-          break;
+          continue;
         }
-        return std::unexpected { slot.error() };
+        auto& role = texture_role_slots_[ texture_index ];
+        const bool need_srgb =
+          host.color_space == vkpp::image_color_space::srgb &&
+          !role.srgb.has_value();
+        const bool need_linear =
+          host.color_space == vkpp::image_color_space::linear &&
+          !role.linear.has_value();
+        if (!need_srgb && !need_linear) { continue; }
+        const auto slot =
+          register_bindless_cis(texture_bindless_samplers_[ texture_index ],
+            texture_sampler_infos_[ texture_index ], textures_[ host_index ]);
+        if (!slot)
+        {
+          if (slot.error().domain == vkpp::error_domain::application &&
+            slot.error().code ==
+              std::to_underlying(vkpp::app_error_code::capacity_exhausted))
+          {
+            all_acquired = false;
+            break;
+          }
+          return std::unexpected { slot.error() };
+        }
+        if (need_srgb) { role.srgb = *slot; }
+        else
+        {
+          role.linear = *slot;
+        }
       }
-      texture_bindless_slots_[ texture_index ] = *slot;
+      if (!all_acquired) { break; }
     }
-    if (!all_acquired) { return {}; }
     if (auto uploaded = reupload_materials_from_slots(); !uploaded)
     {
       return std::unexpected { uploaded.error() };
@@ -2412,29 +2449,50 @@ private:
     requires(Backend == vkpp::descriptor_table_backend::heap)
   {
     bool all_acquired = true;
-    for (auto texture_index :
-      std::views::indices(texture_bindless_slots_.size()))
+    for (auto host_index : std::views::indices(host_images_.size()))
     {
-      if (texture_bindless_image_indices_[ texture_index ] == ~0U) { continue; }
-      if (texture_bindless_slots_[ texture_index ] != ~0U) { continue; }
-      const auto image_index = texture_bindless_image_indices_[ texture_index ];
-      const auto slot =
-        register_bindless_cis(texture_bindless_samplers_[ texture_index ],
-          texture_sampler_infos_[ texture_index ], textures_[ image_index ]);
-      if (!slot)
+      const auto& host = host_images_[ host_index ];
+      for (auto texture_index : std::views::indices(gltf_textures_.size()))
       {
-        if (slot.error().domain == vkpp::error_domain::application &&
-          slot.error().code ==
-            std::to_underlying(vkpp::app_error_code::capacity_exhausted))
+        const auto& reference = gltf_textures_[ texture_index ];
+        const std::optional<std::uint32_t> source_index =
+          reference.basisu_image_index.has_value()
+          ? reference.basisu_image_index
+          : reference.image_index;
+        if (!source_index.has_value() || *source_index != host.source_index)
         {
-          all_acquired = false;
-          break;
+          continue;
         }
-        return std::unexpected { slot.error() };
+        auto& role = texture_role_slots_[ texture_index ];
+        const bool need_srgb =
+          host.color_space == vkpp::image_color_space::srgb &&
+          !role.srgb.has_value();
+        const bool need_linear =
+          host.color_space == vkpp::image_color_space::linear &&
+          !role.linear.has_value();
+        if (!need_srgb && !need_linear) { continue; }
+        const auto slot =
+          register_bindless_cis(texture_bindless_samplers_[ texture_index ],
+            texture_sampler_infos_[ texture_index ], textures_[ host_index ]);
+        if (!slot)
+        {
+          if (slot.error().domain == vkpp::error_domain::application &&
+            slot.error().code ==
+              std::to_underlying(vkpp::app_error_code::capacity_exhausted))
+          {
+            all_acquired = false;
+            break;
+          }
+          return std::unexpected { slot.error() };
+        }
+        if (need_srgb) { role.srgb = *slot; }
+        else
+        {
+          role.linear = *slot;
+        }
       }
-      texture_bindless_slots_[ texture_index ] = *slot;
+      if (!all_acquired) { break; }
     }
-    if (!all_acquired) { return {}; }
     if (auto uploaded = reupload_materials_from_slots(); !uploaded)
     {
       return std::unexpected { uploaded.error() };
@@ -2478,13 +2536,18 @@ private:
     if (rebuild_bindless_requested_)
     {
       const auto release_value = frame_counter_ + 1ULL + max_frames_in_flight;
-      for (auto texture_index :
-        std::views::indices(texture_bindless_slots_.size()))
+      for (auto& roles : texture_role_slots_)
       {
-        const auto slot = texture_bindless_slots_[ texture_index ];
-        if (slot == ~0U) { continue; }
-        bindless_table_.release_index(slot, release_value);
-        texture_bindless_slots_[ texture_index ] = ~0U;
+        if (roles.srgb.has_value())
+        {
+          bindless_table_.release_index(*roles.srgb, release_value);
+          roles.srgb.reset();
+        }
+        if (roles.linear.has_value())
+        {
+          bindless_table_.release_index(*roles.linear, release_value);
+          roles.linear.reset();
+        }
       }
       rebuild_bindless_requested_ = false;
       rebuild_bindless_pending_ = true;
@@ -2773,13 +2836,13 @@ private:
   std::optional<vkpp::sampler_cache> sampler_cache_ {};
   std::vector<vkpp::gltf::material_cpu> materials_cpu_ {};
   std::vector<vkpp::gltf::texture_ref_cpu> gltf_textures_ {};
-  std::vector<std::uint32_t> texture_bindless_slots_ {};
+  std::vector<vkpp::gltf::texture_role_slots> texture_role_slots_ {};
   std::vector<vk::Sampler> texture_bindless_samplers_ {};
   std::vector<vkpp::sampler_create_info> texture_sampler_infos_ {};
-  std::vector<std::uint32_t> texture_bindless_image_indices_ {};
   bool rebuild_bindless_requested_ { false };
   bool rebuild_bindless_pending_ { false };
   std::vector<vkpp::texture<>> textures_ {};
+  std::vector<vkpp::gltf::realized_host_image_cpu> host_images_ {};
   vkpp::storage_buffer material_buffer_ {};
 
   vkpp::buffer_arena<> geometry_arena_ {};
