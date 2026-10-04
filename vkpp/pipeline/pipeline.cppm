@@ -235,30 +235,32 @@ auto make_graphics_pipeline(const vk::raii::Device& device,
                 .pDynamicStates = dynamic_states.data(),
               };
 
-              vk::PipelineRenderingCreateInfo rendering {
-                .colorAttachmentCount =
-                  static_cast<std::uint32_t>(runtime_args.color_formats.size()),
-                .pColorAttachmentFormats = runtime_args.color_formats.data(),
-                .depthAttachmentFormat = runtime_args.depth_format,
-              };
-              vk::GraphicsPipelineCreateInfo graphics_info {
-                .pNext = &rendering,
-                .stageCount = static_cast<std::uint32_t>(stages.size()),
-                .pStages = stages.data(),
-                .pVertexInputState = &vertex_input,
-                .pInputAssemblyState = &input_assembly,
-                .pViewportState = &viewport_state,
-                .pRasterizationState = &raster,
-                .pMultisampleState = &multisample,
-                .pDepthStencilState = &depth,
-                .pColorBlendState = &blend,
-                .pDynamicState = &dynamic,
-                .layout = *layout,
-                .renderPass = nullptr,
+              vk::StructureChain graphics_chain {
+                vk::GraphicsPipelineCreateInfo {
+                  .stageCount = static_cast<std::uint32_t>(stages.size()),
+                  .pStages = stages.data(),
+                  .pVertexInputState = &vertex_input,
+                  .pInputAssemblyState = &input_assembly,
+                  .pViewportState = &viewport_state,
+                  .pRasterizationState = &raster,
+                  .pMultisampleState = &multisample,
+                  .pDepthStencilState = &depth,
+                  .pColorBlendState = &blend,
+                  .pDynamicState = &dynamic,
+                  .layout = *layout,
+                  .renderPass = nullptr,
+                },
+                vk::PipelineRenderingCreateInfo {
+                  .colorAttachmentCount = static_cast<std::uint32_t>(
+                    runtime_args.color_formats.size()),
+                  .pColorAttachmentFormats = runtime_args.color_formats.data(),
+                  .depthAttachmentFormat = runtime_args.depth_format,
+                },
               };
 
               return map_vk_error(
-                device.createGraphicsPipeline(cache, graphics_info),
+                device.createGraphicsPipeline(
+                  cache, graphics_chain.get<vk::GraphicsPipelineCreateInfo>()),
                 diagnostics)
                 .transform(
                   [ &, layout = std::move(layout) ](
