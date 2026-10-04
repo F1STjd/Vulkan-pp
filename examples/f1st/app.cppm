@@ -1056,9 +1056,7 @@ private:
           auto default_sampler = sampler_cache_->get_or_create({});
           if (!default_sampler)
           {
-            return std::unexpected {
-              std::move(default_sampler).error(),
-            };
+            return std::unexpected { default_sampler.error() };
           }
 
           textures_.clear();
@@ -1108,7 +1106,7 @@ private:
                 vkpp::make_app_error(vkpp::app_error_code::invalid_state),
               };
             }
-            if (!made) { return std::unexpected { std::move(made).error() }; }
+            if (!made) { return std::unexpected { made.error() }; }
             textures_.push_back(std::move(*made));
           }
 
@@ -1165,16 +1163,13 @@ private:
             auto sampler_create_info = sampler_create_info_for(reference);
             if (!sampler_create_info)
             {
-              return std::unexpected { std::move(sampler_create_info).error() };
+              return std::unexpected { sampler_create_info.error() };
             }
             auto sampler = sampler_cache_->get_or_create(*sampler_create_info);
-            if (!sampler)
-            {
-              return std::unexpected { std::move(sampler).error() };
-            }
+            if (!sampler) { return std::unexpected { sampler.error() }; }
             const auto slot = register_bindless_cis(
               *sampler, *sampler_create_info, textures_[ *image_index ]);
-            if (!slot) { return std::unexpected { std::move(slot).error() }; }
+            if (!slot) { return std::unexpected { slot.error() }; }
             texture_bindless_slots_[ texture_index ] = *slot;
             texture_bindless_samplers_[ texture_index ] = *sampler;
             texture_bindless_image_indices_[ texture_index ] = *image_index;
@@ -1192,10 +1187,7 @@ private:
             .address_mode_v = vk::SamplerAddressMode::eClampToEdge,
             .address_mode_w = vk::SamplerAddressMode::eClampToEdge,
           });
-          if (!ibl_sampler)
-          {
-            return std::unexpected { std::move(ibl_sampler).error() };
-          }
+          if (!ibl_sampler) { return std::unexpected { ibl_sampler.error() }; }
 
           auto radiance = vkpp::make_texture({
             .device = device_,
@@ -1210,10 +1202,7 @@ private:
             .stage_pool = stage_pool_,
             .array_layers = 6U,
           });
-          if (!radiance)
-          {
-            return std::unexpected { std::move(radiance).error() };
-          }
+          if (!radiance) { return std::unexpected { radiance.error() }; }
           ibl_radiance_ = std::move(*radiance);
           {
             const vkpp::sampler_create_info ibl_sampler_info {
@@ -1239,7 +1228,7 @@ private:
                     ibl_sampler_info, ibl_radiance_);
                 !written)
               {
-                return std::unexpected { std::move(written).error() };
+                return std::unexpected { written.error() };
               }
             }
           }
@@ -1259,10 +1248,7 @@ private:
             .stage_pool = stage_pool_,
             .array_layers = 1U,
           });
-          if (!brdf_lut)
-          {
-            return std::unexpected { std::move(brdf_lut).error() };
-          }
+          if (!brdf_lut) { return std::unexpected { brdf_lut.error() }; }
 
           const vkpp::sampler_create_info brdf_sampler_info {
             .mag_filter = vk::Filter::eLinear,
@@ -1274,16 +1260,13 @@ private:
           };
           auto brdf_slot =
             register_bindless_cis(*ibl_sampler, brdf_sampler_info, *brdf_lut);
-          if (!brdf_slot)
-          {
-            return std::unexpected { std::move(brdf_slot).error() };
-          }
+          if (!brdf_slot) { return std::unexpected { brdf_slot.error() }; }
           ibl_brdf_lut_index_ = *brdf_slot;
           ibl_brdf_lut_ = std::move(*brdf_lut);
 
           if (auto uploaded = reupload_materials_from_slots(); !uploaded)
           {
-            return std::unexpected { std::move(uploaded).error() };
+            return std::unexpected { uploaded.error() };
           }
 
           std::vector<draw_gpu> draws_gpu {};
@@ -1320,7 +1303,7 @@ private:
           });
           if (!uploaded_draws)
           {
-            return std::unexpected { std::move(uploaded_draws).error() };
+            return std::unexpected { uploaded_draws.error() };
           }
           draw_buffer_ = std::move(*uploaded_draws);
 
@@ -1463,7 +1446,7 @@ private:
     const auto ring_size =
       uniform_ring_stride_ * static_cast<vk::DeviceSize>(max_frames_in_flight);
     auto ring = create_uniform_buffer(ring_size);
-    if (!ring) { return std::unexpected { std::move(ring).error() }; }
+    if (!ring) { return std::unexpected { ring.error() }; }
     if (ring->mapped() == nullptr)
     {
       return std::unexpected {
@@ -1664,7 +1647,7 @@ private:
   {
     auto bins = vkpp::device_address_buffer::create(
       device_.allocator(), histogram_bins * sizeof(std::uint32_t));
-    if (!bins) { return std::unexpected { std::move(bins).error() }; }
+    if (!bins) { return std::unexpected { bins.error() }; }
     histogram_bins_ = std::move(*bins);
 
     auto histogram_view = bindable(histogram_bins_);
@@ -1675,7 +1658,7 @@ private:
     {
       auto readback = vkpp::readback_buffer::create(
         device_.allocator(), histogram_bins * sizeof(std::uint32_t));
-      if (!readback) { return std::unexpected { std::move(readback).error() }; }
+      if (!readback) { return std::unexpected { readback.error() }; }
       histogram_readbacks_[ index ] = std::move(*readback);
     }
 
@@ -1684,11 +1667,11 @@ private:
       .bindings = histogram_bindings,
       .set_count = 1U,
     });
-    if (!arena) { return std::unexpected { std::move(arena).error() }; }
+    if (!arena) { return std::unexpected { arena.error() }; }
     histogram_arena_ = std::move(*arena);
 
     auto spirv = vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
-    if (!spirv) { return std::unexpected { std::move(spirv).error() }; }
+    if (!spirv) { return std::unexpected { spirv.error() }; }
 
     return vkpp::make_compute_pipeline(device_.device(),
       {
@@ -2282,49 +2265,46 @@ private:
         resolve_slot(material.base_color_texture, 1U, texture_mask);
       if (!base_color_index)
       {
-        return std::unexpected { std::move(base_color_index).error() };
+        return std::unexpected { base_color_index.error() };
       }
       const auto metallic_roughness_index =
         resolve_slot(material.metallic_roughness_texture, 2U, texture_mask);
       if (!metallic_roughness_index)
       {
-        return std::unexpected { std::move(metallic_roughness_index).error() };
+        return std::unexpected { metallic_roughness_index.error() };
       }
       const auto normal_index =
         resolve_slot(material.normal_texture, 4U, texture_mask);
-      if (!normal_index)
-      {
-        return std::unexpected { std::move(normal_index).error() };
-      }
+      if (!normal_index) { return std::unexpected { normal_index.error() }; }
       const auto occlusion_index =
         resolve_slot(material.occlusion_texture, 8U, texture_mask);
       if (!occlusion_index)
       {
-        return std::unexpected { std::move(occlusion_index).error() };
+        return std::unexpected { occlusion_index.error() };
       }
       const auto emissive_index =
         resolve_slot(material.emissive_texture, 16U, texture_mask);
       if (!emissive_index)
       {
-        return std::unexpected { std::move(emissive_index).error() };
+        return std::unexpected { emissive_index.error() };
       }
       const auto clearcoat_index =
         resolve_slot(material.clearcoat.texture, 32U, texture_mask);
       if (!clearcoat_index)
       {
-        return std::unexpected { std::move(clearcoat_index).error() };
+        return std::unexpected { clearcoat_index.error() };
       }
       const auto clearcoat_roughness_index =
         resolve_slot(material.clearcoat.roughness_texture, 64U, texture_mask);
       if (!clearcoat_roughness_index)
       {
-        return std::unexpected { std::move(clearcoat_roughness_index).error() };
+        return std::unexpected { clearcoat_roughness_index.error() };
       }
       const auto clearcoat_normal_index =
         resolve_slot(material.clearcoat.normal_texture, 128U, texture_mask);
       if (!clearcoat_normal_index)
       {
-        return std::unexpected { std::move(clearcoat_normal_index).error() };
+        return std::unexpected { clearcoat_normal_index.error() };
       }
 
       materials_gpu.push_back({
@@ -2367,9 +2347,7 @@ private:
     });
     if (!uploaded_materials)
     {
-      return std::unexpected {
-        std::move(uploaded_materials).error(),
-      };
+      return std::unexpected { uploaded_materials.error() };
     }
     material_buffer_ = std::move(*uploaded_materials);
     return {};
@@ -2409,14 +2387,14 @@ private:
           all_acquired = false;
           break;
         }
-        return std::unexpected { std::move(slot).error() };
+        return std::unexpected { slot.error() };
       }
       texture_bindless_slots_[ texture_index ] = *slot;
     }
     if (!all_acquired) { return {}; }
     if (auto uploaded = reupload_materials_from_slots(); !uploaded)
     {
-      return std::unexpected { std::move(uploaded.error()) };
+      return std::unexpected { uploaded.error() };
     }
     vkpp::write_storage_buffer(device_.device(), this->set0_arena_.set(0U), 1U,
       material_buffer_.buffer(), material_buffer_.size());
@@ -2447,14 +2425,14 @@ private:
           all_acquired = false;
           break;
         }
-        return std::unexpected { std::move(slot).error() };
+        return std::unexpected { slot.error() };
       }
       texture_bindless_slots_[ texture_index ] = *slot;
     }
     if (!all_acquired) { return {}; }
     if (auto uploaded = reupload_materials_from_slots(); !uploaded)
     {
-      return std::unexpected { std::move(uploaded.error()) };
+      return std::unexpected { uploaded.error() };
     }
     const auto material_bound = bindable(material_buffer_);
     if (!material_bound) { return std::unexpected { material_bound.error() }; }
@@ -2462,7 +2440,7 @@ private:
           device_.device(), 1U, *material_bound);
       !write)
     {
-      return std::unexpected { std::move(write).error() };
+      return std::unexpected { write.error() };
     }
     rebuild_bindless_pending_ = false;
     return {};
@@ -2520,7 +2498,7 @@ private:
             std::span<std::uint32_t> { histogram_cpu_ });
         !copied)
       {
-        return std::unexpected { std::move(copied).error() };
+        return std::unexpected { copied.error() };
       }
 
       if (auto ns = timestamps_.read_and_reset_frame_ns(frame_index_); ns)
