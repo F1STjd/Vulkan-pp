@@ -1039,6 +1039,31 @@ private:
   { return buffer.template addressed_view<T>(device_); }
 
   auto
+  write_ibl_radiance_cis(
+    vk::Sampler sampler, const vkpp::sampler_create_info& sampler_info)
+    -> std::expected<void, vkpp::error_t>
+    requires(Backend == vkpp::descriptor_table_backend::classic)
+  {
+
+    return vkpp::write_fixed_cis(this->heap_arena_, device_.device(),
+      device_.physical_device(),
+      vkpp::descriptor_heap_arena::fixed_cis_region::ibl, sampler_info,
+      ibl_radiance_);
+  }
+
+  auto
+  write_ibl_radiance_cis(vk::Sampler sampler,
+    [[maybe_unused]] const vkpp::sampler_create_info& sampler_info)
+    -> std::expected<void, vkpp::error_t>
+    requires(Backend == vkpp::descriptor_table_backend::heap)
+  {
+
+    vkpp::write_combined_image_sampler(device_.device(),
+      this->ibl_arena_.set(0U), 0U, sampler, *ibl_radiance_.view());
+    return {};
+  }
+
+  auto
   create_buffers() -> std::expected<void, vkpp::error_t>
   {
     return vkpp::load_gltf_asset_cpu(model_path,
@@ -1213,23 +1238,12 @@ private:
               .address_mode_v = vk::SamplerAddressMode::eClampToEdge,
               .address_mode_w = vk::SamplerAddressMode::eClampToEdge,
             };
-            if constexpr (Backend == vkpp::descriptor_table_backend::classic)
+
+            if (auto written =
+                  write_ibl_radiance_cis(*ibl_sampler, ibl_sampler_info);
+              !written)
             {
-              vkpp::write_combined_image_sampler(device_.device(),
-                this->ibl_arena_.set(0U), 0U, *ibl_sampler,
-                *ibl_radiance_.view());
-            }
-            else
-            {
-              static_assert(Backend == vkpp::descriptor_table_backend::heap);
-              if (auto written = vkpp::write_fixed_cis(this->heap_arena_,
-                    device_.device(), device_.physical_device(),
-                    vkpp::descriptor_heap_arena::fixed_cis_region::ibl,
-                    ibl_sampler_info, ibl_radiance_);
-                !written)
-              {
-                return std::unexpected { written.error() };
-              }
+              return std::unexpected { written.error() };
             }
           }
 
