@@ -1216,8 +1216,7 @@ private:
           }
           ibl_radiance_ = std::move(*radiance);
           {
-            const vkpp::sampler_create_info ibl_sampler_info
-            {
+            const vkpp::sampler_create_info ibl_sampler_info {
               .mag_filter = vk::Filter::eLinear,
               .min_filter = vk::Filter::eLinear,
               .mipmap_mode = vk::SamplerMipmapMode::eLinear,
@@ -1234,11 +1233,10 @@ private:
             else
             {
               static_assert(Backend == vkpp::descriptor_table_backend::heap);
-              if (auto written =
-                    vkpp::write_fixed_cis(this->heap_arena_, device_.device(),
-                    device_.physical_device(),
+              if (auto written = vkpp::write_fixed_cis(this->heap_arena_,
+                    device_.device(), device_.physical_device(),
                     vkpp::descriptor_heap_arena::fixed_cis_region::ibl,
-                      ibl_sampler_info, radiance_view_info);
+                    ibl_sampler_info, ibl_radiance_);
                 !written)
               {
                 return std::unexpected { std::move(written).error() };
@@ -1266,8 +1264,7 @@ private:
             return std::unexpected { std::move(brdf_lut).error() };
           }
 
-          const vkpp::sampler_create_info brdf_sampler_info
-          {
+          const vkpp::sampler_create_info brdf_sampler_info {
             .mag_filter = vk::Filter::eLinear,
             .min_filter = vk::Filter::eLinear,
             .mipmap_mode = vk::SamplerMipmapMode::eLinear,
@@ -1275,8 +1272,8 @@ private:
             .address_mode_v = vk::SamplerAddressMode::eClampToEdge,
             .address_mode_w = vk::SamplerAddressMode::eClampToEdge,
           };
-          auto brdf_slot = register_bindless_cis(
-            *ibl_sampler, brdt_sampelr_info, *brdf_lut);
+          auto brdf_slot =
+            register_bindless_cis(*ibl_sampler, brdf_sampler_info, *brdf_lut);
           if (!brdf_slot)
           {
             return std::unexpected { std::move(brdf_slot).error() };
@@ -1432,8 +1429,7 @@ private:
 
   auto
   register_bindless_cis(vk::Sampler sampler,
-    const vkpp::sampler_create_info& sampler_info,
-    const vkpp::texture<>& image)
+    const vkpp::sampler_create_info& sampler_info, const vkpp::texture<>& image)
     -> std::expected<std::uint32_t, vkpp::error_t>
   {
     if constexpr (Backend == vkpp::descriptor_table_backend::classic)
@@ -2401,9 +2397,9 @@ private:
       if (texture_bindless_image_indices_[ texture_index ] == ~0U) { continue; }
       if (texture_bindless_slots_[ texture_index ] != ~0U) { continue; }
       const auto image_index = texture_bindless_image_indices_[ texture_index ];
-      const auto slot = register_bindless_cis(
-        texture_bindless_samplers_[ texture_index ],
-        texture_sampler_infos_[ texture_index ], textures_[ image_index ]);
+      const auto slot =
+        register_bindless_cis(texture_bindless_samplers_[ texture_index ],
+          texture_sampler_infos_[ texture_index ], textures_[ image_index ]);
       if (!slot)
       {
         if (slot.error().domain == vkpp::error_domain::application &&
@@ -2439,12 +2435,9 @@ private:
       if (texture_bindless_image_indices_[ texture_index ] == ~0U) { continue; }
       if (texture_bindless_slots_[ texture_index ] != ~0U) { continue; }
       const auto image_index = texture_bindless_image_indices_[ texture_index ];
-      const auto view_info = make_texture_view_create_info(
-        textures_[ image_index ], vk::ImageViewType::e2D, 1U);
-      const auto slot = bindless_table_.register_combined_image_sampler(
-        device_.device(), texture_sampler_create_infos_[ texture_index ],
-        view_info, texture_bindless_samplers_[ texture_index ],
-        *textures_[ image_index ].view());
+      const auto slot = bindless_table_.register_bindless_cis(
+        texture_bindless_samplers_[ texture_index ],
+        texture_sampler_infos_[ texture_index ], textures_[ image_index ]);
       if (!slot)
       {
         if (slot.error().domain == vkpp::error_domain::application &&
