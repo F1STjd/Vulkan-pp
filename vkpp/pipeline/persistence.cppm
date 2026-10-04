@@ -24,41 +24,35 @@ inline constexpr std::array pipeline_binary_store_magic {
   'N',
 };
 
-[[nodiscard]] inline auto
-write_le_u32(std::ostream& out, std::uint32_t value) -> bool
+template<class T>
+  requires(
+    std::is_trivially_copyable_v<T> && (sizeof(T) == 4UZ || sizeof(T) == 8UZ))
+[[nodiscard]] auto
+write_le(std::ostream& out, T value) -> bool
 {
-  const auto bytes = std::bit_cast<std::array<char, 4UZ>>(
-    std::endian::native == std::endian::big ? std::byteswap(value) : value);
+  if constexpr (std::endian::native == std::endian::big)
+  {
+    value = std::byteswap(value);
+  }
+  const auto bytes = std::bit_cast<std::array<char, sizeof(T)>>(value);
   out.write(bytes.data(), bytes.size());
   return static_cast<bool>(out);
 }
 
-[[nodiscard]] inline auto
-write_le_u64(std::ostream& out, std::uint64_t value) -> bool
+template<class T>
+  requires(
+    std::is_trivially_copyable_v<T> && (sizeof(T) == 4UZ || sizeof(T) == 8UZ))
+[[nodiscard]] auto
+read_le(std::istream& in, T value) -> bool
 {
-  const auto bytes = std::bit_cast<std::array<char, 8UZ>>(
-    std::endian::native == std::endian::big ? std::byteswap(value) : value);
-  out.write(bytes.data(), bytes.size());
-  return static_cast<bool>(out);
-}
-
-[[nodiscard]] inline auto
-read_le_u32(std::istream& in, std::uint32_t& value) -> bool
-{
-  std::array<char, 4UZ> bytes {};
-  in.read(bytes.data(), bytes.size());
-  value = std::bit_cast<std::uint32_t>(
-    std::endian::native == std::endian::big ? std::byteswap(value) : value);
-  return true;
-}
-
-[[nodiscard]] inline auto
-read_le_u64(std::istream& in, std::uint64_t& value) -> bool
-{
-  std::array<char, 8UZ> bytes {};
-  in.read(bytes.data(), bytes.size());
-  value = std::bit_cast<std::uint64_t>(
-    std::endian::native == std::endian::big ? std::byteswap(value) : value);
+  std::array<char, sizeof(T)> bytes {};
+  in.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  if (!in) { return false; }
+  value = std::bit_cast<T>(bytes);
+  if constexpr (std::endian::native == std::endian::big)
+  {
+    value = std::byteswap(value);
+  }
   return true;
 }
 
@@ -242,14 +236,14 @@ public:
     }
 
     std::uint32_t version {};
-    if (!read_le_u32(input, version) ||
+    if (!read_le(input, version) ||
       version != pipeline_binary_store_schema_version)
     {
       return discard("bad schema version");
     }
 
     vk::PipelineBinaryKeyKHR global {};
-    if (!read_le_u32(input, global.keySize) ||
+    if (!read_le(input, global.keySize) ||
       global.keySize > vk::MaxPipelineBinaryKeySizeKHR)
     {
       return discard("bad global keySize");
@@ -280,7 +274,7 @@ public:
     };
 
     std::uint32_t entry_count {};
-    if (!need(4) || !read_le_u32(input, entry_count))
+    if (!need(4) || !read_le(input, entry_count))
     {
       return discard("entry_count");
     }
@@ -288,7 +282,7 @@ public:
     store.entries_.resize(entry_count);
     for (auto& entry : store.entries_)
     {
-      if (!need(4) || !read_le_u32(input, entry.pipeline_key.keySize) ||
+      if (!need(4) || !read_le(input, entry.pipeline_key.keySize) ||
         entry.pipeline_key.keySize > vk::MaxPipelineBinaryKeySizeKHR)
       {
         return discard("pipeline keySize");
@@ -300,7 +294,7 @@ public:
       input.read(reinterpret_cast<char*>(entry.pipeline_key.key.data()),
         vk::MaxPipelineBinaryKeySizeKHR);
       std::uint32_t ordered_count {};
-      if (!need(4) || !read_le_u32(input, ordered_count))
+      if (!need(4) || !read_le(input, ordered_count))
       {
         return discard("ordered_count");
       }
@@ -312,7 +306,7 @@ public:
       entry.ordered_binary_keys.resize(ordered_count);
       for (auto& key : entry.ordered_binary_keys)
       {
-        if (!need(4) || !read_le_u32(input, key.keySize) ||
+        if (!need(4) || !read_le(input, key.keySize) ||
           key.keySize > vk::MaxPipelineBinaryKeySizeKHR)
         {
           return discard("ordered keySize");
@@ -327,21 +321,21 @@ public:
     }
 
     std::uint32_t blob_count {};
-    if (!need(4) || !read_le_u32(input, blob_count))
+    if (!need(4) || !read_le(input, blob_count))
     {
       return discard("blob_count");
     }
     store.blobs_.resize(blob_count);
     for (auto& blob : store.blobs_)
     {
-      if (!need(4) || !read_le_u32(input, blob.key.keySize))
+      if (!need(4) || !read_le(input, blob.key.keySize))
       {
         return discard("blob key bytes");
       }
       input.read(reinterpret_cast<char*>(blob.key.key.data()),
         vk::MaxPipelineBinaryKeySizeKHR);
       std::uint64_t data_size {};
-      if (!need(8) || !read_le_u64(input, data_size))
+      if (!need(8) || !read_le(input, data_size))
       {
         return discard("data_size");
       }
@@ -390,38 +384,38 @@ public:
         return std::unexpected { make_app_error(app_error_code::file_open) };
       }
       output.write(pipeline_binary_store_magic.data(), 8);
-      if (!write_le_u32(output, pipeline_binary_store_schema_version))
+      if (!write_le(output, pipeline_binary_store_schema_version))
       {
         return std::unexpected { make_app_error(app_error_code::file_write) };
       }
-      if (!write_le_u32(output, global_key_.keySize))
+      if (!write_le(output, global_key_.keySize))
       {
         return std::unexpected { make_app_error(app_error_code::file_write) };
       }
       output.write(reinterpret_cast<const char*>(global_key_.key.data()),
         vk::MaxPipelineBinaryKeySizeKHR);
-      if (!write_le_u32(output, static_cast<std::uint32_t>(entries_.size())))
+      if (!write_le(output, static_cast<std::uint32_t>(entries_.size())))
       {
         return std::unexpected { make_app_error(app_error_code::file_write) };
       }
 
       for (const auto& entry : entries_)
       {
-        if (!write_le_u32(output, entry.pipeline_key.keySize))
+        if (!write_le(output, entry.pipeline_key.keySize))
         {
           return std::unexpected { make_app_error(app_error_code::file_write) };
         }
         output.write(
           reinterpret_cast<const char*>(entry.pipeline_key.key.data()),
           vk::MaxPipelineBinaryKeySizeKHR);
-        if (!write_le_u32(output,
+        if (!write_le(output,
               static_cast<std::uint32_t>(entry.ordered_binary_keys.size())))
         {
           return std::unexpected { make_app_error(app_error_code::file_write) };
         }
         for (const auto& key : entry.ordered_binary_keys)
         {
-          if (!write_le_u32(output, key.keySize))
+          if (!write_le(output, key.keySize))
           {
             return std::unexpected {
               make_app_error(app_error_code::file_write),
@@ -432,19 +426,19 @@ public:
         }
       }
 
-      if (!write_le_u32(output, static_cast<std::uint32_t>(blobs_.size())))
+      if (!write_le(output, static_cast<std::uint32_t>(blobs_.size())))
       {
         return std::unexpected { make_app_error(app_error_code::file_write) };
       }
       for (const auto& blob : blobs_)
       {
-        if (!write_le_u32(output, blob.key.keySize))
+        if (!write_le(output, blob.key.keySize))
         {
           return std::unexpected { make_app_error(app_error_code::file_write) };
         }
         output.write(reinterpret_cast<const char*>(blob.key.key.data()),
           vk::MaxPipelineBinaryKeySizeKHR);
-        if (!write_le_u64(output, static_cast<std::uint64_t>(blob.data.size())))
+        if (!write_le(output, static_cast<std::uint64_t>(blob.data.size())))
         {
           return std::unexpected { make_app_error(app_error_code::file_write) };
         }
