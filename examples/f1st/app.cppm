@@ -1297,8 +1297,6 @@ private:
 
           std::vector<draw_gpu> draws_gpu {};
           draws_gpu.reserve(draw_list_.size());
-          const std::uint32_t default_material_index =
-            static_cast<std::uint32_t>(asset.materials.size());
           for (const vkpp::gltf::draw_item_cpu& item : draw_list_)
           {
             if (item.primitive_index >= asset.meshes.primitives.size())
@@ -1313,7 +1311,7 @@ private:
               primitive.material_index.has_value() &&
                 *primitive.material_index < asset.materials.size()
               ? *primitive.material_index
-              : default_material_index;
+              : default_material_index_;
             draws_gpu.push_back({
               .world = item.world_transform,
               .normal_matrix_columns = normal_matrix_of(item.world_transform),
@@ -2251,126 +2249,20 @@ private:
   auto
   reupload_materials_from_slots() -> std::expected<void, vkpp::error_t>
   {
-    const auto resolve_slot =
-      [ & ](const std::optional<vkpp::gltf::texture_use_cpu>& use,
-        std::uint32_t bit,
-        std::uint32_t& mask) -> std::expected<std::uint32_t, vkpp::error_t>
-    {
-      if (!use.has_value()) { return 0U; }
-      if (use->texture_index >= texture_role_slots_.size())
-      {
-        return std::unexpected {
-          vkpp::make_app_error(vkpp::app_error_code::out_of_range),
-        };
-      }
-      const auto& slots = texture_role_slots_[ use->texture_index ];
-      const auto& slot = use->color_space == vkpp::image_color_space::srgb
-        ? slots.srgb
-        : slots.linear;
-      if (!slot.has_value())
-      {
-        return std::unexpected {
-          vkpp::make_app_error(vkpp::app_error_code::invalid_state),
-        };
-      }
-      mask |= bit;
-      return *slot;
-    };
-
-    std::vector<material_gpu> materials_gpu {};
-    materials_gpu.reserve(materials_cpu_.size() + 1UZ);
-    for (const auto& material : materials_cpu_)
-    {
-      std::uint32_t texture_mask { 0U };
-      const auto base_color_index =
-        resolve_slot(material.base_color_texture, 1U, texture_mask);
-      if (!base_color_index)
-      {
-        return std::unexpected { base_color_index.error() };
-      }
-      const auto metallic_roughness_index =
-        resolve_slot(material.metallic_roughness_texture, 2U, texture_mask);
-      if (!metallic_roughness_index)
-      {
-        return std::unexpected { metallic_roughness_index.error() };
-      }
-      const auto normal_index =
-        resolve_slot(material.normal_texture, 4U, texture_mask);
-      if (!normal_index) { return std::unexpected { normal_index.error() }; }
-      const auto occlusion_index =
-        resolve_slot(material.occlusion_texture, 8U, texture_mask);
-      if (!occlusion_index)
-      {
-        return std::unexpected { occlusion_index.error() };
-      }
-      const auto emissive_index =
-        resolve_slot(material.emissive_texture, 16U, texture_mask);
-      if (!emissive_index)
-      {
-        return std::unexpected { emissive_index.error() };
-      }
-      const auto clearcoat_index =
-        resolve_slot(material.clearcoat.texture, 32U, texture_mask);
-      if (!clearcoat_index)
-      {
-        return std::unexpected { clearcoat_index.error() };
-      }
-      const auto clearcoat_roughness_index =
-        resolve_slot(material.clearcoat.roughness_texture, 64U, texture_mask);
-      if (!clearcoat_roughness_index)
-      {
-        return std::unexpected { clearcoat_roughness_index.error() };
-      }
-      const auto clearcoat_normal_index =
-        resolve_slot(material.clearcoat.normal_texture, 128U, texture_mask);
-      if (!clearcoat_normal_index)
-      {
-        return std::unexpected { clearcoat_normal_index.error() };
-      }
-
-      materials_gpu.push_back({
-                .base_color_factor = material.base_color_factor,
-                .emissive_factor_and_metallic = {
-                  material.emissive_factor[0],
-                  material.emissive_factor[1],
-                  material.emissive_factor[2],
-                  material.metallic_factor,
-                },
-                .roughness_factor = material.roughness_factor,
-                .normal_scale = material.normal_scale,
-                .occlusion_strength = material.occlusion_strength,
-                .alpha_cutoff = material.alpha_cutoff,
-                .base_color_index = *base_color_index,
-                .metallic_roughness_index = *metallic_roughness_index,
-                .normal_index = *normal_index,
-                .occlusion_index = *occlusion_index,
-                .emissive_index = *emissive_index,
-                .alpha_mode = static_cast<std::uint32_t>(material.alpha_mode),
-                .has_texture_mask = texture_mask,
-                .transmission = {.factor = material.transmission.factor},
-                .clearcoat = {
-                  .factor = material.clearcoat.factor,
-                  .roughness_factor = material.clearcoat.roughness_factor,
-                  .texture_index = *clearcoat_index,
-                  .roughness_index = *clearcoat_roughness_index,
-                  .normal_index = *clearcoat_normal_index,
-                },
-            });
-    }
-    materials_gpu.emplace_back();
-
-    auto uploaded_materials = vkpp::upload_storage_buffer<Backend>({
+    auto packed = vkpp::gltf::pack_material_records<material_transport_spec_,
+      vkpp::diagnostics_on>(
+      materials_cpu_, texture_role_slots_, diagnostic_buffer_);
+    if (!packed) { return std::unexpected { packed.error() }; }
+    default_material_index_ = packed->default_material_index;
+    auto uploaded = vkpp::upload_storage_buffer<Backend>({
       .device = device_,
       .pool = upload_pool_,
       .transfer_pool = transfer_upload_pool_,
-      .bytes = std::as_bytes(std::span<const material_gpu> { materials_gpu }),
+      .bytes = std::as_bytes(std::span { packed->records }),
       .stage_pool = stage_pool_,
     });
-    if (!uploaded_materials)
-    {
-      return std::unexpected { uploaded_materials.error() };
-    }
-    material_buffer_ = std::move(*uploaded_materials);
+    if (!uploaded) { return std::unexpected { uploaded.error() }; }
+    material_buffer_ = std::move(*uploaded);
     return {};
   }
 
@@ -2786,59 +2678,18 @@ private:
   };
   static_assert(sizeof(draw_push) == 4UZ);
 
-  struct material_gpu_transmission
-  {
-    float factor { 0.0F };
-  };
-
-  struct material_gpu_clearcoat
-  {
-    float factor { 0.0F };
-    float roughness_factor { 0.0F };
-    std::uint32_t texture_index { 0U };
-    std::uint32_t roughness_index { 0U };
-    std::uint32_t normal_index { 0U };
-  };
-
-  struct material_gpu
-  {
-    std::array<float, 4> base_color_factor {
-      1.0F,
-      1.0F,
-      1.0F,
-      1.0F,
-    };
-    std::array<float, 4> emissive_factor_and_metallic {
-      0.0F,
-      0.0F,
-      0.0F,
-      1.0F,
-    };
-    float roughness_factor { 1.0F };
-    float normal_scale { 1.0F };
-    float occlusion_strength { 1.0F };
-    float alpha_cutoff { 0.5F };
-    std::uint32_t base_color_index { 0U };
-    std::uint32_t metallic_roughness_index { 0U };
-    std::uint32_t normal_index { 0U };
-    std::uint32_t occlusion_index { 0U };
-    std::uint32_t emissive_index { 0U };
-    std::uint32_t alpha_mode { 0U };
-    std::uint32_t has_texture_mask { 0U };
-    material_gpu_transmission transmission {};
-    material_gpu_clearcoat clearcoat {};
-    std::uint32_t _ {};
-    std::uint32_t _ {};
-    std::uint32_t _ {};
-  };
-  static_assert(sizeof(material_gpu) == 112UZ);
-
   std::optional<vkpp::sampler_cache> sampler_cache_ {};
   std::vector<vkpp::gltf::material_cpu> materials_cpu_ {};
   std::vector<vkpp::gltf::texture_ref_cpu> gltf_textures_ {};
   std::vector<vkpp::gltf::texture_role_slots> texture_role_slots_ {};
   std::vector<vk::Sampler> texture_bindless_samplers_ {};
   std::vector<vkpp::sampler_create_info> texture_sampler_infos_ {};
+  std::uint32_t default_material_index_ {};
+  static constexpr vkpp::gltf::material_transport_spec
+    material_transport_spec_ {
+      .transmission = true,
+      .clearcoat = true,
+    };
   bool rebuild_bindless_requested_ { false };
   bool rebuild_bindless_pending_ { false };
   std::vector<vkpp::texture<>> textures_ {};
