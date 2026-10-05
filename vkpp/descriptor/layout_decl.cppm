@@ -8,6 +8,62 @@ import vkpp.capabilities;
 namespace vkpp
 {
 
+namespace detail
+{
+
+export template<class>
+inline constexpr bool always_false_v { false };
+
+}
+
+export template<class T>
+struct shader_layout_traits
+{};
+
+template<>
+struct shader_layout_traits<std::uint32_t>
+{
+  static constexpr std::uint32_t align { 4U };
+  static constexpr std::uint32_t size { 4U };
+};
+
+template<>
+struct shader_layout_traits<std::uint64_t>
+{
+  static constexpr std::uint32_t align { 8U };
+  static constexpr std::uint32_t size { 8U };
+};
+
+export template<class T>
+  requires(std::is_trivially_copyable_v<T> && sizeof(T) == alignof(T) &&
+    (sizeof(T) == 1UZ || sizeof(T) == 2UZ || sizeof(T) == 4UZ ||
+      sizeof(T) == 8UZ) &&
+    !std::is_same_v<T, std::uint32_t> && !std::is_same_v<T, std::uint64_t>)
+struct shader_layout_traits<T>
+{
+  static constexpr std::uint32_t align {
+    static_cast<std::uint32_t>(alignof(T)),
+  };
+  static constexpr std::uint32_t size {
+    static_cast<std::uint32_t>(sizeof(T)),
+  };
+};
+
+export template<class U>
+struct shader_std430_vec3
+{
+  U x {};
+  U y {};
+  U z {};
+};
+
+template<class U>
+struct shader_layout_traits<shader_std430_vec3<U>>
+{
+  static constexpr std::uint32_t align { 16U };
+  static constexpr std::uint32_t size { 12U };
+};
+
 export template<class Tag, class T>
 struct push_field
 {
@@ -26,9 +82,9 @@ push_offsets_array() -> std::array<std::uint32_t, sizeof...(Fields)>
   auto consider = [ & ]<class Field>()
   {
     constexpr auto align =
-      static_cast<std::uint32_t>(alignof(typename Field::value_type));
+      shader_layout_traits<typename Field::value_type>::align;
     constexpr auto size =
-      static_cast<std::uint32_t>(sizeof(typename Field::value_type));
+      shader_layout_traits<typename Field::value_type>::size;
     cursor = (cursor + align - 1U) / align * align;
     offsets[ index++ ] = cursor;
     cursor += size;
@@ -47,8 +103,9 @@ push_total_bytes() -> std::uint32_t
     constexpr auto offsets = push_offsets_array<Fields...>();
     using last = typename std::tuple_element_t<sizeof...(Fields) - 1UZ,
       std::tuple<Fields...>>;
-    return offsets.back() +
-      static_cast<std::uint32_t>(sizeof(typename last::value_type));
+    const auto raw =
+      offsets.back() + shader_layout_traits<typename last::value_type>::size;
+    return (raw + 3U) / 4U * 4U;
   }
 }
 
@@ -61,6 +118,8 @@ struct push_layout
     push_offsets_array<Fields...>()
   };
   static constexpr std::uint32_t total_bytes { push_total_bytes<Fields...>() };
+  static_assert(total_bytes <= 128,
+    "push_layout: exceeds portable push-constants minimum (128 bytes)");
   static_assert((std::is_same_v<FrameSlotTag, typename Fields::tag> || ...),
     "FrameSlotTag must name one of the push fields");
 
@@ -79,34 +138,12 @@ struct push_layout
       ++index;
     };
     (consider.template operator()<Fields>(), ...);
-    if (found == std::numeric_limits<std::uint32_t>::max()) { throw; }
+    if (found == std::numeric_limits<std::uint32_t>::max())
+    {
+      static_assert(
+        detail::always_false_v<Tag>, "push_layout: tag not in field pack");
+    }
     return found;
-  }
-};
-
-export enum class logical_resource_role : std::uint8_t {
-  frame_uniform_ring,
-  material_storage,
-  draw_storage,
-  bindless_cis,
-  ibl_cis,
-  compute_cis,
-};
-
-export template<logical_resource_role... Roles>
-struct logical_resource_pack
-{
-  static constexpr std::size_t count { sizeof...(Roles) };
-  static constexpr std::array<logical_resource_role, sizeof...(Roles)> roles {
-    Roles...
-  };
-
-  static consteval auto
-  index_of(logical_resource_role role) -> std::size_t
-  {
-    auto found = std::ranges::find(roles, role);
-    if (found == roles.end()) { throw; }
-    return std::ranges::distance(roles.begin(), found);
   }
 };
 
@@ -115,22 +152,5 @@ export struct classic_binding_id
   std::uint32_t set {};
   std::uint32_t binding {};
 };
-
-export consteval auto
-classic_binding_for(logical_resource_role role) -> classic_binding_id
-{
-  switch (role)
-  {
-  case logical_resource_role::frame_uniform_ring:
-    return { .set = 0U, .binding = 0U };
-  case logical_resource_role::material_storage:
-    return { .set = 0U, .binding = 1U };
-  case logical_resource_role::draw_storage: return { .set = 0U, .binding = 3U };
-  case logical_resource_role::bindless_cis: return { .set = 1U, .binding = 0U };
-  case logical_resource_role::ibl_cis     : return { .set = 2U, .binding = 0U };
-  case logical_resource_role::compute_cis : return { .set = 0U, .binding = 4U };
-  }
-  throw;
-}
 
 } // namespace vkpp
