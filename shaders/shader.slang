@@ -19,18 +19,6 @@ struct uniform_buffer {
 [[vk::binding(0, 0)]]
 ConstantBuffer<uniform_buffer> ubo;
 
-struct material_gpu_transmission {
-  float factor;
-};
-
-struct material_gpu_clearcoat {
-  float factor;
-  float roughness_factor;
-  uint texture_index;
-  uint roughness_index;
-  uint normal_index;
-};
-
 struct material_gpu {
   float4 base_color_factor;
   float4 emissive_factor_and_metallic;
@@ -38,18 +26,22 @@ struct material_gpu {
   float normal_scale;
   float occlusion_strength;
   float alpha_cutoff;
-  uint base_color_index;
-  uint metallic_roughness_index;
-  uint normal_index;
-  uint occlusion_index;
-  uint emissive_index;
+  uint base_color_slot;
+  uint metallic_roughness_slot;
+  uint normal_slot;
+  uint occlusion_slot;
+  uint emissive_slot;
   uint alpha_mode;
-  uint has_texture_mask;
-  material_gpu_transmission transmission;
-  material_gpu_clearcoat clearcoat;
-  uint _padding1;
-  uint _padding2;
-  uint _padding3;
+  uint texture_presence_mask;
+  float transmission_factor;
+  uint transmission_slot;
+  float clearcoat_factor;
+  float clearcoat_roughness_factor;
+  float clearcoat_normal_scale;
+  uint clearcoat_slot;
+  uint clearcoat_roughness_slot;
+  uint clearcoat_normal_slot;
+  uint pad0;
 };
 [[vk::binding(1, 0)]]
 StructuredBuffer<material_gpu> materials;
@@ -209,10 +201,10 @@ float4 fragment_main(
 {
   const material_gpu material = materials[input.material_index];
   float4 base_color_sample = float4(1.0, 1.0, 1.0, 1.0);
-  if ((material.has_texture_mask & 1U) != 0U)
+  if ((material.texture_presence_mask & 1U) != 0U)
   {
     base_color_sample = textures[
-      NonUniformResourceIndex(material.base_color_index)
+      NonUniformResourceIndex(material.base_color_slot)
     ].Sample(input.texture_coordinates);
   }
 
@@ -221,9 +213,16 @@ float4 fragment_main(
   {
     discard;
   }
-  if (material.transmission.factor > 0.0)
+  float transmission = material.transmission_factor;
+  if ((material.texture_presence_mask & 32U) != 0U)
   {
-    opacity *= saturate(1.0 - material.transmission.factor);
+    transmission *= textures[
+      NonUniformResourceIndex(material.transmission_slot)
+    ].Sample(input.texture_coordinates).r;
+  }
+  if (transmission > 0.0)
+  {
+    opacity *= saturate(1.0 - transmission);
   }
   const float3 albedo =
     base_color_sample.rgb * material.base_color_factor.rgb * input.color;
@@ -232,10 +231,10 @@ float4 fragment_main(
     material.emissive_factor_and_metallic.w,
     material.roughness_factor,
   );
-  if ((material.has_texture_mask & 2U) != 0U)
+  if ((material.texture_presence_mask & 2U) != 0U)
   {
     const float4 sample_value =  textures[
-      NonUniformResourceIndex(material.metallic_roughness_index)
+      NonUniformResourceIndex(material.metallic_roughness_slot)
     ].Sample(input.texture_coordinates);
     metallic_roughness *= float2(sample_value.b, sample_value.g);
   }
@@ -243,29 +242,29 @@ float4 fragment_main(
   const float roughness = clamp(metallic_roughness.y, 0.045, 1.0);
 
   float occlusion = 1.0;
-  if((material.has_texture_mask & 8U) != 0U)
+  if((material.texture_presence_mask & 8U) != 0U)
   {
     const float sampled_occlusion = textures[
-      NonUniformResourceIndex(material.occlusion_index)
+      NonUniformResourceIndex(material.occlusion_slot)
     ].Sample(input.texture_coordinates).r;
     occlusion = lerp(1.0, sampled_occlusion, material.occlusion_strength);
   }
 
   float3 emissive = material.emissive_factor_and_metallic.rgb;
-  if((material.has_texture_mask & 16U) != 0U)
+  if((material.texture_presence_mask & 16U) != 0U)
   {
     emissive *= textures[
-      NonUniformResourceIndex(material.emissive_index)
+      NonUniformResourceIndex(material.emissive_slot)
     ].Sample(input.texture_coordinates).rgb;
   }
 
   float3 normal = front_face
     ? normalize(input.world_normal)
     : -normalize(input.world_normal);
-  if((material.has_texture_mask & 4U) != 0U)
+  if((material.texture_presence_mask & 4U) != 0U)
   {
     const float3 encoded_normal = textures[
-      NonUniformResourceIndex(material.normal_index)
+      NonUniformResourceIndex(material.normal_slot)
     ].Sample(input.texture_coordinates).rgb;
     normal = apply_normal_map(
       normal, input.world_position, input.texture_coordinates, encoded_normal,
@@ -292,36 +291,36 @@ float4 fragment_main(
     max(4.0 * normal_view_cosine *  normal_light_cosine, 1e-4);
   const float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * albedo / pi;
   const float3 direct = (diffuse + specular) * ubo.light_color * normal_light_cosine;
-  float clearcoat = material.clearcoat.factor;
-  float clearcoat_roughness = material.clearcoat.roughness_factor;
-  if ((material.has_texture_mask & 32) != 0)
+  float clearcoat = material.clearcoat_factor;
+  float clearcoat_roughness = material.clearcoat_roughness_factor;
+  if ((material.texture_presence_mask & 64U) != 0U)
   {
     clearcoat *= textures[
-      NonUniformResourceIndex(material.clearcoat.texture_index)
+      NonUniformResourceIndex(material.clearcoat_slot)
     ].Sample(input.texture_coordinates).r;
   }
-  if ((material.has_texture_mask & 64) != 0)
+  if ((material.texture_presence_mask & 128U) != 0U)
   {
     clearcoat_roughness *= textures[
-      NonUniformResourceIndex(material.clearcoat.roughness_index)
+      NonUniformResourceIndex(material.clearcoat_roughness_slot)
     ].Sample(input.texture_coordinates).g;
   }
-  clearcoat_roughness = clamp (clearcoat_roughness, 0.045, 1.0);
+  clearcoat_roughness = clamp(clearcoat_roughness, 0.045, 1.0);
 
   float3 clearcoat_normal = normal;
-  if ((material.has_texture_mask & 128) != 0)
+  if ((material.texture_presence_mask & 256U) != 0U)
   {
     const float3 encoded_clearcoat_normal = textures[
-      NonUniformResourceIndex(material.clearcoat.normal_index)
+      NonUniformResourceIndex(material.clearcoat_normal_slot)
     ].Sample(input.texture_coordinates).rgb;
     clearcoat_normal = apply_normal_map(
       normal, input.world_position, input.texture_coordinates,
-      encoded_clearcoat_normal, 1.0
+      encoded_clearcoat_normal, material.clearcoat_normal_scale
     );
   }
 
   float3 clearcoat_specular = float3(0.0, 0.0, 0.0);
-  if (material.clearcoat.factor > 0.0)
+  if (material.clearcoat_factor > 0.0)
   {
     const float3 clearcoat_half = normalize(light_direction + view_direction);
     const float cc_n_dot_l = max(dot(clearcoat_normal, light_direction), 0.0);
