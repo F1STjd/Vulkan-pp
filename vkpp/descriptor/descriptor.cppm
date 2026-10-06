@@ -6,6 +6,7 @@ import vulkan;
 import vkpp.error;
 import vkpp.diagnostics;
 import vkpp.buffer;
+import vkpp.descriptor.layout_decl;
 
 namespace vkpp
 {
@@ -123,6 +124,158 @@ pool_sizes_for(std::span<const vk::DescriptorSetLayoutBinding> bindings,
   }
 
   return pool_sizes;
+}
+
+export template<class Layout>
+consteval auto
+bindings_for_set(std::uint32_t set)
+  -> std::array<vk::DescriptorSetLayoutBinding, Layout::resource_count()>
+{
+  std::array<vk::DescriptorSetLayoutBinding, Layout::resource_count()> out {};
+  constexpr auto table = Layout::assignment_table();
+  std::size_t n {};
+  for (const auto& row : table)
+  {
+    if (row.set != set) { continue; }
+    out[ n++ ] = {
+      .bidning = row.binding,
+      .descriptorType = row.descriptor_type,
+      .descriptorCount = row.count,
+      .stageFlags = row.stage_flags,
+      .pImmutableSamplers = nullptr,
+    };
+  }
+  return out;
+}
+
+export template<class Layout>
+consteval auto
+binding_count_for_set(std::uint32_t set) -> std::uint32_t
+{
+  constexpr auto table = Layout::assignment_table();
+  return static_cast<std::uint32_t>(std::ranges::count_if(table,
+    [ set ](const binding_assignment& assignment) -> bool
+    { return assignment.set == set; }));
+}
+
+export template<class Layout>
+consteval auto
+binding_flags_for_set(std::uint32_t set)
+  -> std::array<vk::DescriptorBindingFlags, Layout::resource_count()>
+{
+  std::array<vk::DescriptorBindingFlags, Layout::resource_count()> out {};
+  constexpr auto table = Layout::assignment_table();
+  std::size_t n { 0U };
+  for (const auto& row : table)
+  {
+    if (row.set != set) { continue; }
+    out[ n++ ] = row.update_after_bind
+      ? (vk::DescriptorBindingFlagBits::eUpdateAfterBind |
+          vk::DescriptorBindingFlagBits::eVariableDescriptorCount |
+          vk::DescriptorBindingFlagBits::ePartiallyBound)
+      : vk::DescriptorBindingFlags {};
+  }
+  return out;
+}
+
+export template<class Layout>
+consteval auto
+pool_sizes_for_layout() -> std::array<vk::DescriptorPoolSize, 4>
+{
+  std::array<vk::DescriptorPoolSize, 4> out {};
+  std::uint32_t used {};
+  auto add = [ & ](vk::DescriptorType type, std::uint32_t count)
+  {
+    for (auto index : std::views::indices(used))
+    {
+      if (out[ index ].type == type)
+      {
+        out[ index ].descriptorCount += count;
+        return;
+      }
+    }
+    out[ used++ ] = vk::DescriptorPoolSize {
+      .type = type,
+      .descriptorCount = count,
+    };
+  };
+  constexpr auto table = Layout::assignment_table();
+  for (const auto& row : table)
+  {
+    add(row.descriptor_type, row.count);
+  }
+  return out;
+}
+
+export template<class Layout>
+auto
+make_set_layout(const vk::raii::Device& device)
+  -> std::expected<std::array<vk::raii::DescriptorSetLayout, Layout::set_count>,
+    error_t>
+{
+  static_assert(Layout::set_count == 4U);
+  std::array<vk::raii::DescriptorSetLayout, Layout::set_count> layouts {
+    nullptr, nullptr, nullptr, nullptr
+  };
+  constexpr auto table = Layout::assignment_table();
+  for (auto set : std::views::indices(Layout::set_count))
+  {
+    std::vector<vk::DescriptorSetLayoutBinding> bindings;
+    std::vector<vk::DescriptorBindingFlags> flags;
+    bool any_uab { false };
+    for (const auto& row : table)
+    {
+      if (row.set != set) { continue; }
+      bindings.push_back({
+        .binding = row.binding,
+        .descriptorType = row.descriptor_type,
+        .descriptorCount = row.count,
+        .stageFlags = row.stage_flags,
+        .pImmutableSamplers = nullptr,
+      });
+      const auto f = row.update_after_bind
+        ? (vk::DescriptorBindingFlagBits::eUpdateAfterBind |
+            vk::DescriptorBindingFlagBits::eVariableDescriptorCount |
+            vk::DescriptorBindingFlagBits::ePartiallyBound)
+        : vk::DescriptorBindingFlags {};
+      flags.push_back(f);
+      any_uab = any_uab || row.update_after_bind;
+    }
+    if (any_uab)
+    {
+      const vk::StructureChain chain {
+        vk::DescriptorSetLayoutCreateInfo {
+          .flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+          .bindingCount = static_cast<std::uint32_t>(bindings.size()),
+          .pBindings = bindings.data(),
+        },
+        vk::DescriptorSetLayoutBindingFlagsCreateInfo {
+          .bindingCount = static_cast<std::uint32_t>(flags.size()),
+          .pBindingFlags = flags.data(),
+        },
+      };
+      auto created =
+        map_vk_error(device.createDescriptorSetLayout(
+                       chain.get<vk::DescriptorSetLayoutCreateInfo>()),
+          std::nullopt);
+      if (!created) { return std::unexpected { created.error() }; }
+      else
+      {
+        const vk::DescriptorSetLayoutCreateInfo info {
+          .bindingCount = static_cast<std::uint32_t>(bindings.size()),
+          .pBindings = bindings.data(),
+        };
+        auto created_no_flags =
+          map_vk_error(device.createDescriptorSetLayout(info), std::nullopt);
+        if (!created_no_flags)
+        {
+          return std::unexpected { created_no_flags.error() };
+        }
+        layouts[ set ] = std::move(*created_no_flags);
+      }
+    }
+  }
+  return layouts;
 }
 
 export void

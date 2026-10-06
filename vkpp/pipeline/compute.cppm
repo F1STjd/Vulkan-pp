@@ -14,7 +14,7 @@ using namespace std::string_view_literals;
 
 export struct compute_pipeline_runtime_args
 {
-  const vk::raii::DescriptorSetLayout& set_layout;
+  std::span<const vk::DescriptorSetLayout> set_layouts {};
   std::uint32_t push_constant_size { 0U };
 };
 
@@ -58,7 +58,7 @@ make_compute_pipeline(const vk::raii::Device& device,
   std::optional<diagnostic_buffer&> diagnostics = {})
   -> std::expected<compute_pipeline, error_t>
 {
-  if (runtime_args.set_layout == nullptr || shader.spirv.empty())
+  if (runtime_args.set_layouts.empty() || shader.spirv.empty())
   {
     return std::unexpected {
       make_app_error(app_error_code::missing_required_argument),
@@ -75,15 +75,15 @@ make_compute_pipeline(const vk::raii::Device& device,
       [ & ](vk::raii::ShaderModule&& module)
         -> std::expected<compute_pipeline, error_t>
       {
-        const std::array set_layouts { *runtime_args.set_layout };
         const vk::PushConstantRange push_range {
           .stageFlags = vk::ShaderStageFlagBits::eCompute,
           .offset = 0U,
           .size = runtime_args.push_constant_size,
         };
         const vk::PipelineLayoutCreateInfo layout_info {
-          .setLayoutCount = 1U,
-          .pSetLayouts = set_layouts.data(),
+          .setLayoutCount =
+            static_cast<std::uint32_t>(runtime_args.set_layouts.size()),
+          .pSetLayouts = runtime_args.set_layouts.data(),
           .pushConstantRangeCount =
             runtime_args.push_constant_size > 0U ? 1U : 0U,
           .pPushConstantRanges = &push_range,

@@ -42,6 +42,41 @@ bind_graphics(vk::raii::CommandBuffer& command_buffer, vk::Pipeline pipeline,
   }
 }
 
+export template<class Layout, class... Tags>
+consteval auto
+dynamic_offsets_for() -> std::array<std::uint32_t, sizeof...(Tags)>
+{
+  static_assert(
+    ((Layout::template binding_of<Tags>().set,
+       Layout::assignment_table()[ Layout::template resource_index_of<Tags>() ]
+         .dynamic) &&
+      ...),
+    "dynamic_offsets_for: every Tag must be dynamic in Layout");
+  return std::array<std::uint32_t, sizeof...(Tags)> {
+    Layout::template dynamic_offset_index<Tags>()...
+  };
+}
+
+export template<class Layout, class... Tags>
+consteval auto
+pack_dynamic_offsets(std::uint32_t offset_for_tag_0,
+  decltype((void(Tags {}), std::uint32_t {}))... rest_offsets)
+  -> std::array<std::uint32_t, Layout::dynamic_offset_count()>
+  requires(sizeof...(Tags) == Layout::dynamic_offset_count() &&
+    sizeof...(rest_offsets) + 1UZ == sizeof...(Tags))
+{
+  std::array<std::uint32_t, Layout::dynamic_offset_count()> out {};
+  const std::array<std::uint32_t, sizeof...(Tags)> runtime {
+    offset_for_tag_0,
+    rest_offsets...,
+  };
+  std::size_t i {};
+  auto place = [ & ]<class Tag>
+  { out[ Layout::template dynamic_offset_index<Tag>() ] = runtime[ i++ ]; };
+  (place.template operator()<Tags>(), ...);
+  return out;
+}
+
 export template<typename T>
 void
 push_constants(vk::raii::CommandBuffer& command_buffer,
