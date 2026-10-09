@@ -7,6 +7,7 @@ import vkpp.error;
 import vkpp.diagnostics;
 import vkpp.capabilities;
 import vkpp.descriptor.indexing;
+import vkpp.descriptor.spirv_binding_check;
 
 namespace vkpp
 {
@@ -48,7 +49,8 @@ private:
 };
 
 export template<
-  descriptor_table_backend Backend = descriptor_table_backend::classic>
+  descriptor_table_backend Backend = descriptor_table_backend::classic,
+  class Layout = void, class DiagnosticsPolicy = diagnostics_off>
   requires(Backend == descriptor_table_backend::classic)
 [[nodiscard]] auto
 make_compute_pipeline(const vk::raii::Device& device,
@@ -63,6 +65,22 @@ make_compute_pipeline(const vk::raii::Device& device,
     return std::unexpected {
       make_app_error(app_error_code::missing_required_argument),
     };
+  }
+  if constexpr (!std::is_void_v<Layout> &&
+    DiagnosticsPolicy::check_spirv_bindings)
+  {
+    const auto* words =
+      std::start_lifetime_as<std::uint32_t>(shader.spirv.data());
+    const std::span<const std::uint32_t> spirv_u32 {
+      words,
+      shader.spirv.size_bytes() / sizeof(std::uint32_t),
+    };
+    if (auto check = validate_spirv_bindings(
+          spirv_u32, Layout {}, vk::ShaderStageFlagBits::eCompute);
+      !check)
+    {
+      return std::unexpected { check.error() };
+    }
   }
 
   const vk::ShaderModuleCreateInfo module_info {
@@ -120,7 +138,8 @@ make_compute_pipeline(const vk::raii::Device& device,
       });
 }
 
-export template<descriptor_table_backend Backend>
+export template<descriptor_table_backend Backend, class Layout = void,
+  class DiagnosticsPolicy = diagnostics_off>
   requires(Backend == descriptor_table_backend::heap)
 [[nodiscard]] auto
 make_compute_pipeline(const vk::raii::Device& device,
@@ -136,7 +155,22 @@ make_compute_pipeline(const vk::raii::Device& device,
       make_app_error(app_error_code::missing_required_argument),
     };
   }
-
+  if constexpr (!std::is_void_v<Layout> &&
+    DiagnosticsPolicy::check_spirv_bindings)
+  {
+    const auto* words =
+      std::start_lifetime_as<std::uint32_t>(shader.spirv.data());
+    const std::span<const std::uint32_t> spirv_u32 {
+      words,
+      shader.spirv.size_bytes() / sizeof(std::uint32_t),
+    };
+    if (auto check = validate_spirv_bindings(
+          spirv_u32, Layout {}, vk::ShaderStageFlagBits::eCompute);
+      !check)
+    {
+      return std::unexpected { check.error() };
+    }
+  }
   const vk::ShaderModuleCreateInfo module_info {
     .codeSize = shader.spirv.size_bytes(),
     .pCode = std::start_lifetime_as<std::uint32_t>(shader.spirv.data()),

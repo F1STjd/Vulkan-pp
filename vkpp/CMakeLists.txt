@@ -70,6 +70,7 @@ target_sources(vkpp
 
       descriptor/descriptor.cppm   # module vkpp.descriptor
       descriptor/layout_decl.cppm # module vkpp.descriptor.layout_decl
+      descriptor/spirv_binding_check.cppm # module vkpp.descriptor.spirv_binding_check
       descriptor/indexing.cppm # module vkpp.descriptor.indexing
       descriptor/cis_register.cppm # module vkpp.descriptor.cis
 

@@ -19,11 +19,25 @@ export enum class diagnostic_severity : std::uint8_t {
 export struct diagnostics_on
 {
   static constexpr bool enabled { true };
+  static constexpr bool check_spirv_bindings {
+#ifndef NDEBUG
+    true
+#else
+    false
+#endif
+  };
 };
 
 export struct diagnostics_off
 {
   static constexpr bool enabled { false };
+  static constexpr bool check_spirv_bindings {
+#ifndef NDEBUG
+    true
+#else
+    false
+#endif
+  };
 };
 
 export struct diagnostic_record
