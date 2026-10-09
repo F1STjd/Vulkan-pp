@@ -57,23 +57,17 @@ dynamic_offsets_for() -> std::array<std::uint32_t, sizeof...(Tags)>
   };
 }
 
+template<class>
+using dynamic_offset_arg = std::uint32_t;
+
 export template<class Layout, class... Tags>
-consteval auto
-pack_dynamic_offsets(std::uint32_t offset_for_tag_0,
-  decltype((void(Tags {}), std::uint32_t {}))... rest_offsets)
+constexpr auto
+pack_dynamic_offsets(dynamic_offset_arg<Tags>... offsets)
   -> std::array<std::uint32_t, Layout::dynamic_offset_count()>
-  requires(sizeof...(Tags) == Layout::dynamic_offset_count() &&
-    sizeof...(rest_offsets) + 1UZ == sizeof...(Tags))
+  requires(sizeof...(Tags) == Layout::dynamic_offset_count())
 {
   std::array<std::uint32_t, Layout::dynamic_offset_count()> out {};
-  const std::array<std::uint32_t, sizeof...(Tags)> runtime {
-    offset_for_tag_0,
-    rest_offsets...,
-  };
-  std::size_t i {};
-  auto place = [ & ]<class Tag>
-  { out[ Layout::template dynamic_offset_index<Tag>() ] = runtime[ i++ ]; };
-  (place.template operator()<Tags>(), ...);
+  ((out[ Layout::template dynamic_offset_index<Tags>() ] = offsets), ...);
   return out;
 }
 

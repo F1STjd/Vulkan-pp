@@ -138,7 +138,7 @@ bindings_for_set(std::uint32_t set)
   {
     if (row.set != set) { continue; }
     out[ n++ ] = {
-      .bidning = row.binding,
+      .binding = row.binding,
       .descriptorType = row.descriptor_type,
       .descriptorCount = row.count,
       .stageFlags = row.stage_flags,
@@ -209,7 +209,7 @@ pool_sizes_for_layout() -> std::array<vk::DescriptorPoolSize, 4>
 
 export template<class Layout>
 auto
-make_set_layout(const vk::raii::Device& device)
+make_set_layouts(const vk::raii::Device& device)
   -> std::expected<std::array<vk::raii::DescriptorSetLayout, Layout::set_count>,
     error_t>
 {
@@ -259,20 +259,21 @@ make_set_layout(const vk::raii::Device& device)
                        chain.get<vk::DescriptorSetLayoutCreateInfo>()),
           std::nullopt);
       if (!created) { return std::unexpected { created.error() }; }
-      else
+      layouts[ set ] = std::move(*created);
+    }
+    else
+    {
+      const vk::DescriptorSetLayoutCreateInfo info {
+        .bindingCount = static_cast<std::uint32_t>(bindings.size()),
+        .pBindings = bindings.data(),
+      };
+      auto created_no_flags =
+        map_vk_error(device.createDescriptorSetLayout(info), std::nullopt);
+      if (!created_no_flags)
       {
-        const vk::DescriptorSetLayoutCreateInfo info {
-          .bindingCount = static_cast<std::uint32_t>(bindings.size()),
-          .pBindings = bindings.data(),
-        };
-        auto created_no_flags =
-          map_vk_error(device.createDescriptorSetLayout(info), std::nullopt);
-        if (!created_no_flags)
-        {
-          return std::unexpected { created_no_flags.error() };
-        }
-        layouts[ set ] = std::move(*created_no_flags);
+        return std::unexpected { created_no_flags.error() };
       }
+      layouts[ set ] = std::move(*created_no_flags);
     }
   }
   return layouts;

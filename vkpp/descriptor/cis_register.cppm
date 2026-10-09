@@ -31,7 +31,7 @@ register_combined_image_sampler(heap_bindless_table& table,
 
 export template<class Layout, class Tag>
 [[nodiscard]] auto
-write_fixed_cis(descriptor_heap_arena& arena, const vk::raii::Device& device,
+write_cis(descriptor_heap_arena& arena, const vk::raii::Device& device,
   const vk::raii::PhysicalDevice& physical,
   const sampler_create_info& sampler_info, const texture<>& image,
   vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal)

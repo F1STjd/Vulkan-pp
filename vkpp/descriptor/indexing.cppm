@@ -307,7 +307,7 @@ public:
       "write_cis: Tag is not cis");
     const vk::DeviceSize sampler_base_off =
       sampler_region_base_of<Layout, Tag>();
-    const vk::DeviceSize resource_base_off = resource_base_of<Layout, Tag>();
+    const vk::DeviceSize resource_base_off = region_base_of<Layout, Tag>();
     auto* const sampler_base = static_cast<std::byte*>(sampler_heap_.mapped());
     auto* const resource_base =
       static_cast<std::byte*>(resource_heap_.mapped());
@@ -414,7 +414,7 @@ private:
           .heapOffset =
             static_cast<std::uint32_t>(resource_region_bases[ index ]),
           .pushOffset =
-            PushLayout::template offset_of<typename PushLayout::frame_slot_tag>,
+            PushLayout::template offset_of<typename PushLayout::frame_slot_tag>(),
           .heapIndexStride =
             static_cast<std::uint32_t>(uniform_descriptor_size),
           .heapArrayStride =
@@ -522,7 +522,7 @@ private:
               memory_intent::cpu_to_gpu)
             .and_then(
               [ &, sampler_heap = std::move(sampler_heap) ](
-                vma_policy::buffer_handle&& resource_heap)
+                vma_policy::buffer_handle&& resource_heap) mutable
                 -> std::expected<descriptor_heap_arena, error_t>
               {
                 if (sampler_heap.mapped() == nullptr ||
