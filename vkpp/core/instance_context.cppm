@@ -114,8 +114,9 @@ public:
           -> std::expected<instance_context, error_t>
         {
           output.instance_ = std::move(instance);
+          output.diagnostics_ = info.diagnostics;
           if (!info.enable_validation || !info.diagnostics.has_value() ||
-              info.diagnostics->threshold() == diagnostic_severity::off)
+            info.diagnostics->threshold() == diagnostic_severity::off)
           {
             return std::move(output);
           }
