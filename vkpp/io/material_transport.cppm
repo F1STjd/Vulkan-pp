@@ -316,10 +316,13 @@ resolve_texture_use_slot(const std::optional<texture_use_cpu>& use,
   {
     if constexpr (DiagnosticsPolicy::enabled)
     {
-      diagnostics->report(diagnostic_severity::error,
-        make_app_error(app_error_code::out_of_range), location,
-        "material texture_index {} out of range (slots={})", use->texture_index,
-        texture_slots.size());
+      if (diagnostics)
+      {
+        diagnostics->report(diagnostic_severity::error,
+          make_app_error(app_error_code::out_of_range), location,
+          "material texture_index {} out of range (slots={})",
+          use->texture_index, texture_slots.size());
+      }
     }
     return std::unexpected { make_app_error(app_error_code::out_of_range) };
   }
@@ -327,10 +330,13 @@ resolve_texture_use_slot(const std::optional<texture_use_cpu>& use,
   {
     if constexpr (DiagnosticsPolicy::enabled)
     {
-      diagnostics->report(diagnostic_severity::error,
-        make_app_error(app_error_code::unsupported_operation), location,
-        "TEXCOORD_{} unsupported; transport consumes TEXCOORD_0 only",
-        use->texcoord_index);
+      if (diagnostics)
+      {
+        diagnostics->report(diagnostic_severity::error,
+          make_app_error(app_error_code::unsupported_operation), location,
+          "TEXCOORD_{} unsupported; transport consumes TEXCOORD_0 only",
+          use->texcoord_index);
+      }
     }
     return std::unexpected {
       make_app_error(app_error_code::unsupported_operation),
@@ -343,10 +349,13 @@ resolve_texture_use_slot(const std::optional<texture_use_cpu>& use,
   {
     if constexpr (DiagnosticsPolicy::enabled)
     {
-      diagnostics->report(diagnostic_severity::error,
-        make_app_error(app_error_code::invalid_state), location,
-        "texture {} role {} not registered", use->texture_index,
-        static_cast<unsigned>(use->color_space));
+      if (diagnostics)
+      {
+        diagnostics->report(diagnostic_severity::error,
+          make_app_error(app_error_code::invalid_state), location,
+          "texture {} role {} not registered", use->texture_index,
+          static_cast<unsigned>(use->color_space));
+      }
     }
     return std::unexpected { make_app_error(app_error_code::invalid_state) };
   }
@@ -367,9 +376,12 @@ extension_bags_supported(const material_cpu& material,
     if (!bad) { return {}; }
     if constexpr (DiagnosticsPolicy::enabled)
     {
-      diagnostics->report(diagnostic_severity::error,
-        make_app_error(app_error_code::unsupported_operation), location,
-        "material transport spec disables {}", what);
+      if (diagnostics)
+      {
+        diagnostics->report(diagnostic_severity::error,
+          make_app_error(app_error_code::unsupported_operation), location,
+          "material transport spec disables {}", what);
+      }
     }
     return std::unexpected {
       make_app_error(app_error_code::unsupported_operation),
