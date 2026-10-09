@@ -16,7 +16,7 @@ struct uniform_buffer {
   uint brdf_lut_index;
   float ambient_scale;
 };
-[[vk::binding(0, 0)]]
+[[vk::binding(0, 2)]]
 ConstantBuffer<uniform_buffer> ubo;
 
 struct material_gpu {
@@ -43,7 +43,7 @@ struct material_gpu {
   uint clearcoat_normal_slot;
   uint pad0;
 };
-[[vk::binding(1, 0)]]
+[[vk::binding(0, 0)]]
 StructuredBuffer<material_gpu> materials;
 
 struct draw_gpu {
@@ -54,7 +54,7 @@ struct draw_gpu {
   uint _1;
   uint _2;
 };
-[[vk::binding(3, 0)]]
+[[vk::binding(1, 0)]]
 StructuredBuffer<draw_gpu> draws;
 
 struct draw_push
@@ -110,7 +110,7 @@ vertex_shader_output vertex_main(vertex_shader_input input)
 [[vk::binding(0, 1)]]
 Sampler2D textures[];
 
-[[vk::binding(0, 2)]]
+[[vk::binding(2, 0)]]
 SamplerCube ibl_radiance;
 
 float3 apply_normal_map(
@@ -356,9 +356,9 @@ float4 fragment_main(
   return float4(display_linear, opacity);
 }
 
-[[vk::binding(4, 0)]]
+[[vk::binding(0, 3)]]
 Texture2D scene_color;
-[[vk::binding(4, 0)]]
+[[vk::binding(0, 3)]]
 SamplerState scene_sampler;
 
 struct histogram_push
