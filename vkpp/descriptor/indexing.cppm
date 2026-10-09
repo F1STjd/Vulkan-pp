@@ -413,8 +413,8 @@ private:
         const vk::DescriptorMappingSourcePushIndexEXT uniform_push {
           .heapOffset =
             static_cast<std::uint32_t>(resource_region_bases[ index ]),
-          .pushOffset =
-            PushLayout::template offset_of<typename PushLayout::frame_slot_tag>(),
+          .pushOffset = PushLayout::template offset_of<
+            typename PushLayout::frame_slot_tag>(),
           .heapIndexStride =
             static_cast<std::uint32_t>(uniform_descriptor_size),
           .heapArrayStride =
