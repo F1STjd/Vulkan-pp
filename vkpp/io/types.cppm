@@ -11,17 +11,19 @@ import vkpp.vertex;
 namespace vkpp
 {
 
-export struct png_load_runtime_args
-{};
+export struct png_load_runtime_args {};
 
-export enum class ktx2_transcode_target : std::uint8_t {
+export enum class ktx2_transcode_target : std::uint8_t
+{
   bc7_rgba,
   etc2_rgba,
   astc_4x4_rgba,
   rgba32,
 };
 
-export [[nodiscard]] constexpr auto
+export [[nodiscard]]
+constexpr
+auto
 select_ktx2_transcode_target(const vk::PhysicalDeviceFeatures& features)
   -> ktx2_transcode_target
 {
@@ -45,57 +47,63 @@ export struct ktx2_load_runtime_args
 export struct host_image
 {
   std::vector<std::byte> pixels {};
-  vk::Extent2D extent {};
-  vk::Format format { vk::Format::eR8G8B8A8Srgb };
-  std::uint32_t mip_levels_present { 1U };
-  texture_mip_policy suggested_mip_policy {
+  vk::Extent2D           extent {};
+  vk::Format             format {vk::Format::eR8G8B8A8Srgb};
+  std::uint32_t          mip_levels_present {1U};
+  texture_mip_policy     suggested_mip_policy {
     texture_mip_policy::generate_gpu_blit
   };
 };
 
 export struct host_image_mip_chain
 {
-  std::vector<std::byte> texels {};
+  std::vector<std::byte>      texels {};
   std::vector<vk::DeviceSize> level_offsets {};
-  vk::Extent2D base_extent {};
-  vk::Format format {};
-  std::uint32_t mip_levels_present { 1U };
-  texture_mip_policy suggested_mip_policy {
+  vk::Extent2D                base_extent {};
+  vk::Format                  format {};
+  std::uint32_t               mip_levels_present {1U};
+  texture_mip_policy          suggested_mip_policy {
     texture_mip_policy::upload_precomputed_chain
   };
 };
 
 template<std::size_t Components>
-using attribute_mdspan = std::mdspan<const float,
-  std::extents<std::size_t, std::dynamic_extent, Components>>;
+using attribute_mdspan = std::mdspan<
+  const float,
+  std::extents<std::size_t, std::dynamic_extent, Components>
+>;
 
 export struct mesh_streams_cpu
 {
-  std::vector<float> positions {};
-  std::vector<float> colors {};
-  std::vector<float> texcoords {};
-  std::vector<float> normals {};
-  std::vector<std::byte> indices {};
+  std::vector<float>           positions {};
+  std::vector<float>           colors {};
+  std::vector<float>           texcoords {};
+  std::vector<float>           normals {};
+  std::vector<std::byte>       indices {};
   std::optional<std::uint32_t> material_index {};
-  vk::IndexType index_type { vk::IndexType::eUint16 };
-  std::uint32_t vertex_count { 0U };
-  std::uint32_t index_count { 0U };
+  vk::IndexType                index_type {vk::IndexType::eUint16};
+  std::uint32_t                vertex_count {0U};
+  std::uint32_t                index_count {0U};
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   positions_view() const -> attribute_mdspan<3>
-  { return attribute_mdspan<3> { positions.data(), vertex_count }; }
+  { return attribute_mdspan<3> {positions.data(), vertex_count}; }
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   colors_view() const -> attribute_mdspan<3>
-  { return attribute_mdspan<3> { colors.data(), vertex_count }; }
+  { return attribute_mdspan<3> {colors.data(), vertex_count}; }
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   texcoords_view() const -> attribute_mdspan<2>
-  { return attribute_mdspan<2> { texcoords.data(), vertex_count }; }
+  { return attribute_mdspan<2> {texcoords.data(), vertex_count}; }
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   normals_view() const -> attribute_mdspan<3>
-  { return attribute_mdspan<3> { normals.data(), vertex_count }; }
+  { return attribute_mdspan<3> {normals.data(), vertex_count}; }
 };
 
 export struct mesh_cpu
@@ -107,69 +115,72 @@ export struct mesh_interleaved_cpu
 {
   std::vector<std::byte> vertices {};
   std::vector<std::byte> indices {};
-  vk::IndexType index_type { vk::IndexType::eUint16 };
-  std::uint32_t vertex_count { 0U };
-  std::uint32_t index_count { 0U };
+  vk::IndexType          index_type {vk::IndexType::eUint16};
+  std::uint32_t          vertex_count {0U};
+  std::uint32_t          index_count {0U};
 };
 
-export [[nodiscard]] auto
-pack_interleaved_vertices(const mesh_streams_cpu& streams)
-  -> mesh_interleaved_cpu
+export [[nodiscard]]
+auto
+pack_interleaved_vertices(const mesh_streams_cpu& streams) -> mesh_interleaved_cpu
 {
   mesh_interleaved_cpu packed {
-    .indices = streams.indices,
-    .index_type = streams.index_type,
+    .indices      = streams.indices,
+    .index_type   = streams.index_type,
     .vertex_count = streams.vertex_count,
-    .index_count = streams.index_count,
+    .index_count  = streams.index_count,
   };
   packed.vertices.resize(streams.vertex_count * sizeof(vertex));
   auto* out = std::start_lifetime_as_array<vertex>(
     packed.vertices.data(), streams.vertex_count);
 
   const attribute_mdspan<3> positions = streams.positions_view();
-  const attribute_mdspan<3> colors = streams.colors_view();
+  const attribute_mdspan<3> colors    = streams.colors_view();
   const attribute_mdspan<2> texcoords = streams.texcoords_view();
 
   for (auto index : std::views::indices(streams.vertex_count))
   {
     const auto xyz = std::submdspan(positions, index, std::full_extent);
     const auto rgb = std::submdspan(colors, index, std::full_extent);
-    const auto uv = std::submdspan(texcoords, index, std::full_extent);
-    glm::vec3 n_xyz { 0.0F, 1.0F, 0.0F };
+    const auto uv  = std::submdspan(texcoords, index, std::full_extent);
+    glm::vec3  n_xyz {0.0F, 1.0F, 0.0F};
     if (streams.normals.size() >= (index + 1UZ) * 3UZ)
     {
       const auto normals =
         std::submdspan(streams.normals_view(), index, std::full_extent);
-      n_xyz = { normals[ 0 ], normals[ 1 ], normals[ 2 ] };
+      n_xyz = {normals[ 0 ], normals[ 1 ], normals[ 2 ]};
     }
 
     out[ index ] = vertex {
-      .position = { xyz[ 0 ], xyz[ 1 ], xyz[ 2 ] },
-      .normal = n_xyz,
-      .color = { rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] },
-      .texture_coordinates = { uv[ 0 ], uv[ 1 ] },
+      .position            = {xyz[ 0 ], xyz[ 1 ], xyz[ 2 ]},
+      .normal              = n_xyz,
+      .color               = {rgb[ 0 ], rgb[ 1 ], rgb[ 2 ]},
+      .texture_coordinates = {uv[ 0 ], uv[ 1 ]},
     };
   }
 
   return packed;
 }
 
-export enum class image_color_space : std::uint8_t {
+export enum class image_color_space : std::uint8_t
+{
   srgb,
   linear,
 };
 
-export [[nodiscard]] constexpr auto
+export [[nodiscard]]
+constexpr
+auto
 to_linear_format(vk::Format format) -> vk::Format
 {
   switch (format)
   {
-  case vk::Format::eR8G8B8A8Srgb: return vk::Format::eR8G8B8A8Unorm;
-  case vk::Format::eBc7SrgbBlock: return vk::Format::eBc7UnormBlock;
-  case vk::Format::eEtc2R8G8B8A8SrgbBlock:
+  case vk::Format::eR8G8B8A8Srgb : return vk::Format::eR8G8B8A8Unorm;
+  case vk::Format::eBc7SrgbBlock : return vk::Format::eBc7UnormBlock;
+  case vk::Format::eEtc2R8G8B8A8SrgbBlock :
     return vk::Format::eEtc2R8G8B8A8UnormBlock;
-  case vk::Format::eAstc4x4SrgbBlock: return vk::Format::eAstc4x4UnormBlock;
-  default                           : return format;
+  case vk::Format::eAstc4x4SrgbBlock : return vk::Format::eAstc4x4UnormBlock;
+  default                            : return format;
   }
 }
 
@@ -185,11 +196,11 @@ enum class content_policy : std::uint8_t
 
 struct load_runtime_args
 {
-  content_policy content { content_policy::geometry_only };
-  bool load_external_buffers { true };
-  bool load_external_images { true };
-  bool enable_texture_basisu { true };
-  bool prefer_basisu_image { true };
+  content_policy         content {content_policy::geometry_only};
+  bool                   load_external_buffers {true};
+  bool                   load_external_images {true};
+  bool                   enable_texture_basisu {true};
+  bool                   prefer_basisu_image {true};
   ktx2_load_runtime_args ktx2 {};
 };
 
@@ -209,29 +220,28 @@ enum class alpha_mode : std::uint8_t
 
 struct texture_use_cpu
 {
-  std::uint32_t texture_index {};
-  std::uint32_t texcoord_index {};
-  image_color_space color_space { image_color_space::srgb };
+  std::uint32_t     texture_index {};
+  std::uint32_t     texcoord_index {};
+  image_color_space color_space {image_color_space::srgb};
 };
 
 // PBR structs from https://www.khronos.org/gltf/pbr/
 struct transmission_t
 {
-  float factor { 0.0F };
+  float                          factor {0.0F};
   std::optional<texture_use_cpu> texture {};
 };
 
 struct clearcoat_t
 {
-  float factor { 0.0F };
-  float roughness_factor { 0.0F };
-  float normal_scale { 1.0F };
+  float                          factor {0.0F};
+  float                          roughness_factor {0.0F};
+  float                          normal_scale {1.0F};
   std::optional<texture_use_cpu> texture {};
   std::optional<texture_use_cpu> roughness_texture {};
   std::optional<texture_use_cpu> normal_texture {};
 };
 
-// clang-format off
 struct volume_t {};
 struct ior_t {};
 struct specular_t {};
@@ -241,7 +251,6 @@ struct anisotropy_t {};
 struct dispersion_t {};
 struct emissive_strenght_t {};
 struct unlit_t {};
-// clang-format on
 
 struct material_cpu
 {
@@ -251,49 +260,49 @@ struct material_cpu
     1.0F,
     1.0F,
   };
-  float metallic_factor { 1.0F };
-  float roughness_factor { 1.0F };
-  transmission_t transmission {};
-  clearcoat_t clearcoat {};
-  volume_t volume {};
-  ior_t ior {};
-  specular_t specular {};
-  sheen_t sheen {};
-  iridescence_t iridescence {};
-  anisotropy_t anisotropy {};
-  dispersion_t dispersion {};
-  emissive_strenght_t emissive_strenght {};
-  unlit_t unlit {};
+  float                          metallic_factor {1.0F};
+  float                          roughness_factor {1.0F};
+  transmission_t                 transmission {};
+  clearcoat_t                    clearcoat {};
+  volume_t                       volume {};
+  ior_t                          ior {};
+  specular_t                     specular {};
+  sheen_t                        sheen {};
+  iridescence_t                  iridescence {};
+  anisotropy_t                   anisotropy {};
+  dispersion_t                   dispersion {};
+  emissive_strenght_t            emissive_strenght {};
+  unlit_t                        unlit {};
   std::optional<texture_use_cpu> base_color_texture {};
   std::optional<texture_use_cpu> metallic_roughness_texture {};
   std::optional<texture_use_cpu> normal_texture {};
-  float normal_scale { 1.0F };
+  float                          normal_scale {1.0F};
   std::optional<texture_use_cpu> occlusion_texture {};
-  float occlusion_strength { 1.0F };
+  float                          occlusion_strength {1.0F};
   std::optional<texture_use_cpu> emissive_texture {};
-  std::array<float, 3> emissive_factor {
+  std::array<float, 3>           emissive_factor {
     0.0F,
     0.0F,
     0.0F,
   };
-  alpha_mode alpha_mode { alpha_mode::opaque };
-  float alpha_cutoff { 0.5F };
-  bool double_sided { false };
+  alpha_mode alpha_mode {alpha_mode::opaque};
+  float      alpha_cutoff {0.5F};
+  bool       double_sided {false};
 };
 
 struct sampler_cpu
 {
-  vk::Filter mag_filter { vk::Filter::eLinear };
-  vk::Filter min_filter { vk::Filter::eLinear };
-  vk::SamplerMipmapMode mipmap_mode { vk::SamplerMipmapMode::eLinear };
-  vk::SamplerAddressMode address_u { vk::SamplerAddressMode::eRepeat };
-  vk::SamplerAddressMode address_v { vk::SamplerAddressMode::eRepeat };
-  float max_lod { vk::LodClampNone };
+  vk::Filter             mag_filter {vk::Filter::eLinear};
+  vk::Filter             min_filter {vk::Filter::eLinear};
+  vk::SamplerMipmapMode  mipmap_mode {vk::SamplerMipmapMode::eLinear};
+  vk::SamplerAddressMode address_u {vk::SamplerAddressMode::eRepeat};
+  vk::SamplerAddressMode address_v {vk::SamplerAddressMode::eRepeat};
+  float                  max_lod {vk::LodClampNone};
 };
 
 struct draw_item_cpu
 {
-  std::uint32_t primitive_index { 0U };
+  std::uint32_t         primitive_index {0U};
   std::array<float, 16> world_transform {};
 };
 
@@ -307,43 +316,46 @@ enum class image_kind : std::uint8_t
 
 struct image_source_cpu
 {
-  image_kind kind {};
+  image_kind             kind {};
   std::vector<std::byte> encoded_bytes {};
-  std::filesystem::path debug_uri {};
+  std::filesystem::path  debug_uri {};
 };
 
 struct host_image_cpu
 {
-  std::optional<host_image> decoded {};
+  std::optional<host_image>           decoded {};
   std::optional<host_image_mip_chain> mip_chain {};
 };
 
 struct realized_host_image_cpu
 {
-  std::uint32_t source_index {};
-  image_color_space color_space { image_color_space::srgb };
-  host_image_cpu image {};
+  std::uint32_t     source_index {};
+  image_color_space color_space {image_color_space::srgb};
+  host_image_cpu    image {};
 };
 
 struct asset_cpu
 {
-  mesh_cpu meshes {};
-  std::vector<material_cpu> materials {};
-  std::vector<texture_ref_cpu> textures {};
-  std::vector<image_source_cpu> image_sources {};
+  mesh_cpu                             meshes {};
+  std::vector<material_cpu>            materials {};
+  std::vector<texture_ref_cpu>         textures {};
+  std::vector<image_source_cpu>        image_sources {};
   std::vector<realized_host_image_cpu> host_images {};
-  std::vector<sampler_cpu> samplers {};
-  std::vector<draw_item_cpu> draw_list {};
+  std::vector<sampler_cpu>             samplers {};
+  std::vector<draw_item_cpu>           draw_list {};
 };
 
 struct host_image_realization_key
 {
-  std::uint32_t source_index {};
-  image_color_space color_space { image_color_space::srgb };
+  std::uint32_t     source_index {};
+  image_color_space color_space {image_color_space::srgb};
 
-  [[nodiscard]] friend auto
-  operator==(const host_image_realization_key&,
-    const host_image_realization_key&) -> bool = default;
+  [[nodiscard]]
+  friend
+  auto
+  operator ==(
+    const host_image_realization_key&, const host_image_realization_key&)
+    -> bool = default;
 };
 
 struct texture_role_slots

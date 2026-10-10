@@ -9,7 +9,8 @@ import vkpp.diagnostics;
 namespace vkpp
 {
 
-export [[nodiscard]] auto
+export [[nodiscard]]
+auto
 make_timeline_semaphore(
   const vk::raii::Device& device, std::uint64_t initial_value = 0ULL)
   -> std::expected<vk::raii::Semaphore, error_t>
@@ -18,7 +19,7 @@ make_timeline_semaphore(
     vk::SemaphoreCreateInfo {},
     vk::SemaphoreTypeCreateInfo {
       .semaphoreType = vk::SemaphoreType::eTimeline,
-      .initialValue = initial_value,
+      .initialValue  = initial_value,
     },
   };
   return map_vk_error(

@@ -13,44 +13,49 @@ import vkpp.error;
 
 namespace vkpp
 {
+
 using namespace std::string_view_literals;
 
-[[nodiscard]] constexpr auto
+[[nodiscard]]
+constexpr
+auto
 to_ktx_transcode_format(ktx2_transcode_target target) -> ktx_transcode_fmt_e
 {
   switch (target)
   {
-  case ktx2_transcode_target::bc7_rgba     : return KTX_TTF_BC7_RGBA;
-  case ktx2_transcode_target::etc2_rgba    : return KTX_TTF_ETC2_RGBA;
-  case ktx2_transcode_target::astc_4x4_rgba: return KTX_TTF_ASTC_4x4_RGBA;
-  case ktx2_transcode_target::rgba32       : return KTX_TTF_RGBA32;
+  case ktx2_transcode_target::bc7_rgba      : return KTX_TTF_BC7_RGBA;
+  case ktx2_transcode_target::etc2_rgba     : return KTX_TTF_ETC2_RGBA;
+  case ktx2_transcode_target::astc_4x4_rgba : return KTX_TTF_ASTC_4x4_RGBA;
+  case ktx2_transcode_target::rgba32        : return KTX_TTF_RGBA32;
   }
   return KTX_TTF_RGBA32;
 }
 
-export [[nodiscard]] auto
+export [[nodiscard]]
+auto
 make_ktx_error(KTX_error_code code) -> error_t
 {
   return error_t {
     .domain = error_domain::ktx,
-    .code = static_cast<std::int32_t>(code),
+    .code   = static_cast<std::int32_t>(code),
   };
 }
 
-[[nodiscard]] auto
+[[nodiscard]]
+auto
 validate_ktx2_dfd_role(ktxTexture2* texture, image_color_space role)
   -> std::expected<void, error_t>
 {
-  const auto transfer = ktxTexture2_GetTransferFunction_e(texture);
+  const auto transfer  = ktxTexture2_GetTransferFunction_e(texture);
   const auto primaries = ktxTexture2_GetPrimaries_e(texture);
 
   switch (role)
   {
-  case image_color_space::srgb:
+  case image_color_space::srgb :
   {
-    if (transfer != KHR_DF_TRANSFER_SRGB ||
-      (primaries != KHR_DF_PRIMARIES_BT709 &&
-        primaries != KHR_DF_PRIMARIES_SRGB))
+    if (
+      transfer != KHR_DF_TRANSFER_SRGB ||
+      (primaries != KHR_DF_PRIMARIES_BT709 && primaries != KHR_DF_PRIMARIES_SRGB))
     {
       return std::unexpected {
         make_app_error(app_error_code::unsupported_model_data),
@@ -58,7 +63,7 @@ validate_ktx2_dfd_role(ktxTexture2* texture, image_color_space role)
     }
     return {};
   }
-  case image_color_space::linear:
+  case image_color_space::linear :
   {
     if (transfer != KHR_DF_TRANSFER_LINEAR)
     {
@@ -77,25 +82,27 @@ validate_ktx2_dfd_role(ktxTexture2* texture, image_color_space role)
 struct ktx_texture2_deleter
 {
   void
-  operator()(ktxTexture2* value) const noexcept
+  operator ()(ktxTexture2* value) const noexcept
   {
     if (value != nullptr) { ktxTexture_Destroy(ktxTexture(value)); }
   }
 };
 
-[[nodiscard]] auto
-chain_from_ktx_texture(ktxTexture2* raw,
-  const ktx2_load_runtime_args& runtime_args,
+[[nodiscard]]
+auto
+chain_from_ktx_texture(
+  ktxTexture2*                     raw,
+  const ktx2_load_runtime_args&    runtime_args,
   std::optional<image_color_space> required_role = {})
   -> std::expected<host_image_mip_chain, error_t>
 {
-  std::unique_ptr<ktxTexture2, ktx_texture2_deleter> held { raw };
+  std::unique_ptr<ktxTexture2, ktx_texture2_deleter> held {raw};
 
   if (required_role.has_value())
   {
     if (auto ok = validate_ktx2_dfd_role(held.get(), *required_role); !ok)
     {
-      return std::unexpected { ok.error() };
+      return std::unexpected {ok.error()};
     }
   }
 
@@ -112,16 +119,17 @@ chain_from_ktx_texture(ktxTexture2* raw,
       held.get(), to_ktx_transcode_format(*runtime_args.transcode_target), 0);
     if (transcode_result != KTX_SUCCESS)
     {
-      return std::unexpected { make_ktx_error(transcode_result) };
+      return std::unexpected {make_ktx_error(transcode_result)};
     }
   }
 
   host_image_mip_chain chain {
-    .base_extent = {
-      .width = held->baseWidth,
-      .height = held->baseHeight,
-    },
-    .format = static_cast<vk::Format>(held->vkFormat),
+    .base_extent =
+      {
+        .width  = held->baseWidth,
+        .height = held->baseHeight,
+      },
+    .format             = static_cast<vk::Format>(held->vkFormat),
     .mip_levels_present = held->numLevels,
   };
   chain.texels.resize(held->dataSize);
@@ -129,12 +137,12 @@ chain_from_ktx_texture(ktxTexture2* raw,
   chain.level_offsets.resize(held->numLevels);
   for (auto level : std::views::indices(held->numLevels))
   {
-    ktx_size_t offset { 0 };
+    ktx_size_t offset {0};
     const auto offset_result =
       ktxTexture_GetImageOffset(ktxTexture(held.get()), level, 0, 0, &offset);
     if (offset_result != KTX_SUCCESS)
     {
-      return std::unexpected { make_ktx_error(offset_result) };
+      return std::unexpected {make_ktx_error(offset_result)};
     }
     chain.level_offsets[ level ] = static_cast<vk::DeviceSize>(offset);
   }
@@ -142,37 +150,42 @@ chain_from_ktx_texture(ktxTexture2* raw,
   return chain;
 }
 
-export [[nodiscard]] auto
-load_host_image_ktx2_from_memory(std::span<const std::byte> bytes,
-  const ktx2_load_runtime_args& runtime_args,
+export [[nodiscard]]
+auto
+load_host_image_ktx2_from_memory(
+  std::span<const std::byte>       bytes,
+  const ktx2_load_runtime_args&    runtime_args,
   std::optional<image_color_space> required_role = {})
   -> std::expected<host_image_mip_chain, error_t>
 {
-  ktxTexture2* texture { nullptr };
-  const auto create_result = ktxTexture2_CreateFromMemory(
-    reinterpret_cast<const ktx_uint8_t*>(bytes.data()), bytes.size(),
-    KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &texture);
+  ktxTexture2* texture {nullptr};
+  const auto   create_result = ktxTexture2_CreateFromMemory(
+    reinterpret_cast<const ktx_uint8_t*>(bytes.data()),
+    bytes.size(),
+    KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+    &texture);
 
   if (create_result != KTX_SUCCESS)
   {
-    return std::unexpected { make_ktx_error(create_result) };
+    return std::unexpected {make_ktx_error(create_result)};
   }
   return chain_from_ktx_texture(texture, runtime_args, required_role);
 }
 
 template<>
-[[nodiscard]] auto
+[[nodiscard]]
+auto
 load_host_image<image_file_type::ktx2>(
   const std::filesystem::path& path, const ktx2_load_runtime_args& runtime_args)
   -> std::expected<host_image_mip_chain, error_t>
 {
-  ktxTexture2* texture { nullptr };
-  const auto create_result = ktxTexture2_CreateFromNamedFile(
+  ktxTexture2* texture {nullptr};
+  const auto   create_result = ktxTexture2_CreateFromNamedFile(
     path.string().c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &texture);
 
   if (create_result != KTX_SUCCESS)
   {
-    return std::unexpected { make_ktx_error(create_result) };
+    return std::unexpected {make_ktx_error(create_result)};
   }
   return chain_from_ktx_texture(texture, runtime_args);
 }

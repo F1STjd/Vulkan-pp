@@ -9,12 +9,13 @@ import vkpp.memory;
 
 namespace vkpp
 {
+
 using namespace std::string_view_literals;
 
 export struct raw_image_handle
 {
-  vk::raii::DeviceMemory memory { nullptr };
-  vk::raii::Image image { nullptr };
+  vk::raii::DeviceMemory memory {nullptr};
+  vk::raii::Image        image {nullptr};
 
   [[nodiscard]]
   auto
@@ -24,9 +25,9 @@ export struct raw_image_handle
 
 export struct raw_buffer_handle
 {
-  vk::raii::DeviceMemory memory { nullptr };
-  vk::raii::Buffer buffer { nullptr };
-  void* mapped_p {};
+  vk::raii::DeviceMemory memory {nullptr};
+  vk::raii::Buffer       buffer {nullptr};
+  void*                  mapped_p {};
 
   [[nodiscard]]
   auto
@@ -38,7 +39,8 @@ export struct raw_buffer_handle
   mapped() const -> void*
   { return mapped_p; }
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   invalidate_mapped(vk::DeviceSize, vk::DeviceSize) const
     -> std::expected<void, error_t>
   { return {}; }
@@ -47,146 +49,133 @@ export struct raw_buffer_handle
 export class raw_policy
 {
 public:
-  using image_handle = raw_image_handle;
+  using image_handle  = raw_image_handle;
   using buffer_handle = raw_buffer_handle;
 
   raw_policy() = default;
-  raw_policy(const vk::raii::PhysicalDevice& physical_device,
-    const vk::raii::Device& device)
-  : physical_device_ { physical_device }, device_ { device }
+  raw_policy(
+    const vk::raii::PhysicalDevice& physical_device,
+    const vk::raii::Device&         device)
+  : physical_device_ {physical_device}, device_ {device}
   {}
 
   [[nodiscard]]
   auto
-  create_image(const vk::ImageCreateInfo& image_info,
-    memory_intent intent) const -> std::expected<image_handle, error_t>
+  create_image(const vk::ImageCreateInfo& image_info, memory_intent intent)
+    const -> std::expected<image_handle, error_t>
   {
-    image_handle handle {};
+    image_handle   handle {};
     vk::DeviceSize memory_size {};
 
     return map_vk_error(device_->createImage(image_info), std::nullopt)
-      .and_then(
-        [ & ](vk::raii::Image&& image)
-        {
-          handle.image = std::move(image);
-          const auto requirements = handle.image.getMemoryRequirements();
-          memory_size = requirements.size;
-          return find_memory_type(
-            requirements.memoryTypeBits, to_properties(intent));
-        })
-      .and_then(
-        [ & ](std::uint32_t memory_type)
-        {
-          const vk::MemoryAllocateInfo allocate_info {
-            .allocationSize = memory_size,
-            .memoryTypeIndex = memory_type,
-          };
-          return map_vk_error(
-            device_->allocateMemory(allocate_info), std::nullopt);
-        })
-      .and_then(
-        [ & ](vk::raii::DeviceMemory&& memory)
-        {
-          handle.memory = std::move(memory);
-          return map_vk_error(
-            handle.image.bindMemory(*handle.memory, 0ULL), std::nullopt);
-        })
+      .and_then([ & ](vk::raii::Image&& image) {
+        handle.image            = std::move(image);
+        const auto requirements = handle.image.getMemoryRequirements();
+        memory_size             = requirements.size;
+        return find_memory_type(
+          requirements.memoryTypeBits, to_properties(intent));
+      })
+      .and_then([ & ](std::uint32_t memory_type) {
+        const vk::MemoryAllocateInfo allocate_info {
+          .allocationSize  = memory_size,
+          .memoryTypeIndex = memory_type,
+        };
+        return map_vk_error(
+          device_->allocateMemory(allocate_info), std::nullopt);
+      })
+      .and_then([ & ](vk::raii::DeviceMemory&& memory) {
+        handle.memory = std::move(memory);
+        return map_vk_error(
+          handle.image.bindMemory(*handle.memory, 0ULL), std::nullopt);
+      })
       .transform([ & ] { return std::move(handle); });
   }
 
   [[nodiscard]]
   auto
-  create_buffer(const vk::BufferCreateInfo& buffer_info,
-    memory_intent intent) const -> std::expected<buffer_handle, error_t>
+  create_buffer(const vk::BufferCreateInfo& buffer_info, memory_intent intent)
+    const -> std::expected<buffer_handle, error_t>
   {
-    buffer_handle handle {};
+    buffer_handle  handle {};
     vk::DeviceSize memory_size {};
 
     return map_vk_error(device_->createBuffer(buffer_info), std::nullopt)
-      .and_then(
-        [ & ](vk::raii::Buffer&& buffer)
+      .and_then([ & ](vk::raii::Buffer&& buffer) {
+        handle.buffer           = std::move(buffer);
+        const auto requirements = handle.buffer.getMemoryRequirements();
+        memory_size             = requirements.size;
+        return find_memory_type(
+          requirements.memoryTypeBits, to_properties(intent));
+      })
+      .and_then([ & ](std::uint32_t memory_type) {
+        const vk::MemoryAllocateInfo allocate_info {
+          .allocationSize  = memory_size,
+          .memoryTypeIndex = memory_type,
+        };
+        return map_vk_error(
+          device_->allocateMemory(allocate_info), std::nullopt);
+      })
+      .and_then([ & ](vk::raii::DeviceMemory&& memory) {
+        handle.memory = std::move(memory);
+        return map_vk_error(
+          handle.buffer.bindMemory(*handle.memory, 0ULL), std::nullopt);
+      })
+      .and_then([ & ] -> std::expected<void, error_t> {
+        if (intent != memory_intent::gpu_only)
         {
-          handle.buffer = std::move(buffer);
-          const auto requirements = handle.buffer.getMemoryRequirements();
-          memory_size = requirements.size;
-          return find_memory_type(
-            requirements.memoryTypeBits, to_properties(intent));
-        })
-      .and_then(
-        [ & ](std::uint32_t memory_type)
-        {
-          const vk::MemoryAllocateInfo allocate_info {
-            .allocationSize = memory_size,
-            .memoryTypeIndex = memory_type,
-          };
           return map_vk_error(
-            device_->allocateMemory(allocate_info), std::nullopt);
-        })
-      .and_then(
-        [ & ](vk::raii::DeviceMemory&& memory)
-        {
-          handle.memory = std::move(memory);
-          return map_vk_error(
-            handle.buffer.bindMemory(*handle.memory, 0ULL), std::nullopt);
-        })
-      .and_then(
-        [ & ] -> std::expected<void, error_t>
-        {
-          if (intent != memory_intent::gpu_only)
-          {
-            return map_vk_error(
-              handle.memory.mapMemory(0ULL, vk::WholeSize), std::nullopt)
-              .transform([ & ](void* mapped) { handle.mapped_p = mapped; });
-          }
-          return {};
-        })
+            handle.memory.mapMemory(0ULL, vk::WholeSize), std::nullopt)
+            .transform([ & ](void* mapped) { handle.mapped_p = mapped; });
+        }
+        return {};
+      })
       .transform([ & ] { return std::move(handle); });
   }
 
 private:
   [[nodiscard]]
-  static constexpr auto
+  static constexpr
+  auto
   to_properties(memory_intent intent) -> vk::MemoryPropertyFlags
   {
     switch (intent)
     {
-    case memory_intent::gpu_only:
+    case memory_intent::gpu_only :
       return vk::MemoryPropertyFlagBits::eDeviceLocal;
-    case memory_intent::staging:
-    case memory_intent::cpu_to_gpu:
-    case memory_intent::gpu_to_cpu:
+    case memory_intent::staging    :
+    case memory_intent::cpu_to_gpu :
+    case memory_intent::gpu_to_cpu :
       return vk::MemoryPropertyFlagBits::eHostVisible |
-        vk::MemoryPropertyFlagBits::eHostCoherent;
+             vk::MemoryPropertyFlagBits::eHostCoherent;
     }
     std::unreachable();
   }
 
   auto
-  find_memory_type(
-    std::uint32_t type_filter, vk::MemoryPropertyFlags properties) const
-    -> std::expected<std::uint32_t, vkpp::error_t>
+  find_memory_type(std::uint32_t type_filter, vk::MemoryPropertyFlags properties)
+    const -> std::expected<std::uint32_t, vkpp::error_t>
   {
     const auto available_properties = physical_device_->getMemoryProperties();
     const auto memory_types =
       std::views::indices(available_properties.memoryTypeCount);
-    auto memory_type_it = std::ranges::find_if(memory_types,
+    auto memory_type_it = std::ranges::find_if(
+      memory_types,
       [ type_filter, properties, &available_properties ](
-        std::uint32_t memory_type) -> bool
-      {
+        std::uint32_t memory_type) -> bool {
         return (type_filter & (1U << memory_type)) &&
-          (available_properties.memoryTypes[ memory_type ].propertyFlags &
-            properties) == properties;
+               (available_properties.memoryTypes[ memory_type ].propertyFlags &
+                 properties) == properties;
       });
     if (memory_type_it == memory_types.end())
     {
-      return std::unexpected { make_app_error(app_error_code::no_memory_type) };
+      return std::unexpected {make_app_error(app_error_code::no_memory_type)};
     }
 
     return *memory_type_it;
   }
 
   std::optional<const vk::raii::PhysicalDevice&> physical_device_ {};
-  std::optional<const vk::raii::Device&> device_ {};
+  std::optional<const vk::raii::Device&>         device_ {};
 };
 
 static_assert(device_allocator<raw_policy>);

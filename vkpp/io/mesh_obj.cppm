@@ -13,30 +13,35 @@ import vkpp.error;
 
 namespace vkpp
 {
+
 using namespace std::string_view_literals;
 
 template<std::size_t Components>
-using obj_attribute_view = std::mdspan<const float,
-  std::extents<std::size_t, std::dynamic_extent, Components>>;
+using obj_attribute_view = std::mdspan<
+  const float,
+  std::extents<std::size_t, std::dynamic_extent, Components>
+>;
 
 template<>
-[[nodiscard]] auto
+[[nodiscard]]
+auto
 load_mesh_cpu<mesh_file_type::obj>(const std::filesystem::path& path)
   -> std::expected<mesh_cpu, error_t>
 {
-  tinyobj::attrib_t attributes;
-  std::vector<tinyobj::shape_t> shapes;
+  tinyobj::attrib_t                attributes;
+  std::vector<tinyobj::shape_t>    shapes;
   std::vector<tinyobj::material_t> materials;
-  std::string warnings;
-  std::string errors;
+  std::string                      warnings;
+  std::string                      errors;
 
-  if (!tinyobj::LoadObj(&attributes, &shapes, &materials, &warnings, &errors,
-        path.string().c_str()))
+  if (
+    !tinyobj::LoadObj(
+      &attributes, &shapes, &materials, &warnings, &errors, path.string().c_str()))
   {
-    return std::unexpected { make_app_error(app_error_code::model_parse) };
+    return std::unexpected {make_app_error(app_error_code::model_parse)};
   }
 
-  mesh_streams_cpu streams { .index_type = vk::IndexType::eUint32 };
+  mesh_streams_cpu           streams {.index_type = vk::IndexType::eUint32};
   std::vector<std::uint32_t> indices {};
   std::unordered_map<std::uint64_t, std::uint32_t> unique {};
 
@@ -50,8 +55,8 @@ load_mesh_cpu<mesh_file_type::obj>(const std::filesystem::path& path)
           << 32U) |
         static_cast<std::uint32_t>(index.texcoord_index);
 
-      auto [ it, inserted ] = unique.insert(
-        { key, static_cast<std::uint32_t>(streams.vertex_count) });
+      auto [ it, inserted ] =
+        unique.insert({key, static_cast<std::uint32_t>(streams.vertex_count)});
 
       if (inserted)
       {
@@ -60,7 +65,7 @@ load_mesh_cpu<mesh_file_type::obj>(const std::filesystem::path& path)
         streams.positions.push_back(attributes.vertices[ position_base ]);
         streams.positions.push_back(attributes.vertices[ position_base + 1UZ ]);
         streams.positions.push_back(attributes.vertices[ position_base + 2UZ ]);
-        streams.colors.insert(streams.colors.end(), { 1.0F, 1.0F, 1.0F });
+        streams.colors.insert(streams.colors.end(), {1.0F, 1.0F, 1.0F});
         if (index.texcoord_index >= 0)
         {
           const auto uv_base =
@@ -71,7 +76,7 @@ load_mesh_cpu<mesh_file_type::obj>(const std::filesystem::path& path)
         }
         else
         {
-          streams.texcoords.insert(streams.texcoords.end(), { 0.0F, 0.0F });
+          streams.texcoords.insert(streams.texcoords.end(), {0.0F, 0.0F});
         }
         ++streams.vertex_count;
       }
@@ -87,4 +92,5 @@ load_mesh_cpu<mesh_file_type::obj>(const std::filesystem::path& path)
   mesh.primitives.push_back(std::move(streams));
   return mesh;
 }
+
 } // namespace vkpp

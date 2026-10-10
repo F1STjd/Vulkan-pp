@@ -8,10 +8,13 @@ import vkpp.diagnostics;
 
 namespace vkpp
 {
+
 using namespace std::string_view_literals;
 
-export [[nodiscard]] auto
-pipeline_cache_header_matches(std::span<const std::byte> blob,
+export [[nodiscard]]
+auto
+pipeline_cache_header_matches(
+  std::span<const std::byte>          blob,
   const vk::PhysicalDeviceProperties& properties) -> bool
 {
   if (blob.size() < sizeof(vk::PipelineCacheHeaderVersionOne)) { return false; }
@@ -25,7 +28,8 @@ pipeline_cache_header_matches(std::span<const std::byte> blob,
   {
     return false;
   }
-  if (header.vendorID != properties.vendorID ||
+  if (
+    header.vendorID != properties.vendorID ||
     header.deviceID != properties.deviceID)
   {
     return false;
@@ -34,15 +38,16 @@ pipeline_cache_header_matches(std::span<const std::byte> blob,
     header.pipelineCacheUUID, properties.pipelineCacheUUID);
 }
 
-export [[nodiscard]] auto
+export [[nodiscard]]
+auto
 load_pipeline_cache_file(const std::filesystem::path& path)
   -> std::expected<std::vector<std::byte>, error_t>
 {
   if (!std::filesystem::exists(path)) { return {}; }
-  std::ifstream input { path, std::ios::binary };
+  std::ifstream input {path, std::ios::binary};
   if (!input)
   {
-    return std::unexpected { make_app_error(app_error_code::file_open) };
+    return std::unexpected {make_app_error(app_error_code::file_open)};
   }
 
   input.seekg(0, std::ios::end);
@@ -54,26 +59,29 @@ load_pipeline_cache_file(const std::filesystem::path& path)
   input.read(reinterpret_cast<char*>(bytes.data()), end);
   if (!input)
   {
-    return std::unexpected { make_app_error(app_error_code::file_read) };
+    return std::unexpected {make_app_error(app_error_code::file_read)};
   }
   return bytes;
 }
 
-export [[nodiscard]] auto
-save_pipeline_cache_file(const std::filesystem::path& path,
-  std::span<const std::byte> bytes) -> std::expected<void, error_t>
+export [[nodiscard]]
+auto
+save_pipeline_cache_file(
+  const std::filesystem::path& path, std::span<const std::byte> bytes)
+  -> std::expected<void, error_t>
 {
-  std::ofstream output { path, std::ios::binary | std::ios::trunc };
+  std::ofstream output {path, std::ios::binary | std::ios::trunc};
   if (!output)
   {
-    return std::unexpected { make_app_error(app_error_code::file_open) };
+    return std::unexpected {make_app_error(app_error_code::file_open)};
   }
 
-  output.write(reinterpret_cast<const char*>(bytes.data()),
+  output.write(
+    reinterpret_cast<const char*>(bytes.data()),
     static_cast<std::streamsize>(bytes.size()));
   if (!output)
   {
-    return std::unexpected { make_app_error(app_error_code::file_write) };
+    return std::unexpected {make_app_error(app_error_code::file_write)};
   }
   return {};
 }
@@ -84,41 +92,49 @@ public:
   pipeline_cache() = default;
 
   explicit pipeline_cache(vk::raii::PipelineCache&& cache)
-  : cache_ { std::move(cache) }
+  : cache_ {std::move(cache)}
   {}
 
-  [[nodiscard]] static auto
+  [[nodiscard]]
+  static
+  auto
   create(const vk::raii::Device& device)
     -> std::expected<pipeline_cache, error_t>
   { return create(device, {}); }
 
-  [[nodiscard]] static auto
+  [[nodiscard]]
+  static
+  auto
   create(const vk::raii::Device& device, std::span<const std::byte> initial)
     -> std::expected<pipeline_cache, error_t>
   {
     const vk::PipelineCacheCreateInfo create_info {
       .initialDataSize = initial.size(),
-      .pInitialData = initial.data(),
+      .pInitialData    = initial.data(),
     };
     return map_vk_error(device.createPipelineCache(create_info), std::nullopt)
-      .transform([](vk::raii::PipelineCache&& cache) -> pipeline_cache
-        { return pipeline_cache { std::move(cache) }; });
+      .transform([](vk::raii::PipelineCache&& cache) -> pipeline_cache {
+        return pipeline_cache {std::move(cache)};
+      });
   }
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   get() const -> const vk::raii::PipelineCache&
   { return cache_; }
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   native_handle() const -> vk::PipelineCache
   { return get(); }
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   data() const -> std::expected<std::vector<std::uint8_t>, error_t>
   { return map_vk_error(cache_.getData(), std::nullopt); }
 
 private:
-  vk::raii::PipelineCache cache_ { nullptr };
+  vk::raii::PipelineCache cache_ {nullptr};
 };
 
 } // namespace vkpp

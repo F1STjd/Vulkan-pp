@@ -12,23 +12,26 @@ import vkpp.memory;
 
 namespace vkpp
 {
+
 using namespace std::string_view_literals;
 
 export struct frame
 {
-  vk::raii::Semaphore present_complete { nullptr };
-  vk::raii::CommandBuffer command_buffer { nullptr };
-  vk::DescriptorSet descriptor_set {};
+  vk::raii::Semaphore     present_complete {nullptr};
+  vk::raii::CommandBuffer command_buffer {nullptr};
+  vk::DescriptorSet       descriptor_set {};
 };
 
 export struct frames_create_info
 {
   device_context& device;
-  command_pool& pool;
+  command_pool&   pool;
 };
 
-export template<std::size_t N>
-[[nodiscard]] auto
+export
+template<std::size_t N>
+[[nodiscard]]
+auto
 create_frames(const frames_create_info& info)
   -> std::expected<std::array<frame, N>, error_t>
 {
@@ -36,28 +39,25 @@ create_frames(const frames_create_info& info)
 
   return info.pool.allocate_primary(info.device.device(), N)
     .transform(
-      [ & ](std::vector<vk::raii::CommandBuffer>&& command_buffers) -> void
-      {
+      [ & ](std::vector<vk::raii::CommandBuffer>&& command_buffers) -> void {
         for (std::size_t index : std::views::indices(N))
         {
           frames[ index ].command_buffer = std::move(command_buffers[ index ]);
         }
       })
-    .and_then(
-      [ & ] -> std::expected<void, error_t>
+    .and_then([ & ] -> std::expected<void, error_t> {
+      for (std::size_t index : std::views::indices(N))
       {
-        for (std::size_t index : std::views::indices(N))
+        auto semaphore =
+          map_vk_error(info.device.device().createSemaphore({}), std::nullopt);
+        if (!semaphore)
         {
-          auto semaphore = map_vk_error(
-            info.device.device().createSemaphore({}), std::nullopt);
-          if (!semaphore)
-          {
-            return std::unexpected { std::move(semaphore).error() };
-          }
-          frames[ index ].present_complete = std::move(*semaphore);
+          return std::unexpected {std::move(semaphore).error()};
         }
-        return {};
-      })
+        frames[ index ].present_complete = std::move(*semaphore);
+      }
+      return {};
+    })
     .transform([ & ] { return std::move(frames); });
 }
 

@@ -11,13 +11,14 @@ import vkpp.error;
 
 namespace vkpp
 {
+
 using namespace std::string_view_literals;
 
 export struct virtual_slice
 {
-  VmaVirtualAllocation allocation { VK_NULL_HANDLE };
-  vk::DeviceSize offset { 0UZ };
-  vk::DeviceSize size { 0UZ };
+  VmaVirtualAllocation allocation {VK_NULL_HANDLE};
+  vk::DeviceSize       offset {0UZ};
+  vk::DeviceSize       size {0UZ};
 };
 
 export class virtual_block
@@ -28,14 +29,14 @@ public:
   virtual_block(const virtual_block&) = delete;
 
   auto
-  operator=(const virtual_block&) -> virtual_block& = delete;
+  operator =(const virtual_block&) -> virtual_block& = delete;
 
   virtual_block(virtual_block&& other) noexcept
-  : block_ { std::exchange(other.block_, nullptr) }
+  : block_ {std::exchange(other.block_, nullptr)}
   {}
 
   auto
-  operator=(virtual_block&& other) noexcept -> virtual_block&
+  operator =(virtual_block&& other) noexcept -> virtual_block&
   {
     if (this != &other)
     {
@@ -47,31 +48,36 @@ public:
 
   ~virtual_block() { destroy(); }
 
-  [[nodiscard]] static auto
+  [[nodiscard]]
+  static
+  auto
   create(vk::DeviceSize size) -> std::expected<virtual_block, error_t>
   {
-    const VmaVirtualBlockCreateInfo create_info { .size = size };
-    virtual_block out {};
+    const VmaVirtualBlockCreateInfo create_info {.size = size};
+    virtual_block                   out {};
 
     if (vmaCreateVirtualBlock(&create_info, &out.block_) != VK_SUCCESS)
     {
-      return std::unexpected { make_app_error(app_error_code::invalid_state) };
+      return std::unexpected {make_app_error(app_error_code::invalid_state)};
     }
     return out;
   }
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   allocate(vk::DeviceSize size, vk::DeviceSize alignment = 0UZ)
     -> std::expected<virtual_slice, error_t>
   {
     const VmaVirtualAllocationCreateInfo allocation_info {
-      .size = size,
+      .size      = size,
       .alignment = alignment,
     };
-    virtual_slice slice { .size = size };
+    virtual_slice slice {.size = size};
 
-    if (vmaVirtualAllocate(block_, &allocation_info, &slice.allocation,
-          &slice.offset) != VK_SUCCESS)
+    if (
+      vmaVirtualAllocate(
+        block_, &allocation_info, &slice.allocation, &slice.offset) !=
+      VK_SUCCESS)
     {
       return std::unexpected {
         make_app_error(app_error_code::capacity_exhausted),
@@ -99,7 +105,7 @@ private:
     }
   }
 
-  VmaVirtualBlock block_ { VK_NULL_HANDLE };
+  VmaVirtualBlock block_ {VK_NULL_HANDLE};
 };
 
 } // namespace vkpp

@@ -16,6 +16,7 @@ import vkpp.capabilities;
 
 namespace vkpp
 {
+
 using namespace std::string_view_literals;
 
 export template<typename Resource>
@@ -24,45 +25,69 @@ class pending_upload
 public:
   pending_upload() = default;
 
-  pending_upload(staging_buffer&& staging, vk::raii::Semaphore&& copy_done,
-    submission&& primary, Resource&& value)
-  : staging_ { std::move(staging) }, copy_done_ { std::move(copy_done) },
-    submissions_ { std::move(primary), submission {} },
-    submission_count_ { 1U }, value_ { std::move(value) }
+  pending_upload(
+    staging_buffer&&      staging,
+    vk::raii::Semaphore&& copy_done,
+    submission&&          primary,
+    Resource&&            value)
+  : staging_ {std::move(staging)},
+    copy_done_ {std::move(copy_done)},
+    submissions_ {std::move(primary), submission {}},
+    submission_count_ {1U},
+    value_ {std::move(value)}
   {}
 
-  pending_upload(staging_buffer&& staging, vk::raii::Semaphore&& copy_done,
-    submission&& primary, submission&& secondary, Resource&& value)
-  : staging_ { std::move(staging) }, copy_done_ { std::move(copy_done) },
-    submissions_ { std::move(primary), std::move(secondary) },
-    submission_count_ { 2U }, value_ { std::move(value) }
+  pending_upload(
+    staging_buffer&&      staging,
+    vk::raii::Semaphore&& copy_done,
+    submission&&          primary,
+    submission&&          secondary,
+    Resource&&            value)
+  : staging_ {std::move(staging)},
+    copy_done_ {std::move(copy_done)},
+    submissions_ {std::move(primary), std::move(secondary)},
+    submission_count_ {2U},
+    value_ {std::move(value)}
   {}
 
-  pending_upload(stage_pool& pool, stage_allocation&& allocation,
-    vk::raii::Semaphore&& copy_done, submission&& primary, Resource&& value)
-  : pool_ { pool }, allocation_ { std::move(allocation) },
-    copy_done_ { std::move(copy_done) },
-    submissions_ { std::move(primary), submission {} },
-    submission_count_ { 1U }, value_ { std::move(value) }
+  pending_upload(
+    stage_pool&           pool,
+    stage_allocation&&    allocation,
+    vk::raii::Semaphore&& copy_done,
+    submission&&          primary,
+    Resource&&            value)
+  : pool_ {pool},
+    allocation_ {std::move(allocation)},
+    copy_done_ {std::move(copy_done)},
+    submissions_ {std::move(primary), submission {}},
+    submission_count_ {1U},
+    value_ {std::move(value)}
   {}
 
-  pending_upload(stage_pool& pool, stage_allocation&& allocation,
-    vk::raii::Semaphore&& copy_done, submission&& primary,
-    submission&& secondary, Resource&& value)
-  : pool_ { pool }, allocation_ { std::move(allocation) },
-    copy_done_ { std::move(copy_done) },
-    submissions_ { std::move(primary), std::move(secondary) },
-    submission_count_ { 2U }, value_ { std::move(value) }
+  pending_upload(
+    stage_pool&           pool,
+    stage_allocation&&    allocation,
+    vk::raii::Semaphore&& copy_done,
+    submission&&          primary,
+    submission&&          secondary,
+    Resource&&            value)
+  : pool_ {pool},
+    allocation_ {std::move(allocation)},
+    copy_done_ {std::move(copy_done)},
+    submissions_ {std::move(primary), std::move(secondary)},
+    submission_count_ {2U},
+    value_ {std::move(value)}
   {}
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   join() && -> std::expected<Resource, error_t>
   {
     for (std::uint32_t index : std::views::indices(submission_count_))
     {
       if (auto done = submissions_[ index ].wait(); !done)
       {
-        return std::unexpected { std::move(done).error() };
+        return std::unexpected {std::move(done).error()};
       }
     }
     if (pool_.has_value())
@@ -74,67 +99,72 @@ public:
   }
 
 private:
-  staging_buffer staging_ {};
+  staging_buffer             staging_ {};
   std::optional<stage_pool&> pool_ {};
-  stage_allocation allocation_ {};
-  vk::raii::Semaphore copy_done_ { nullptr };
-  std::array<submission, 2> submissions_ {};
-  std::uint32_t submission_count_ { 0U };
-  Resource value_ {};
+  stage_allocation           allocation_ {};
+  vk::raii::Semaphore        copy_done_ {nullptr};
+  std::array<submission, 2>  submissions_ {};
+  std::uint32_t              submission_count_ {0U};
+  Resource                   value_ {};
 };
 
 export struct buffer_upload_create_info
 {
-  device_context& device;
-  command_pool& pool;
+  device_context&              device;
+  command_pool&                pool;
   std::optional<command_pool&> transfer_pool {};
-  std::span<const std::byte> bytes {};
-  vk::BufferUsageFlags gpu_usage {};
-  std::optional<stage_pool&> stage_pool {};
+  std::span<const std::byte>   bytes {};
+  vk::BufferUsageFlags         gpu_usage {};
+  std::optional<stage_pool&>   stage_pool {};
 };
 
 export template<buffer_kind Kind>
 struct buffer_upload_create_info_for
 {
-  device_context& device;
-  command_pool& pool;
+  device_context&              device;
+  command_pool&                pool;
   std::optional<command_pool&> transfer_pool {};
-  std::span<const std::byte> bytes {};
-  std::optional<stage_pool&> stage_pool {};
-  resource_create_options options {};
+  std::span<const std::byte>   bytes {};
+  std::optional<stage_pool&>   stage_pool {};
+  resource_create_options      options {};
 };
 
-[[nodiscard]] auto
-submit_single_queue_buffer_copy(const buffer_upload_create_info& create_info,
-  vk::Buffer source_buffer, vk::Buffer destination_buffer,
-  vk::DeviceSize byte_size, vk::DeviceSize src_offset)
-  -> std::expected<submission, error_t>
+[[nodiscard]]
+auto
+submit_single_queue_buffer_copy(
+  const buffer_upload_create_info& create_info,
+  vk::Buffer                       source_buffer,
+  vk::Buffer                       destination_buffer,
+  vk::DeviceSize                   byte_size,
+  vk::DeviceSize src_offset) -> std::expected<submission, error_t>
 {
   single_time_submit single_time {
     create_info.pool,
     create_info.device.device(),
     create_info.device.graphics_queue(),
   };
-  return single_time.begin().and_then(
-    [ & ] -> std::expected<submission, error_t>
-    {
-      const vk::BufferCopy region {
-        .srcOffset = src_offset,
-        .dstOffset = 0UZ,
-        .size = byte_size,
-      };
-      single_time.command_buffer().copyBuffer(
-        source_buffer, destination_buffer, region);
-      return single_time.end_and_submit(upload::deferred);
-    });
+  return single_time.begin().and_then([ & ] -> std::expected<submission, error_t> {
+    const vk::BufferCopy region {
+      .srcOffset = src_offset,
+      .dstOffset = 0UZ,
+      .size      = byte_size,
+    };
+    single_time.command_buffer().copyBuffer(
+      source_buffer, destination_buffer, region);
+    return single_time.end_and_submit(upload::deferred);
+  });
 }
 
-[[nodiscard]] auto
-submit_transfer_copy_and_release(const buffer_upload_create_info& create_info,
-  ownership_transfer transfer, vk::Semaphore signal_copy_done,
-  vk::Buffer source_buffer, vk::Buffer destination_buffer,
-  vk::DeviceSize byte_size, vk::DeviceSize src_offset)
-  -> std::expected<submission, error_t>
+[[nodiscard]]
+auto
+submit_transfer_copy_and_release(
+  const buffer_upload_create_info& create_info,
+  ownership_transfer               transfer,
+  vk::Semaphore                    signal_copy_done,
+  vk::Buffer                       source_buffer,
+  vk::Buffer                       destination_buffer,
+  vk::DeviceSize                   byte_size,
+  vk::DeviceSize src_offset) -> std::expected<submission, error_t>
 {
   single_time_submit transfer_submit {
     *create_info.transfer_pool,
@@ -142,28 +172,32 @@ submit_transfer_copy_and_release(const buffer_upload_create_info& create_info,
     create_info.device.transfer_queue(),
   };
   return transfer_submit.begin().and_then(
-    [ & ] -> std::expected<submission, error_t>
-    {
+    [ & ] -> std::expected<submission, error_t> {
       const vk::BufferCopy region {
         .srcOffset = src_offset,
         .dstOffset = 0UZ,
-        .size = byte_size,
+        .size      = byte_size,
       };
       transfer_submit.command_buffer().copyBuffer(
         source_buffer, destination_buffer, region);
       const buffer_barrier release = release_buffer_ownership(
-        destination_buffer, transfer, vk::PipelineStageFlagBits2::eCopy,
+        destination_buffer,
+        transfer,
+        vk::PipelineStageFlagBits2::eCopy,
         vk::AccessFlagBits2::eTransferWrite);
       record_barriers(
-        transfer_submit.command_buffer(), std::span { &release, 1UZ });
+        transfer_submit.command_buffer(), std::span {&release, 1UZ});
       return transfer_submit.end_and_submit(
-        upload::deferred, { .signal = signal_copy_done });
+        upload::deferred, {.signal = signal_copy_done});
     });
 }
 
-[[nodiscard]] auto
-submit_graphics_acquire(const buffer_upload_create_info& create_info,
-  ownership_transfer transfer, vk::Semaphore wait_copy_done,
+[[nodiscard]]
+auto
+submit_graphics_acquire(
+  const buffer_upload_create_info& create_info,
+  ownership_transfer               transfer,
+  vk::Semaphore                    wait_copy_done,
   vk::Buffer destination_buffer) -> std::expected<submission, error_t>
 {
   single_time_submit graphics_submit {
@@ -173,36 +207,41 @@ submit_graphics_acquire(const buffer_upload_create_info& create_info,
   };
 
   return graphics_submit.begin().and_then(
-    [ & ] -> std::expected<submission, error_t>
-    {
+    [ & ] -> std::expected<submission, error_t> {
       const buffer_barrier acquire = acquire_buffer_ownership(
-        destination_buffer, transfer, vk::PipelineStageFlagBits2::eAllCommands,
+        destination_buffer,
+        transfer,
+        vk::PipelineStageFlagBits2::eAllCommands,
         vk::AccessFlagBits2::eMemoryRead);
       record_barriers(
-        graphics_submit.command_buffer(), std::span { &acquire, 1UZ });
+        graphics_submit.command_buffer(), std::span {&acquire, 1UZ});
       return graphics_submit.end_and_submit(
-        upload::deferred, { .wait = wait_copy_done });
+        upload::deferred, {.wait = wait_copy_done});
     });
 }
 
 template<buffer_kind Kind>
-[[nodiscard]] auto
-submit_buffer_upload(const buffer_upload_create_info_for<Kind>& kinded,
-  staging_buffer&& staging, buffer_resource<Kind>&& device_local)
+[[nodiscard]]
+auto
+submit_buffer_upload(
+  const buffer_upload_create_info_for<Kind>& kinded,
+  staging_buffer&&                           staging,
+  buffer_resource<Kind>&&                    device_local)
   -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
 {
   const buffer_upload_create_info create_info {
-    .device = kinded.device,
-    .pool = kinded.pool,
+    .device        = kinded.device,
+    .pool          = kinded.pool,
     .transfer_pool = kinded.transfer_pool,
-    .bytes = kinded.bytes,
-    .gpu_usage = {},
-    .stage_pool = kinded.stage_pool,
+    .bytes         = kinded.bytes,
+    .gpu_usage     = {},
+    .stage_pool    = kinded.stage_pool,
   };
-  const vk::Buffer source_buffer = staging.buffer();
-  const vk::Buffer destination_buffer = device_local.buffer();
-  const vk::DeviceSize byte_size = device_local.size();
-  const bool dual_queue = create_info.device.has_dedicated_transfer() &&
+  const vk::Buffer     source_buffer      = staging.buffer();
+  const vk::Buffer     destination_buffer = device_local.buffer();
+  const vk::DeviceSize byte_size          = device_local.size();
+  const bool           dual_queue =
+    create_info.device.has_dedicated_transfer() &&
     create_info.transfer_pool.has_value();
 
   if (!dual_queue)
@@ -210,12 +249,11 @@ submit_buffer_upload(const buffer_upload_create_info_for<Kind>& kinded,
     return submit_single_queue_buffer_copy(
       create_info, source_buffer, destination_buffer, byte_size, 0UZ)
       .transform(
-        [ & ](
-          submission&& copy_submitted) -> pending_upload<buffer_resource<Kind>>
-        {
+        [ & ](submission&& copy_submitted)
+          -> pending_upload<buffer_resource<Kind>> {
           return pending_upload<buffer_resource<Kind>> {
             std::move(staging),
-            vk::raii::Semaphore { nullptr },
+            vk::raii::Semaphore {nullptr},
             std::move(copy_submitted),
             std::move(device_local),
           };
@@ -230,21 +268,24 @@ submit_buffer_upload(const buffer_upload_create_info_for<Kind>& kinded,
     create_info.device.device().createSemaphore({}), std::nullopt)
     .and_then(
       [ & ](vk::raii::Semaphore&& copy_done)
-        -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
-      {
-        return submit_transfer_copy_and_release(create_info, transfer,
-          *copy_done, source_buffer, destination_buffer, byte_size, 0UZ)
+        -> std::expected<pending_upload<buffer_resource<Kind>>, error_t> {
+        return submit_transfer_copy_and_release(
+          create_info,
+          transfer,
+          *copy_done,
+          source_buffer,
+          destination_buffer,
+          byte_size,
+          0UZ)
           .and_then(
             [ & ](submission&& release_submitted)
-              -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
-            {
+              -> std::expected<pending_upload<buffer_resource<Kind>>, error_t> {
               return submit_graphics_acquire(
                 create_info, transfer, *copy_done, destination_buffer)
                 .transform(
                   [ &, release_submitted = std::move(release_submitted) ](
                     submission&& acquire_submitted) mutable
-                    -> pending_upload<buffer_resource<Kind>>
-                  {
+                    -> pending_upload<buffer_resource<Kind>> {
                     return pending_upload<buffer_resource<Kind>> {
                       std::move(staging),
                       std::move(copy_done),
@@ -258,25 +299,29 @@ submit_buffer_upload(const buffer_upload_create_info_for<Kind>& kinded,
 }
 
 template<buffer_kind Kind>
-[[nodiscard]] auto
-submit_buffer_upload(const buffer_upload_create_info_for<Kind>& kinded,
-  stage_pool& pool, stage_allocation&& allocation,
-  buffer_resource<Kind>&& device_local)
+[[nodiscard]]
+auto
+submit_buffer_upload(
+  const buffer_upload_create_info_for<Kind>& kinded,
+  stage_pool&                                pool,
+  stage_allocation&&                         allocation,
+  buffer_resource<Kind>&&                    device_local)
   -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
 {
   const buffer_upload_create_info create_info {
-    .device = kinded.device,
-    .pool = kinded.pool,
+    .device        = kinded.device,
+    .pool          = kinded.pool,
     .transfer_pool = kinded.transfer_pool,
-    .bytes = kinded.bytes,
-    .gpu_usage = {},
-    .stage_pool = kinded.stage_pool,
+    .bytes         = kinded.bytes,
+    .gpu_usage     = {},
+    .stage_pool    = kinded.stage_pool,
   };
-  const vk::Buffer source_buffer = pool.buffer();
-  const vk::DeviceSize src_offset = allocation.offset;
-  const vk::Buffer destination_buffer = device_local.buffer();
-  const vk::DeviceSize byte_size = device_local.size();
-  const bool dual_queue = create_info.device.has_dedicated_transfer() &&
+  const vk::Buffer     source_buffer      = pool.buffer();
+  const vk::DeviceSize src_offset         = allocation.offset;
+  const vk::Buffer     destination_buffer = device_local.buffer();
+  const vk::DeviceSize byte_size          = device_local.size();
+  const bool           dual_queue =
+    create_info.device.has_dedicated_transfer() &&
     create_info.transfer_pool.has_value();
 
   if (!dual_queue)
@@ -284,13 +329,12 @@ submit_buffer_upload(const buffer_upload_create_info_for<Kind>& kinded,
     return submit_single_queue_buffer_copy(
       create_info, source_buffer, destination_buffer, byte_size, src_offset)
       .transform(
-        [ & ](
-          submission&& copy_submitted) -> pending_upload<buffer_resource<Kind>>
-        {
+        [ & ](submission&& copy_submitted)
+          -> pending_upload<buffer_resource<Kind>> {
           return pending_upload<buffer_resource<Kind>> {
             pool,
             std::move(allocation),
-            vk::raii::Semaphore { nullptr },
+            vk::raii::Semaphore {nullptr},
             std::move(copy_submitted),
             std::move(device_local),
           };
@@ -305,21 +349,24 @@ submit_buffer_upload(const buffer_upload_create_info_for<Kind>& kinded,
     create_info.device.device().createSemaphore({}), std::nullopt)
     .and_then(
       [ & ](vk::raii::Semaphore&& copy_done)
-        -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
-      {
-        return submit_transfer_copy_and_release(create_info, transfer,
-          *copy_done, source_buffer, destination_buffer, byte_size, src_offset)
+        -> std::expected<pending_upload<buffer_resource<Kind>>, error_t> {
+        return submit_transfer_copy_and_release(
+          create_info,
+          transfer,
+          *copy_done,
+          source_buffer,
+          destination_buffer,
+          byte_size,
+          src_offset)
           .and_then(
             [ & ](submission&& release_submitted)
-              -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
-            {
+              -> std::expected<pending_upload<buffer_resource<Kind>>, error_t> {
               return submit_graphics_acquire(
                 create_info, transfer, *copy_done, destination_buffer)
                 .transform(
                   [ &, release_submitted = std::move(release_submitted) ](
                     submission&& acquire_submitted) mutable
-                    -> pending_upload<buffer_resource<Kind>>
-                  {
+                    -> pending_upload<buffer_resource<Kind>> {
                     return pending_upload<buffer_resource<Kind>> {
                       pool,
                       std::move(allocation),
@@ -333,7 +380,8 @@ submit_buffer_upload(const buffer_upload_create_info_for<Kind>& kinded,
       });
 }
 
-export template<buffer_kind Kind>
+export
+template<buffer_kind Kind>
 auto
 upload_device_local_buffer(
   const buffer_upload_create_info_for<Kind>& create_info)
@@ -346,32 +394,35 @@ upload_device_local_buffer(
     return create_info.stage_pool->allocate(byte_size, 4UZ)
       .and_then(
         [ & ](stage_allocation&& allocation)
-          -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
-        {
+          -> std::expected<pending_upload<buffer_resource<Kind>>, error_t> {
           std::memcpy(allocation.mapped, create_info.bytes.data(), byte_size);
-          return buffer_resource<Kind>::create(create_info.device.allocator(),
-            byte_size, create_info.options,
+          return buffer_resource<Kind>::create(
+            create_info.device.allocator(),
+            byte_size,
+            create_info.options,
             create_info.device.selected_capabilities().descriptor)
             .and_then(
               [ &, allocation = std::move(allocation) ](
                 buffer_resource<Kind>&& device_local) mutable
-                -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
-              {
-                return submit_buffer_upload(create_info,
-                  *create_info.stage_pool, std::move(allocation),
+                -> std::expected<pending_upload<buffer_resource<Kind>>, error_t> {
+                return submit_buffer_upload(
+                  create_info,
+                  *create_info.stage_pool,
+                  std::move(allocation),
                   std::move(device_local));
               });
         })
-      .and_then([](pending_upload<buffer_resource<Kind>>&& pending)
-                  -> std::expected<buffer_resource<Kind>, error_t>
-        { return std::move(pending).join(); });
+      .and_then(
+        [](pending_upload<buffer_resource<Kind>>&& pending)
+          -> std::expected<buffer_resource<Kind>, error_t> {
+          return std::move(pending).join();
+        });
   }
 
   return staging_buffer::create(create_info.device.allocator(), byte_size)
     .and_then(
       [ & ](staging_buffer&& staging)
-        -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
-      {
+        -> std::expected<pending_upload<buffer_resource<Kind>>, error_t> {
         if (staging.mapped() == nullptr)
         {
           return std::unexpected {
@@ -380,25 +431,30 @@ upload_device_local_buffer(
         }
 
         std::memcpy(staging.mapped(), create_info.bytes.data(), byte_size);
-        return buffer_resource<Kind>::create(create_info.device.allocator(),
-          byte_size, create_info.options,
+        return buffer_resource<Kind>::create(
+          create_info.device.allocator(),
+          byte_size,
+          create_info.options,
           create_info.device.selected_capabilities().descriptor)
           .and_then(
             [ &, staging = std::move(staging) ](
               buffer_resource<Kind>&& device_local) mutable
-              -> std::expected<pending_upload<buffer_resource<Kind>>, error_t>
-            {
+              -> std::expected<pending_upload<buffer_resource<Kind>>, error_t> {
               return submit_buffer_upload(
                 create_info, std::move(staging), std::move(device_local));
             });
       })
-    .and_then([](pending_upload<buffer_resource<Kind>>&& pending)
-                -> std::expected<buffer_resource<Kind>, error_t>
-      { return std::move(pending).join(); });
+    .and_then(
+      [](pending_upload<buffer_resource<Kind>>&& pending)
+        -> std::expected<buffer_resource<Kind>, error_t> {
+        return std::move(pending).join();
+      });
 }
 
-export template<descriptor_table_backend Backend>
-[[nodiscard]] auto
+export
+template<descriptor_table_backend Backend>
+[[nodiscard]]
+auto
 upload_storage_buffer(
   const buffer_upload_create_info_for<buffer_kind::storage>& create_info)
   -> std::expected<storage_buffer, error_t>

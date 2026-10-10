@@ -10,6 +10,7 @@ import vkpp.memory;
 
 namespace vkpp
 {
+
 using namespace std::string_view_literals;
 
 export class gpu_image
@@ -18,31 +19,31 @@ public:
   gpu_image() = default;
 
   gpu_image(VmaAllocator allocator, vk::Image image, VmaAllocation allocation)
-  : allocator_ { allocator }, image_ { image }, allocation_ { allocation }
+  : allocator_ {allocator}, image_ {image}, allocation_ {allocation}
   {}
 
-  gpu_image(const gpu_image&) = delete (
+  gpu_image(const gpu_image&) = delete(
     "There is no reason to copy initialise vulkan image\n"
     "Each image should be unique");
   auto
-  operator=(const gpu_image&) -> gpu_image& = delete ( //
+  operator =(const gpu_image&) -> gpu_image& = delete( //
     "There is no reason to copy assign vulkan image\n"
     "Each image should be unique");
 
   gpu_image(gpu_image&& other) noexcept
-  : allocator_ { std::exchange(other.allocator_, {}) },
-    image_ { std::exchange(other.image_, {}) },
-    allocation_ { std::exchange(other.allocation_, {}) }
+  : allocator_ {std::exchange(other.allocator_, {})},
+    image_ {std::exchange(other.image_, {})},
+    allocation_ {std::exchange(other.allocation_, {})}
   {}
 
   auto
-  operator=(gpu_image&& other) noexcept -> gpu_image&
+  operator =(gpu_image&& other) noexcept -> gpu_image&
   {
     if (this != &other)
     {
       destroy();
-      allocator_ = std::exchange(other.allocator_, {});
-      image_ = std::exchange(other.image_, {});
+      allocator_  = std::exchange(other.allocator_, {});
+      image_      = std::exchange(other.image_, {});
       allocation_ = std::exchange(other.allocation_, {});
     }
     return *this;
@@ -65,8 +66,8 @@ private:
     }
   }
 
-  VmaAllocator allocator_ {};
-  vk::Image image_ {};
+  VmaAllocator  allocator_ {};
+  vk::Image     image_ {};
   VmaAllocation allocation_ {};
 };
 
@@ -75,37 +76,42 @@ export class gpu_buffer
 public:
   gpu_buffer() = default;
 
-  gpu_buffer(VmaAllocator allocator, vk::Buffer buffer,
-    VmaAllocation allocation, void* mapped)
-  : allocator_ { allocator }, buffer_ { buffer }, allocation_ { allocation },
-    mapped_p { mapped }
+  gpu_buffer(
+    VmaAllocator  allocator,
+    vk::Buffer    buffer,
+    VmaAllocation allocation,
+    void*         mapped)
+  : allocator_ {allocator},
+    buffer_ {buffer},
+    allocation_ {allocation},
+    mapped_p {mapped}
   {}
 
-  gpu_buffer(const gpu_buffer&) = delete (
+  gpu_buffer(const gpu_buffer&) = delete(
     "There is no reason to copy initialise vulkan buffer\n"
     "Each buffer should be unique");
   auto
-  operator=(const gpu_buffer&) -> gpu_buffer& = delete ( //
+  operator =(const gpu_buffer&) -> gpu_buffer& = delete( //
     "There is no reason to copy assign vulkan buffer\n"
     "Each buffer should be unique");
 
   gpu_buffer(gpu_buffer&& other) noexcept
-  : allocator_ { std::exchange(other.allocator_, {}) },
-    buffer_ { std::exchange(other.buffer_, {}) },
-    allocation_ { std::exchange(other.allocation_, {}) },
-    mapped_p { std::exchange(other.mapped_p, {}) }
+  : allocator_ {std::exchange(other.allocator_, {})},
+    buffer_ {std::exchange(other.buffer_, {})},
+    allocation_ {std::exchange(other.allocation_, {})},
+    mapped_p {std::exchange(other.mapped_p, {})}
   {}
 
   auto
-  operator=(gpu_buffer&& other) noexcept -> gpu_buffer&
+  operator =(gpu_buffer&& other) noexcept -> gpu_buffer&
   {
     if (this != &other)
     {
       destroy();
-      allocator_ = std::exchange(other.allocator_, {});
-      buffer_ = std::exchange(other.buffer_, {});
+      allocator_  = std::exchange(other.allocator_, {});
+      buffer_     = std::exchange(other.buffer_, {});
       allocation_ = std::exchange(other.allocation_, {});
-      mapped_p = std::exchange(other.mapped_p, {});
+      mapped_p    = std::exchange(other.mapped_p, {});
     }
     return *this;
   }
@@ -122,19 +128,21 @@ public:
   mapped() const -> void*
   { return mapped_p; }
 
-  [[nodiscard]] auto
+  [[nodiscard]]
+  auto
   invalidate_mapped(vk::DeviceSize offset, vk::DeviceSize size) const
     -> std::expected<void, error_t>
   {
     if (allocation_ == nullptr)
     {
-      return std::unexpected { make_app_error(app_error_code::invalid_state) };
+      return std::unexpected {make_app_error(app_error_code::invalid_state)};
     }
-    if (const auto result =
-          vmaInvalidateAllocation(allocator_, allocation_, offset, size);
+    if (
+      const auto result =
+        vmaInvalidateAllocation(allocator_, allocation_, offset, size);
       result != VK_SUCCESS)
     {
-      return std::unexpected { make_vma_error(result) };
+      return std::unexpected {make_vma_error(result)};
     }
     return {};
   }
@@ -149,32 +157,33 @@ private:
     }
   }
 
-  VmaAllocator allocator_ {};
-  vk::Buffer buffer_ {};
+  VmaAllocator  allocator_ {};
+  vk::Buffer    buffer_ {};
   VmaAllocation allocation_ {};
-  void* mapped_p {};
+  void*         mapped_p {};
 };
 
 export class vma_policy
 {
 public:
-  using image_handle = gpu_image;
+  using image_handle  = gpu_image;
   using buffer_handle = gpu_buffer;
 
   vma_policy() = default;
 
-  vma_policy(const vma_policy&) = delete (
-    "There is no reason to copy initialise vma_policy");
+  vma_policy(const vma_policy&) = delete("There is no reason to copy "
+                                         "initialise vma_policy");
   auto
-  operator=(const vma_policy&)
-    -> vma_policy& = delete ("There is no reason to copy assign vma_policy");
+  operator =(const vma_policy&) -> vma_policy& = delete("There is no reason to "
+                                                        "copy assign "
+                                                        "vma_policy");
 
   vma_policy(vma_policy&& other) noexcept
-  : allocator_ { std::exchange(other.allocator_, {}) }
+  : allocator_ {std::exchange(other.allocator_, {})}
   {}
 
   auto
-  operator=(vma_policy&& other) noexcept -> vma_policy&
+  operator =(vma_policy&& other) noexcept -> vma_policy&
   {
     if (this != &other)
     {
@@ -187,9 +196,13 @@ public:
   ~vma_policy() { destroy(); }
 
   [[nodiscard]]
-  static auto
-  create(vk::Instance instance, vk::PhysicalDevice physical_device,
-    vk::Device device, std::uint32_t api_version,
+  static
+  auto
+  create(
+    vk::Instance       instance,
+    vk::PhysicalDevice physical_device,
+    vk::Device         device,
+    std::uint32_t      api_version,
     bool buffer_device_address = false) -> std::expected<vma_policy, error_t>
   {
     VmaAllocatorCreateFlags flags {};
@@ -198,20 +211,21 @@ public:
       flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
     }
     const VmaAllocatorCreateInfo create_info {
-      .flags = flags,
-      .physicalDevice = static_cast<VkPhysicalDevice>(physical_device),
-      .device = static_cast<VkDevice>(device),
-      .instance = static_cast<VkInstance>(instance),
+      .flags            = flags,
+      .physicalDevice   = static_cast<VkPhysicalDevice>(physical_device),
+      .device           = static_cast<VkDevice>(device),
+      .instance         = static_cast<VkInstance>(instance),
       .vulkanApiVersion = api_version,
     };
 
     VmaAllocator allocator {};
-    if (const auto result = vmaCreateAllocator(&create_info, &allocator);
+    if (
+      const auto result = vmaCreateAllocator(&create_info, &allocator);
       result != VK_SUCCESS)
     {
-      return std::unexpected { make_vma_error(result) };
+      return std::unexpected {make_vma_error(result)};
     }
-    return vma_policy { allocator };
+    return vma_policy {allocator};
   }
 
   [[nodiscard]]
@@ -219,20 +233,21 @@ public:
   create_image(const vk::ImageCreateInfo& image_info, memory_intent intent)
     -> std::expected<image_handle, error_t>
   {
-    const VkImageCreateInfo& c_image_info = image_info;
+    const VkImageCreateInfo&      c_image_info    = image_info;
     const VmaAllocationCreateInfo allocation_info = to_allocation_info(intent);
 
-    VkImage image {};
+    VkImage       image {};
     VmaAllocation allocation {};
-    if (const auto result = vmaCreateImage(allocator_, &c_image_info,
-          &allocation_info, &image, &allocation, nullptr);
+    if (
+      const auto result = vmaCreateImage(
+        allocator_, &c_image_info, &allocation_info, &image, &allocation, nullptr);
       result != VK_SUCCESS)
     {
-      return std::unexpected { make_vma_error(result) };
+      return std::unexpected {make_vma_error(result)};
     }
     return image_handle {
       allocator_,
-      vk::Image { image },
+      vk::Image {image},
       allocation,
     };
   }
@@ -242,55 +257,60 @@ public:
   create_buffer(const vk::BufferCreateInfo& buffer_info, memory_intent intent)
     -> std::expected<buffer_handle, error_t>
   {
-    const VkBufferCreateInfo& c_buffer_info = buffer_info;
+    const VkBufferCreateInfo&     c_buffer_info   = buffer_info;
     const VmaAllocationCreateInfo allocation_info = to_allocation_info(intent);
 
-    VkBuffer buffer {};
-    VmaAllocation allocation {};
+    VkBuffer          buffer {};
+    VmaAllocation     allocation {};
     VmaAllocationInfo info {};
-    if (const auto result = vmaCreateBuffer(allocator_, &c_buffer_info,
-          &allocation_info, &buffer, &allocation, &info);
+    if (
+      const auto result = vmaCreateBuffer(
+        allocator_, &c_buffer_info, &allocation_info, &buffer, &allocation, &info);
       result != VK_SUCCESS)
     {
-      return std::unexpected { make_vma_error(result) };
+      return std::unexpected {make_vma_error(result)};
     }
     return buffer_handle {
       allocator_,
-      vk::Buffer { buffer },
+      vk::Buffer {buffer},
       allocation,
       info.pMappedData,
     };
   }
 
 private:
-  explicit vma_policy(VmaAllocator allocator) : allocator_ { allocator } {}
+  explicit vma_policy(VmaAllocator allocator) : allocator_ {allocator} {}
 
   auto
   destroy() noexcept -> void
   { vmaDestroyAllocator(allocator_); }
 
   [[nodiscard]]
-  static constexpr auto
+  static constexpr
+  auto
   to_allocation_info(memory_intent intent) -> VmaAllocationCreateInfo
   {
     switch (intent)
     {
-    case memory_intent::gpu_only: return { .usage = VMA_MEMORY_USAGE_AUTO };
-    case memory_intent::staging:
+    case memory_intent::gpu_only : return {.usage = VMA_MEMORY_USAGE_AUTO};
+    case memory_intent::staging :
       return {
-        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+        .flags =
+          VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
           VMA_ALLOCATION_CREATE_MAPPED_BIT,
         .usage = VMA_MEMORY_USAGE_AUTO,
       };
-    case memory_intent::cpu_to_gpu:
+    case memory_intent::cpu_to_gpu :
       return {
-        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+        .flags =
+          VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
           VMA_ALLOCATION_CREATE_MAPPED_BIT,
         .usage = VMA_MEMORY_USAGE_AUTO,
       };
-    case memory_intent::gpu_to_cpu:
+    case memory_intent::gpu_to_cpu :
       return {
-        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
+        .flags =
+          VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
           VMA_ALLOCATION_CREATE_MAPPED_BIT,
         .usage = VMA_MEMORY_USAGE_AUTO,
       };
