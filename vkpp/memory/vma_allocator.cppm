@@ -91,7 +91,7 @@ public:
     "There is no reason to copy initialise vulkan buffer\n"
     "Each buffer should be unique");
   auto
-  operator =(const gpu_buffer&) -> gpu_buffer& = delete( //
+  operator =(const gpu_buffer&) -> gpu_buffer& = delete(
     "There is no reason to copy assign vulkan buffer\n"
     "Each buffer should be unique");
 
@@ -171,12 +171,14 @@ public:
 
   vma_policy() = default;
 
-  vma_policy(const vma_policy&) = delete("There is no reason to copy "
-                                         "initialise vma_policy");
+  vma_policy(const vma_policy&) = delete(
+    "There is no reason to copy "
+    "initialise vma_policy");
   auto
-  operator =(const vma_policy&) -> vma_policy& = delete("There is no reason to "
-                                                        "copy assign "
-                                                        "vma_policy");
+  operator =(const vma_policy&) -> vma_policy& = delete(
+    "There is no reason to "
+    "copy assign "
+    "vma_policy");
 
   vma_policy(vma_policy&& other) noexcept
   : allocator_ {std::exchange(other.allocator_, {})}

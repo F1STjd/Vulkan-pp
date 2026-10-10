@@ -48,8 +48,8 @@ AlignOperands: Align
 AlignTrailingComments:
   Kind:            Always
   OverEmptyLines:  0
-AllowAllArgumentsOnNextLine: true  # sprawdzic
-AllowAllParametersOfDeclarationOnNextLine: true # to tez
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
 AllowBreakBeforeNoexceptSpecifier: OnlyWithParen
 AllowShortBlocksOnASingleLine: Always
 AllowShortCaseLabelsOnASingleLine: true
@@ -60,7 +60,7 @@ AllowShortIfStatementsOnASingleLine: AllIfsAndElse
 AllowShortLambdasOnASingleLine: All
 AllowShortLoopsOnASingleLine: true
 AllowShortRecordOnASingleLine: Empty
-AlwaysBreakBeforeMultilineStrings: false # sprawdzic
+AlwaysBreakBeforeMultilineStrings: true
 AttributeMacros: [__capability, __output, __unused]
 BinPackLongBracedList: false # sprawdzic
 BinPackParameters: OnePerLine
