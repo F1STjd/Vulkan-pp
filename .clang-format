@@ -62,7 +62,7 @@ AllowShortLoopsOnASingleLine: true
 AllowShortRecordOnASingleLine: Empty
 AlwaysBreakBeforeMultilineStrings: true
 AttributeMacros: [__capability, __output, __unused]
-BinPackLongBracedList: false # sprawdzic
+BinPackLongBracedList: false
 BinPackParameters: OnePerLine
 BitFieldColonSpacing: Both
 BreakBeforeBraces: Custom
@@ -80,7 +80,7 @@ BraceWrapping:
   AfterExternBlock: true
   BeforeCatch:     true
   BeforeElse:      true
-  BeforeLambdaBody: false  # moze byc ale nie wiem
+  BeforeLambdaBody: false
   BeforeWhile:     true
   IndentBraces:    false
   SplitEmptyFunction: false
@@ -123,7 +123,7 @@ BreakInheritanceList: AfterColon
 BreakStringLiterals: true
 BreakTemplateDeclarations: Yes
 ColumnLimit:     80
-#CommentPragmas:  '' # nie potrzebne
+#CommentPragmas:  ''
 CompactNamespaces: false
 ConstructorInitializerIndentWidth: 0
 ContinuationIndentWidth: 2
@@ -205,7 +205,7 @@ QualifierAlignment: Left
 ReferenceAlignment: Left
 ReflowComments:  IndentOnly
 RemoveBracesLLVM: false
-RemoveEmptyLinesInUnwrappedLines: true #moze cos rozwalic
+RemoveEmptyLinesInUnwrappedLines: true
 RemoveParentheses: Leave
 RemoveSemicolon: false
 RequiresClausePosition: OwnLine
@@ -243,7 +243,7 @@ SpaceBeforeSquareBrackets: false
 SpaceInEmptyBraces: Never
 SpacesBeforeTrailingComments: 1
 SpacesInAngles:  Never
-#SpacesInBlockComments: Always # nie dziala
+#SpacesInBlockComments: Always # clang-format 24
 SpacesInCStyleCastParentheses: false
 SpacesInConditionalStatement: false
 SpacesInContainerLiterals: true
