@@ -11,12 +11,17 @@ namespace vkpp
 namespace detail
 {
 
-export template<class>
-inline constexpr bool always_false_v { false };
-
 inline void
-layout_error([[maybe_unused]] const char* message)
+layout_error(const char*)
 {}
+
+template<std::size_t Count>
+consteval auto
+index_of_true(const std::array<bool, Count>& matches) -> std::size_t
+{
+  return std::ranges::distance(
+    matches.begin(), std::ranges::find(matches, true));
+}
 
 } // namespace detail
 
@@ -131,22 +136,14 @@ struct push_layout
   static consteval auto
   offset_of() -> std::uint32_t
   {
-    std::uint32_t found { std::numeric_limits<std::uint32_t>::max() };
-    std::size_t index {};
-    [[maybe_unused]] auto consider = [ & ]<class Field>()
-    {
-      if constexpr (std::is_same_v<Tag, typename Field::tag>)
-      {
-        found = offsets[ index ];
-      }
-      ++index;
+    constexpr std::size_t position {
+      detail::index_of_true(std::array<bool, sizeof...(Fields)> {
+        std::is_same_v<Tag, typename Fields::tag>...,
+      }),
     };
-    (consider.template operator()<Fields>(), ...);
-    if (found == std::numeric_limits<std::uint32_t>::max())
-    {
-      detail::layout_error("push_layout: tag not in field pack");
-    }
-    return found;
+    static_assert(
+      position < sizeof...(Fields), "push_layout: tag not in the field pack");
+    return offsets[ position ];
   }
 };
 
@@ -156,14 +153,15 @@ export struct classic_binding_id
   std::uint32_t binding {};
 };
 
-export enum class resource_scope : std::uint8_t {
+export enum class resource_scope : std::uint8_t
+{
   persistent,
   bindless,
   per_frame,
   per_pass,
 };
 
-export consteval auto
+export constexpr auto
 slot_of(resource_scope scope) -> std::uint32_t
 {
   switch (scope)
@@ -177,12 +175,24 @@ slot_of(resource_scope scope) -> std::uint32_t
   return 0U;
 }
 
-export template<resource_scope Scope, class... Decls>
+namespace detail
+{
+
+template<resource_scope Scope, class Declaration>
+struct scoped_declaration
+{
+  using declaration = Declaration;
+  static constexpr resource_scope scope_value { Scope };
+};
+
+} // namespace detail
+
+export template<resource_scope Scope, class... Declarations>
 struct scope
 {
-  static constexpr resource_scope value = Scope;
-  using declarations = std::tuple<Decls...>;
-  static constexpr std::size_t count = sizeof...(Decls);
+  static constexpr resource_scope value { Scope };
+  using scoped_declarations =
+    std::tuple<detail::scoped_declaration<Scope, Declarations>...>;
 };
 
 export template<std::uint32_t N>
@@ -211,56 +221,105 @@ struct array_count
   static constexpr std::uint32_t value { N };
 };
 
-export enum class resource_declaration_kind : std::uint8_t {
+export enum class resource_declaration_kind : std::uint8_t
+{
   storage,
   dynamic_uniform,
   cis,
   cis_table,
 };
 
-export template<class T, class... Traits>
+namespace detail
+{
+
+template<template<std::uint32_t> class Wrapper, class Trait>
+inline constexpr bool is_value_trait_v { false };
+
+template<template<std::uint32_t> class Wrapper, std::uint32_t Value>
+inline constexpr bool is_value_trait_v<Wrapper, Wrapper<Value>> { true };
+
+template<class Trait>
+inline constexpr bool is_stages_v { false };
+
+template<vk::ShaderStageFlagBits... Flags>
+inline constexpr bool is_stages_v<stages<Flags...>> { true };
+
+template<template<std::uint32_t> class Wrapper, class... Traits>
+consteval auto
+find_value_trait() -> std::optional<std::uint32_t>
+{
+  std::optional<std::uint32_t> found {};
+  [[maybe_unused]] auto consider = [ & ]<class Trait>
+  {
+    if constexpr (is_value_trait_v<Wrapper, Trait>) { found = Trait::value; }
+  };
+  (consider.template operator()<Traits>(), ...);
+  return found;
+}
+
+template<class... Traits>
+consteval auto
+find_stages() -> vk::ShaderStageFlags
+{
+  vk::ShaderStageFlags found { vk::ShaderStageFlagBits::eAll };
+  [[maybe_unused]] auto consider = [ & ]<class Trait>
+  {
+    if constexpr (is_stages_v<Trait>) { found = Trait::value; }
+  };
+  (consider.template operator()<Traits>(), ...);
+  return found;
+}
+
+template<resource_declaration_kind Kind, class Tag, class... Traits>
+struct resource_declaration
+{
+  static_assert(
+    ((is_value_trait_v<pin, Traits> ||
+       is_value_trait_v<variable_count, Traits> ||
+       is_value_trait_v<array_count, Traits> || is_stages_v<Traits>) &&
+      ...),
+    "resource declaration: unknown trait");
+
+  using tag = Tag;
+  static constexpr resource_declaration_kind kind { Kind };
+  static constexpr std::optional<std::uint32_t> pinned_binding {
+    find_value_trait<pin, Traits...>(),
+  };
+  static constexpr std::optional<std::uint32_t> variable_count_value {
+    find_value_trait<variable_count, Traits...>(),
+  };
+  static constexpr std::optional<std::uint32_t> array_count_value {
+    find_value_trait<array_count, Traits...>(),
+  };
+  static constexpr vk::ShaderStageFlags stage_flags {
+    find_stages<Traits...>(),
+  };
+};
+
+} // namespace detail
+
+template<class Tag, class... Traits>
 struct storage_resource
-{
-  using tag = T;
-  using value_type = T;
-  using traits_tuple = std::tuple<Traits...>;
-  static constexpr resource_declaration_kind kind {
-    resource_declaration_kind::storage
-  };
-};
+: detail::resource_declaration<resource_declaration_kind::storage, Tag,
+    Traits...>
+{};
 
-export template<class T, class... Traits>
+template<class Tag, class... Traits>
 struct dynamic_uniform_resource
-{
-  using tag = T;
-  using value_type = T;
-  using traits_tuple = std::tuple<Traits...>;
-  static constexpr resource_declaration_kind kind {
-    resource_declaration_kind::dynamic_uniform
-  };
-};
+: detail::resource_declaration<resource_declaration_kind::dynamic_uniform, Tag,
+    Traits...>
+{};
 
-export template<class T, class... Traits>
+template<class Tag, class... Traits>
 struct cis_resource
-{
-  using tag = T;
-  using value_type = T;
-  using traits_tuple = std::tuple<Traits...>;
-  static constexpr resource_declaration_kind kind {
-    resource_declaration_kind::cis
-  };
-};
+: detail::resource_declaration<resource_declaration_kind::cis, Tag, Traits...>
+{};
 
-export template<class T, class... Traits>
+template<class Tag, class... Traits>
 struct cis_table_resource
-{
-  using tag = T;
-  using value_type = T;
-  using traits_tuple = std::tuple<Traits...>;
-  static constexpr resource_declaration_kind kind {
-    resource_declaration_kind::cis_table
-  };
-};
+: detail::resource_declaration<resource_declaration_kind::cis_table, Tag,
+    Traits...>
+{};
 
 export struct binding_assignment
 {
@@ -273,120 +332,11 @@ export struct binding_assignment
   std::uint32_t count {};
   bool dynamic {};
   bool update_after_bind {};
+  vk::DescriptorBindingFlags binding_flags {};
 };
 
 namespace detail
 {
-
-template<class Needle, class... Traits>
-inline constexpr bool has_trait_v = (std::is_same_v<Needle, Traits> || ...);
-
-template<class>
-struct is_pin : std::false_type
-{};
-
-template<std::uint32_t N>
-struct is_pin<pin<N>> : std::true_type
-{};
-
-template<class>
-struct is_variable_count : std::false_type
-{};
-
-template<std::uint32_t N>
-struct is_variable_count<variable_count<N>> : std::true_type
-{};
-
-template<class>
-struct is_array_count : std::false_type
-{};
-
-template<std::uint32_t N>
-struct is_array_count<array_count<N>> : std::true_type
-{};
-
-template<class... Traits>
-consteval auto
-find_pin() -> std::optional<std::uint32_t>
-{
-  std::optional<std::uint32_t> out {};
-  [[maybe_unused]] auto consider = [ & ]<class Trait>
-  {
-    if constexpr (is_pin<Trait>::value) { out = Trait::value; }
-  };
-  (consider.template operator()<Traits>(), ...);
-  return out;
-}
-
-template<class... Traits>
-consteval auto
-find_variable_count() -> std::optional<std::uint32_t>
-{
-  std::optional<std::uint32_t> out {};
-  [[maybe_unused]] auto consider = [ & ]<class Trait>
-  {
-    if constexpr (is_variable_count<Trait>::value) { out = Trait::value; }
-  };
-  (consider.template operator()<Traits>(), ...);
-  return out;
-}
-
-template<class... Traits>
-consteval auto
-find_array_count() -> std::optional<std::uint32_t>
-{
-  std::optional<std::uint32_t> out {};
-  [[maybe_unused]] auto consider = [ & ]<class Trait>
-  {
-    if constexpr (is_array_count<Trait>::value) { out = Trait::value; }
-  };
-  (consider.template operator()<Traits>(), ...);
-  return out;
-}
-
-template<class...>
-struct stages_detector
-{
-  static constexpr vk::ShaderStageFlags value { vk::ShaderStageFlagBits::eAll };
-};
-
-template<vk::ShaderStageFlagBits... Flags, class... Rest>
-struct stages_detector<stages<Flags...>, Rest...>
-{
-  static constexpr vk::ShaderStageFlags value { stages<Flags...>::value };
-};
-
-template<class Head, class... Rest>
-struct stages_detector<Head, Rest...> : stages_detector<Rest...>
-{};
-
-template<class... Traits>
-consteval auto
-find_stages() -> vk::ShaderStageFlags
-{ return stages_detector<Traits...>::value; }
-
-template<class Tuple>
-struct trait_queries;
-
-template<class... Traits>
-struct trait_queries<std::tuple<Traits...>>
-{
-  static consteval auto
-  variable_count() -> std::optional<std::uint32_t>
-  { return find_variable_count<Traits...>(); }
-
-  static consteval auto
-  array_count() -> std::optional<std::uint32_t>
-  { return find_array_count<Traits...>(); }
-
-  static consteval auto
-  stages() -> vk::ShaderStageFlags
-  { return find_stages<Traits...>(); }
-
-  static consteval auto
-  pin() -> std::optional<std::uint32_t>
-  { return find_pin<Traits...>(); }
-};
 
 struct kind_meta_t
 {
@@ -427,129 +377,94 @@ kind_meta(resource_declaration_kind kind) -> kind_meta_t
       .descriptor_type = vk::DescriptorType::eCombinedImageSampler,
       .dynamic = false,
       .update_after_bind = true,
-      .binding_flags = vk::DescriptorBindingFlagBits::eUpdateAfterBind |
+      .binding_flags = vk::DescriptorBindingFlagBits::ePartiallyBound |
+        vk::DescriptorBindingFlagBits::eUpdateAfterBind |
         vk::DescriptorBindingFlagBits::eVariableDescriptorCount |
-        vk::DescriptorBindingFlagBits::ePartiallyBound,
+        vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending,
     };
   }
   return {};
 }
 
-template<class... Tags>
-struct tag_list
-{
-  static constexpr std::size_t size { sizeof...(Tags) };
-  using tuple = std::tuple<Tags...>;
-  template<std::size_t I>
-  using at = std::tuple_element_t<I, tuple>;
-};
-
-template<resource_scope S, class Decl>
-struct decl_in_scope
-{
-  using declaration = Decl;
-  static constexpr resource_scope scope_value = S;
-};
-
-template<class Acc, class... ScopeOrDecl>
-struct flatten_scoped_decls;
-
-template<class... Acc>
-struct flatten_scoped_decls<std::tuple<Acc...>>
-{
-  using type = std::tuple<Acc...>;
-};
-
-template<class... Acc, resource_scope S, class... Decls, class... Rest>
-struct flatten_scoped_decls<std::tuple<Acc...>, scope<S, Decls...>, Rest...>
-{
-  using type = typename flatten_scoped_decls<
-    std::tuple<Acc..., decl_in_scope<S, Decls>...>, Rest...>::type;
-};
-
-template<class Acc, class... ScopeOrDecl>
-struct flatten_tags;
-
-template<class... AccTags>
-struct flatten_tags<tag_list<AccTags...>>
-{
-  using type = tag_list<AccTags...>;
-};
-
-template<class... AccTags, resource_scope S, class... Decls, class... Rest>
-struct flatten_tags<tag_list<AccTags...>, scope<S, Decls...>, Rest...>
-{
-  using type =
-    typename flatten_tags<tag_list<AccTags..., typename Decls::tag...>,
-      Rest...>::type;
-};
-
-template<class Tags, class Needle, std::size_t I = 0>
+template<class Tag, class ScopedDeclarations>
 consteval auto
-tag_index_of() -> std::size_t
+tag_position() -> std::size_t
 {
-  if constexpr (I >= Tags::size) { return static_cast<std::size_t>(-1); }
-  else if constexpr (std::is_same_v<typename Tags::template at<I>, Needle>)
-  {
-    return I;
-  }
-  else
-  {
-    return tag_index_of<Tags, Needle, I + 1>();
-  }
+  return std::apply(
+    []<class... Scoped>(Scoped...) -> std::size_t
+    {
+      return index_of_true(std::array<bool, sizeof...(Scoped)> {
+        std::is_same_v<Tag, typename Scoped::declaration::tag>...,
+      });
+    },
+    ScopedDeclarations {});
+}
+
+template<class ScopedDeclarations>
+consteval auto
+tags_unique() -> bool
+{
+  return std::apply(
+    []<class... Scoped>(Scoped...) -> bool
+    {
+      std::size_t position {};
+      return ((tah_position<typename Scoped::declaration::tag,
+                 ScopedDeclarations>() == position++) &&
+        ...);
+    },
+    ScopedDeclarations {});
 }
 
 } // namespace detail
 
-export template<class... ScopeOrDecl>
+export template<class... Scopes>
 struct resource_layout
 {
   static constexpr std::uint32_t set_count { 4U };
 
-  using scoped_decls =
-    typename detail::flatten_scoped_decls<std::tuple<>, ScopeOrDecl...>::type;
-  using tags =
-    typename detail::flatten_tags<detail::tag_list<>, ScopeOrDecl...>::type;
+  using scoped_declarations = decltype(std::tuple_cat(
+    std::declval<typename Scopes::scoped_declarations>()...));
+
+  static_assert(detail::tags_unique<scoped_declarations>(),
+    "resource_layout: duplicate tag");
 
   static consteval auto
   resource_count() -> std::size_t
-  { return std::tuple_size_v<scoped_decls>; }
+  { return std::tuple_size_v<scoped_declarations>; }
 
   static consteval auto
   assignment_table()
-    -> std::array<binding_assignment, std::tuple_size_v<scoped_decls>>
+    -> std::array<binding_assignment, std::tuple_size_v<scoped_declarations>>
   {
-    std::array<binding_assignment, std::tuple_size_v<scoped_decls>> table;
+    std::array<binding_assignment, std::tuple_size_v<scoped_declarations>>
+      table;
     std::array<std::uint32_t, set_count> next_binding {};
-    std::array<bool, set_count> scope_has_uab {};
+    std::array<bool, set_count> scope_has_update_after_bind {};
     std::array<bool, set_count> scope_has_dynamic {};
     std::array<std::array<bool, 64>, set_count> occupied {};
 
-    auto fill_one = [ & ]<std::size_t I>()
+    auto assign = [ & ]<std::size_t Index>()
     {
-      using SD = std::tuple_element_t<I, scoped_decls>;
-      using Decl = typename SD::declaration;
-      using TraitsTuple = typename Decl::traits_tuple;
-      constexpr resource_scope sc = SD::scope_value;
-      constexpr std::uint32_t set = slot_of(sc);
-      constexpr auto meta = detail::kind_meta(Decl::kind);
-      constexpr auto pin_out = detail::trait_queries<TraitsTuple>::pin();
-      constexpr auto var_opt =
-        detail::trait_queries<TraitsTuple>::variable_count();
-      constexpr auto arr_opt =
-        detail::trait_queries<TraitsTuple>::array_count();
-      constexpr auto stage_flags = detail::trait_queries<TraitsTuple>::stages();
+      using scoped = std::tuple_element_t<Index, scoped_declarations>;
+      using declaration = typename scoped::declaration;
+      constexpr resource_scope declared_scope { scoped::scope_value };
+      constexpr std::uint32_t set { slot_of(declared_scope) };
+      constexpr detail::kind_meta_t meta { detail::kind_meta(
+        declaration::kind) };
 
-      if constexpr (Decl::kind == resource_declaration_kind::cis_table)
+      if constexpr (declaration::kind == resource_declaration_kind::cis_table)
       {
-        static_assert(sc == resource_scope::bindless,
+        static_assert(declared_scope == resource_scope::bindless,
           "resource_layout: cis_table_resource only in bindless");
-        static_assert(var_opt.has_value(),
+        static_assert(declaration::variable_count_value.has_value(),
           "resource_layout: cis_table_resource needs variable_count");
       }
 
-      std::uint32_t binding { 0U };
-      if constexpr (pin_out.has_value()) { binding = *pin_out; }
+      std::uint32_t binding {};
+      if constexpr (declaration::pinned_binding.has_value())
+      {
+        binding = *declaration::pinned_binding;
+      }
       else
       {
         binding = next_binding[ set ];
@@ -565,52 +480,35 @@ struct resource_layout
         return;
       }
       occupied[ set ][ binding ] = true;
-      if constexpr (meta.update_after_bind) { scope_has_uab[ set ] = true; }
+      if constexpr (meta.update_after_bind)
+      {
+        scope_has_update_after_bind[ set ] = true;
+      }
       if constexpr (meta.dynamic) { scope_has_dynamic[ set ] = true; }
-      if (scope_has_uab[ set ] && scope_has_dynamic[ set ])
+      if (scope_has_update_after_bind[ set ] && scope_has_dynamic[ set ])
       {
         detail::layout_error(
           "resource_layout: UpdateAfterBind and dynamic in same scope");
       }
 
-      const std::uint32_t count = var_opt ? *var_opt : arr_opt ? *arr_opt : 1U;
-
-      table[ I ] = binding_assignment {
-        .tag_index = static_cast<std::uint32_t>(I),
-        .scope = sc,
-        .set = set,
-        .binding = binding,
-        .descriptor_type = meta.descriptor_type,
-        .stage_flags = stage_flags,
-        .count = count,
-        .dynamic = meta.dynamic,
-        .update_after_bind = meta.update_after_bind,
-      };
+      table[ Index ] =
+        binding_assignment { .tag_index = static_cast<std::uint32_t>(Index),
+          .scope = declared_scope,
+          .set = set,
+          .binding = binding,
+          .descriptor_type = meta.descriptor_type,
+          .stage_flags = declaration::stage_flags,
+          .count = declaration::variable_count_value.value_or(
+            declaration::array_count_value.value_or(1U)),
+          .dynamic = meta.dynamic,
+          .update_after_bind = meta.update_after_bind,
+          .binding_flags = meta.binding_flags };
       next_binding[ set ] = std::max(next_binding[ set ], binding + 1U);
     };
 
-    [ & ]<std::size_t... Is>(std::index_sequence<Is...>)
-    { (fill_one.template operator()<Is>(), ...); }(
-      std::make_index_sequence<std::tuple_size_v<scoped_decls>> {});
-
-    [ & ]<std::size_t... Is>(std::index_sequence<Is...>)
-    {
-      auto check_i = [ & ]<std::size_t I>()
-      {
-        auto check_j = [ & ]<std::size_t J>()
-        {
-          if constexpr (I < J)
-          {
-            static_assert(!std::is_same_v<typename tags::template at<I>,
-                            typename tags::template at<J>>,
-              "resource_layout: duplicate tag");
-          }
-        };
-        (check_j.template operator()<Is>(), ...);
-      };
-      (check_i.template operator()<Is>(), ...);
-    }(std::make_index_sequence<tags::size> {});
-
+    [ & ]<std::size_t... Indices>(std::index_sequence<Indices...>)
+    { (assign.template operator()<Indices>(), ...); }(
+      std::make_index_sequence<std::tuple_size_v<scoped_declarations>> {});
     return table;
   }
 
@@ -618,21 +516,29 @@ struct resource_layout
   static consteval auto
   resource_index_of() -> std::size_t
   {
-    constexpr auto idx = detail::tag_index_of<tags, Tag>();
-    static_assert(
-      idx != static_cast<std::size_t>(-1), "resource_layout: tag not declared");
-    return idx;
+    constexpr std::size_t position =
+      detail::tag_position<Tag, scoped_declarations>();
+    static_assert(position < std::tuple_size_v<scoped_declarations>,
+      "resource_layout: tag not declared");
+    return position;
   }
+
+  template<class Tag>
+  static constexpr binding_assignment assignment_of {
+    assignment_table()[ resource_index_of<Tag>() ],
+  };
+
+  template<class Tag>
+  using declaration_of = typename std::tuple_element_t<resource_index_of<Tag>(),
+    scoped_declarations>::declaration;
 
   template<class Tag>
   static consteval auto
   binding_of() -> classic_binding_id
   {
-    constexpr auto table = assignment_table();
-    constexpr auto idx = resource_index_of<Tag>();
     return classic_binding_id {
-      .set = table[ idx ].set,
-      .binding = table[ idx ].binding,
+      .set = assignment_of<Tag>.set,
+      .binding = assignment_of<Tag>.binding,
     };
   }
 
@@ -640,12 +546,11 @@ struct resource_layout
   static consteval auto
   dynamic_offset_index() -> std::uint32_t
   {
-    constexpr auto table = assignment_table();
-    constexpr auto idx = resource_index_of<Tag>();
-    constexpr auto target = table[ idx ];
+    constexpr binding_assignment target { assignment_of<Tag> };
     static_assert(target.dynamic, "resource_layout: tag is not dynamic");
+    constexpr auto table = assignment_table();
     return static_cast<std::uint32_t>(std::ranges::count_if(table,
-      [ &target ](const binding_assignment& assignment)
+      [ &target ](const binding_assignment& assignment) -> bool
       {
         return assignment.dynamic &&
           (assignment.set < target.set ||
@@ -662,6 +567,13 @@ struct resource_layout
       [](const binding_assignment& assignment) -> bool
       { return assignment.dynamic; }));
   }
+};
+
+export template<class Layout>
+concept declared_resource_layout = requires {
+  { Layout::set_count } -> std::convertible_to<std::uint32_t>;
+  Layout::assignment_table();
+  typename Layout::scoped_declarations;
 };
 
 } // namespace vkpp
