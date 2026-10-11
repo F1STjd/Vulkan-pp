@@ -196,8 +196,8 @@ PenaltyBreakOpenParenthesis: 0
 PenaltyBreakScopeResolution: 10000
 PenaltyBreakString: 1000
 PenaltyBreakTemplateDeclaration: 10
-PenaltyExcessCharacter: 9000
-PenaltyIndentedWhitespace: 9000
+PenaltyExcessCharacter: 1000
+PenaltyIndentedWhitespace: 300
 PenaltyReturnTypeOnItsOwnLine: 0
 PointerAlignment: Left
 PPIndentWidth:   -1
