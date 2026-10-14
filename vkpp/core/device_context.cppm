@@ -86,7 +86,8 @@ struct feature_traits<feature_tag::descriptor_indexing>
 template<>
 struct feature_traits<feature_tag::buffer_device_address>
 {
-  static constexpr auto member = &device_feature_requests::buffer_device_address;
+  static constexpr auto member =
+    &device_feature_requests::buffer_device_address;
 };
 
 template<>
@@ -169,7 +170,8 @@ score_physical_device(
 
 export [[nodiscard]]
 auto
-descriptor_heap_supported(const vk::raii::PhysicalDevice& physical_device) -> bool
+descriptor_heap_supported(const vk::raii::PhysicalDevice& physical_device)
+  -> bool
 {
   const bool extension_present =
     physical_device.enumerateDeviceExtensionProperties()
@@ -662,8 +664,8 @@ private:
       .transform([ & ](std::span<const vk::ExtensionProperties> available) {
         return std::ranges::all_of(required, [ & ](const char* name) {
           return std::ranges::any_of(
-            available, [ & ](const vk::ExtensionProperties& p) {
-              return std::strcmp(p.extensionName, name) == 0;
+            available, [ & ](const vk::ExtensionProperties& extension) {
+              return std::strcmp(extension.extensionName, name) == 0;
             });
         });
       })
@@ -737,12 +739,14 @@ private:
     const vk::raii::PhysicalDevice& physical, std::string_view name) -> bool
   {
     return physical.enumerateDeviceExtensionProperties()
-      .transform([ & ](std::span<const vk::ExtensionProperties> available) -> bool {
-        return std::ranges::any_of(
-          available, [ & ](const vk::ExtensionProperties& properties) -> bool {
-            return std::string_view {properties.extensionName} == name;
-          });
-      })
+      .transform(
+        [ & ](std::span<const vk::ExtensionProperties> available) -> bool {
+          return std::ranges::any_of(
+            available,
+            [ & ](const vk::ExtensionProperties& properties) -> bool {
+              return std::string_view {properties.extensionName} == name;
+            });
+        })
       .value_or(false);
   }
 
@@ -964,7 +968,9 @@ private:
     auto                     push_unique = [ & ](const char* name) -> void {
       if (
         !std::ranges::contains(
-          names, std::string_view {name}, [](const char* value) -> std::string_view {
+          names,
+          std::string_view {name},
+          [](const char* value) -> std::string_view {
             return std::string_view {value};
           }))
       {

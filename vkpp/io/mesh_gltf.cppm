@@ -33,7 +33,8 @@ make_fastgltf_error(fastgltf::Error error) -> error_t
 
 [[nodiscard]]
 auto
-make_gltf_parser(const gltf::load_runtime_args& runtime_args) -> fastgltf::Parser
+make_gltf_parser(const gltf::load_runtime_args& runtime_args)
+  -> fastgltf::Parser
 {
   fastgltf::Extensions extensions {fastgltf::Extensions::None};
   if (runtime_args.enable_texture_basisu)
@@ -87,7 +88,8 @@ category_for(gltf::content_policy content) -> fastgltf::Category
 
 [[nodiscard]]
 auto
-extract_mesh_cpu(const fastgltf::Asset& gltf) -> std::expected<mesh_cpu, error_t>
+extract_mesh_cpu(const fastgltf::Asset& gltf)
+  -> std::expected<mesh_cpu, error_t>
 {
   mesh_cpu mesh {};
   for (const fastgltf::Mesh& gltf_mesh : gltf.meshes)
@@ -644,41 +646,47 @@ collect_gltf_host_image_realization_keys(
 
   for (const auto& material : materials)
   {
-    if (auto _ = consider(material.base_color_texture); !_)
+    if (auto considered = consider(material.base_color_texture); !considered)
     {
-      return std::unexpected {_.error()};
+      return std::unexpected {considered.error()};
     }
-    if (auto _ = consider(material.metallic_roughness_texture); !_)
+    if (
+      auto considered = consider(material.metallic_roughness_texture);
+      !considered)
     {
-      return std::unexpected {_.error()};
+      return std::unexpected {considered.error()};
     }
-    if (auto _ = consider(material.normal_texture); !_)
+    if (auto considered = consider(material.normal_texture); !considered)
     {
-      return std::unexpected {_.error()};
+      return std::unexpected {considered.error()};
     }
-    if (auto _ = consider(material.occlusion_texture); !_)
+    if (auto considered = consider(material.occlusion_texture); !considered)
     {
-      return std::unexpected {_.error()};
+      return std::unexpected {considered.error()};
     }
-    if (auto _ = consider(material.emissive_texture); !_)
+    if (auto considered = consider(material.emissive_texture); !considered)
     {
-      return std::unexpected {_.error()};
+      return std::unexpected {considered.error()};
     }
-    if (auto _ = consider(material.transmission.texture); !_)
+    if (auto considered = consider(material.transmission.texture); !considered)
     {
-      return std::unexpected {_.error()};
+      return std::unexpected {considered.error()};
     }
-    if (auto _ = consider(material.clearcoat.texture); !_)
+    if (auto considered = consider(material.clearcoat.texture); !considered)
     {
-      return std::unexpected {_.error()};
+      return std::unexpected {considered.error()};
     }
-    if (auto _ = consider(material.clearcoat.roughness_texture); !_)
+    if (
+      auto considered = consider(material.clearcoat.roughness_texture);
+      !considered)
     {
-      return std::unexpected {_.error()};
+      return std::unexpected {considered.error()};
     }
-    if (auto _ = consider(material.clearcoat.normal_texture); !_)
+    if (
+      auto considered = consider(material.clearcoat.normal_texture);
+      !considered)
     {
-      return std::unexpected {_.error()};
+      return std::unexpected {considered.error()};
     }
   }
 
@@ -785,7 +793,9 @@ load_gltf_asset_cpu(
           .metallic_roughness_texture = std::move(*metallic_roughness_texture),
           .normal_texture             = std::move(*normal_texture),
           .normal_scale =
-            material.normalTexture.has_value() ? material.normalTexture->scale : 1.0F,
+            material.normalTexture.has_value()
+              ? material.normalTexture->scale
+              : 1.0F,
           .occlusion_texture = std::move(*occlusion_texture),
           .occlusion_strength =
             material.occlusionTexture.has_value()
@@ -857,7 +867,8 @@ load_gltf_asset_cpu(
           mapped.clearcoat.texture = std::move(*clearcoat_texture);
           mapped.clearcoat.roughness_texture =
             std::move(*clearcoat_roughness_texture);
-          mapped.clearcoat.normal_texture = std::move(*clearcoat_normal_texture);
+          mapped.clearcoat.normal_texture =
+            std::move(*clearcoat_normal_texture);
         }
 
         out.materials.push_back(std::move(mapped));

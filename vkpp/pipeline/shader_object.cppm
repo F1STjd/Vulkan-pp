@@ -49,7 +49,7 @@ public:
         make_app_error(app_error_code::missing_required_argument),
       };
     }
-    const vk::ShaderCreateInfoEXT info {
+    const vk::ShaderCreateInfoEXT shader_create_info {
       .stage     = create_info.stage,
       .nextStage = create_info.next_stage,
       .codeType  = vk::ShaderCodeTypeEXT::eSpirv,
@@ -63,7 +63,7 @@ public:
         static_cast<std::uint32_t>(create_info.push_constant_ranges.size()),
       .pPushConstantRanges = create_info.push_constant_ranges.data(),
     };
-    return map_vk_error(device.createShaderEXT(info), diagnostics)
+    return map_vk_error(device.createShaderEXT(shader_create_info), diagnostics)
       .transform([](vk::raii::ShaderEXT&& shader) -> shader_stage_object {
         return shader_stage_object {std::move(shader)};
       });
@@ -88,7 +88,7 @@ public:
       };
     }
     auto                          mapping = arena.shader_and_mapping_info();
-    const vk::ShaderCreateInfoEXT info {
+    const vk::ShaderCreateInfoEXT shader_create_info {
       .pNext                  = &mapping,
       .flags                  = vk::ShaderCreateFlagBitsEXT::eDescriptorHeap,
       .stage                  = create_info.stage,
@@ -102,7 +102,7 @@ public:
       .pushConstantRangeCount = 0U,
       .pPushConstantRanges    = nullptr,
     };
-    return map_vk_error(device.createShaderEXT(info), diagnostics)
+    return map_vk_error(device.createShaderEXT(shader_create_info), diagnostics)
       .transform([](vk::raii::ShaderEXT&& shader) -> shader_stage_object {
         return shader_stage_object {std::move(shader)};
       });

@@ -103,23 +103,23 @@ constexpr
 auto
 make_image_barrier(const image_use_transition& transition) -> image_barrier
 {
-  const image_use_fields dst       = fields_for(transition.to);
-  const bool             first_use = transition.from == image_use::none;
-  const image_use_fields src = first_use
+  const image_use_fields destination = fields_for(transition.to);
+  const bool             first_use   = transition.from == image_use::none;
+  const image_use_fields source = first_use
     ? image_use_fields {
-        .stage = dst.stage,
+        .stage = destination.stage,
         .access = {},
         .layout = vk::ImageLayout::eUndefined,
       }
     : fields_for(transition.from);
 
   return {
-    .src_stage  = src.stage,
-    .src_access = src.access,
-    .dst_stage  = dst.stage,
-    .dst_access = dst.access,
-    .old_layout = src.layout,
-    .new_layout = dst.layout,
+    .src_stage  = source.stage,
+    .src_access = source.access,
+    .dst_stage  = destination.stage,
+    .dst_access = destination.access,
+    .old_layout = source.layout,
+    .new_layout = destination.layout,
     .image      = transition.image,
     .range      = {
       .aspectMask     = transition.aspect,
@@ -161,7 +161,8 @@ record_image_use_transitions(
   const std::uint32_t          count =
     fill_image_barriers(transitions, std::span {storage});
   record_barriers(
-    command_buffer, std::span {storage.data(), static_cast<std::size_t>(count)});
+    command_buffer,
+    std::span {storage.data(), static_cast<std::size_t>(count)});
 }
 
 export enum class buffer_use : std::uint8_t
@@ -261,17 +262,17 @@ constexpr
 auto
 make_buffer_barrier(const buffer_use_transition& transition) -> buffer_barrier
 {
-  const auto dst       = fields_for(transition.to);
-  const bool first_use = transition.from == buffer_use::none;
-  const auto src =
+  const auto destination = fields_for(transition.to);
+  const bool first_use   = transition.from == buffer_use::none;
+  const auto source =
     first_use
-      ? buffer_use_fields {.stage = dst.stage, .access = {}}
+      ? buffer_use_fields {.stage = destination.stage, .access = {}}
       : fields_for(transition.from);
   return {
-    .src_stage  = src.stage,
-    .src_access = src.access,
-    .dst_stage  = dst.stage,
-    .dst_access = dst.access,
+    .src_stage  = source.stage,
+    .src_access = source.access,
+    .dst_stage  = destination.stage,
+    .dst_access = destination.access,
     .buffer     = transition.buffer,
     .offset     = transition.offset,
     .size       = transition.size,
@@ -292,7 +293,8 @@ record_buffer_use_transitions(
     storage[ index ] = make_buffer_barrier(transitions[ index ]);
   }
   record_barriers(
-    command_buffer, std::span {storage.data(), static_cast<std::size_t>(count)});
+    command_buffer,
+    std::span {storage.data(), static_cast<std::size_t>(count)});
 }
 
 export class image_use_tracker

@@ -143,16 +143,17 @@ submit_single_queue_buffer_copy(
     create_info.device.device(),
     create_info.device.graphics_queue(),
   };
-  return single_time.begin().and_then([ & ] -> std::expected<submission, error_t> {
-    const vk::BufferCopy region {
-      .srcOffset = src_offset,
-      .dstOffset = 0UZ,
-      .size      = byte_size,
-    };
-    single_time.command_buffer().copyBuffer(
-      source_buffer, destination_buffer, region);
-    return single_time.end_and_submit(upload::deferred);
-  });
+  return single_time.begin().and_then(
+    [ & ] -> std::expected<submission, error_t> {
+      const vk::BufferCopy region {
+        .srcOffset = src_offset,
+        .dstOffset = 0UZ,
+        .size      = byte_size,
+      };
+      single_time.command_buffer().copyBuffer(
+        source_buffer, destination_buffer, region);
+      return single_time.end_and_submit(upload::deferred);
+    });
 }
 
 [[nodiscard]]
@@ -459,13 +460,13 @@ upload_storage_buffer(
   const buffer_upload_create_info_for<buffer_kind::storage>& create_info)
   -> std::expected<storage_buffer, error_t>
 {
-  auto info = create_info;
-  if (!info.options.address_policy.has_value())
+  auto adjusted_create_info = create_info;
+  if (!adjusted_create_info.options.address_policy.has_value())
   {
-    info.options.address_policy =
+    adjusted_create_info.options.address_policy =
       default_shader_address_policy_for(Backend, buffer_kind::storage);
   }
-  return upload_device_local_buffer<buffer_kind::storage>(info);
+  return upload_device_local_buffer<buffer_kind::storage>(adjusted_create_info);
 }
 
 } // namespace vkpp

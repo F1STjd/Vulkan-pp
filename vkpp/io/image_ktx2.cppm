@@ -55,7 +55,8 @@ validate_ktx2_dfd_role(ktxTexture2* texture, image_color_space role)
   {
     if (
       transfer != KHR_DF_TRANSFER_SRGB ||
-      (primaries != KHR_DF_PRIMARIES_BT709 && primaries != KHR_DF_PRIMARIES_SRGB))
+      (primaries != KHR_DF_PRIMARIES_BT709 &&
+        primaries != KHR_DF_PRIMARIES_SRGB))
     {
       return std::unexpected {
         make_app_error(app_error_code::unsupported_model_data),
@@ -100,9 +101,11 @@ chain_from_ktx_texture(
 
   if (required_role.has_value())
   {
-    if (auto ok = validate_ktx2_dfd_role(held.get(), *required_role); !ok)
+    if (
+      auto role_checked = validate_ktx2_dfd_role(held.get(), *required_role);
+      !role_checked)
     {
-      return std::unexpected {ok.error()};
+      return std::unexpected {role_checked.error()};
     }
   }
 

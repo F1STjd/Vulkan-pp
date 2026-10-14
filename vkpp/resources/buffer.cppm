@@ -129,7 +129,11 @@ export struct addressed
   vk::DeviceAddress value {};
 };
 
-export template<buffer_kind Kind, class T = std::byte, class Address = unaddressed>
+export template<
+  buffer_kind Kind,
+  class T       = std::byte,
+  class Address = unaddressed
+>
 class buffer_view
 {
 public:
@@ -190,8 +194,8 @@ private:
 };
 
 export template<class V>
-concept addressed_buffer_view = requires(const V& v) {
-  { v.device_address() } -> std::same_as<vk::DeviceAddress>;
+concept addressed_buffer_view = requires(const V& view) {
+  { view.device_address() } -> std::same_as<vk::DeviceAddress>;
 };
 
 export enum class shader_address_policy : std::uint8_t
@@ -249,7 +253,8 @@ export [[nodiscard]]
 constexpr
 auto
 buffer_usage_with_address_policy(
-  vk::BufferUsageFlags base, shader_address_policy policy) -> vk::BufferUsageFlags
+  vk::BufferUsageFlags base, shader_address_policy policy)
+  -> vk::BufferUsageFlags
 {
   if (policy == shader_address_policy::never) { return base; }
   return base | vk::BufferUsageFlagBits::eShaderDeviceAddress;
@@ -486,9 +491,10 @@ private:
       .pQueueFamilyIndices = sharing_families.data(),
     };
     return allocator.create_buffer(buffer_info, intent)
-      .transform([ & ](typename Alloc::buffer_handle&& handle) -> buffer_resource {
-        return buffer_resource {std::move(handle), size, usage};
-      });
+      .transform(
+        [ & ](typename Alloc::buffer_handle&& handle) -> buffer_resource {
+          return buffer_resource {std::move(handle), size, usage};
+        });
   }
 
   typename Alloc::buffer_handle handle_ {};
@@ -748,7 +754,8 @@ make_buffer_resource(
   std::span<const std::uint32_t> sharing_families = {})
   -> std::expected<buffer_resource<Kind, Alloc>, error_t>
 {
-  return buffer_resource<Kind, Alloc>::create(allocator, size, sharing_families);
+  return buffer_resource<Kind, Alloc>::create(
+    allocator, size, sharing_families);
 }
 
 export
@@ -828,7 +835,7 @@ make_device_address_buffer(
   -> std::expected<device_address_buffer, error_t>
 { return device_address_buffer::create(allocator, size, sharing_families); }
 
-export [[nodiscard]]
+[[nodiscard]]
 constexpr
 auto
 align_up(vk::DeviceSize value, vk::DeviceSize alignment) -> vk::DeviceSize
@@ -847,7 +854,8 @@ uniform_slice_stride(vk::DeviceSize element_size, vk::DeviceSize min_alignment)
 export [[nodiscard]]
 constexpr
 auto
-uniform_slice_offset(std::uint32_t index, vk::DeviceSize stride) -> vk::DeviceSize
+uniform_slice_offset(std::uint32_t index, vk::DeviceSize stride)
+  -> vk::DeviceSize
 { return static_cast<vk::DeviceSize>(index) * stride; }
 
 }; // namespace vkpp

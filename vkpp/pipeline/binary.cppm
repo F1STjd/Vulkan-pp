@@ -22,15 +22,15 @@ export class pipeline_binaries
 public:
   pipeline_binaries() = default;
 
-  explicit pipeline_binaries(std::vector<vk::raii::PipelineBinaryKHR>&& binaries)
+  explicit pipeline_binaries(
+    std::vector<vk::raii::PipelineBinaryKHR>&& binaries)
   : binaries_ {std::move(binaries)},
     handles_ {
       std::from_range,
       binaries_ |
         std::views::transform(
-          [](const vk::raii::PipelineBinaryKHR& binary) -> vk::PipelineBinaryKHR {
-            return *binary;
-          })
+          [](const vk::raii::PipelineBinaryKHR& binary)
+            -> vk::PipelineBinaryKHR { return *binary; })
     }
   {}
 
@@ -112,11 +112,11 @@ public:
     blobs.reserve(binaries_.size());
     for (const auto& binary : binaries_)
     {
-      const vk::PipelineBinaryDataInfoKHR info {
+      const vk::PipelineBinaryDataInfoKHR binary_data_info {
         .pipelineBinary = *binary,
       };
-      auto got =
-        map_vk_error(device.getPipelineBinaryDataKHR(info), std::nullopt);
+      auto got = map_vk_error(
+        device.getPipelineBinaryDataKHR(binary_data_info), std::nullopt);
       if (!got) { return std::unexpected {std::move(got).error()}; }
       auto [ key, data ] = std::move(*got);
       blobs.push_back(

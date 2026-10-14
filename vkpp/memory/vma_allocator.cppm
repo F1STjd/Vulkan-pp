@@ -264,10 +264,15 @@ public:
 
     VkBuffer          buffer {};
     VmaAllocation     allocation {};
-    VmaAllocationInfo info {};
+    VmaAllocationInfo created_allocation_info {};
     if (
       const auto result = vmaCreateBuffer(
-        allocator_, &c_buffer_info, &allocation_info, &buffer, &allocation, &info);
+        allocator_,
+        &c_buffer_info,
+        &allocation_info,
+        &buffer,
+        &allocation,
+        &created_allocation_info);
       result != VK_SUCCESS)
     {
       return std::unexpected {make_vma_error(result)};
@@ -276,7 +281,7 @@ public:
       allocator_,
       vk::Buffer {buffer},
       allocation,
-      info.pMappedData,
+      created_allocation_info.pMappedData,
     };
   }
 

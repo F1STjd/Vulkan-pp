@@ -55,7 +55,7 @@ load_mesh_cpu<mesh_file_type::obj>(const std::filesystem::path& path)
           << 32U) |
         static_cast<std::uint32_t>(index.texcoord_index);
 
-      auto [ it, inserted ] =
+      auto [ found, inserted ] =
         unique.insert({key, static_cast<std::uint32_t>(streams.vertex_count)});
 
       if (inserted)
@@ -80,7 +80,7 @@ load_mesh_cpu<mesh_file_type::obj>(const std::filesystem::path& path)
         }
         ++streams.vertex_count;
       }
-      indices.push_back(it->second);
+      indices.push_back(found->second);
     }
   }
 

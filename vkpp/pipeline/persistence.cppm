@@ -102,12 +102,12 @@ public:
   find_ordered_keys(const vk::PipelineBinaryKeyKHR& pipeline_key) const
     -> std::optional<std::span<const vk::PipelineBinaryKeyKHR>>
   {
-    const auto it = std::ranges::find_if(
+    const auto found = std::ranges::find_if(
       entries_, [ & ](const pipeline_binary_store_entry& entry) -> bool {
         return keys_equal(entry.pipeline_key, pipeline_key);
       });
-    if (it == entries_.end()) { return std::nullopt; }
-    return std::span {it->ordered_binary_keys};
+    if (found == entries_.end()) { return std::nullopt; }
+    return std::span {found->ordered_binary_keys};
   }
 
   [[nodiscard]]
@@ -115,12 +115,12 @@ public:
   blob_for(const vk::PipelineBinaryKeyKHR& binary_key) const
     -> std::optional<std::span<const std::uint8_t>>
   {
-    const auto it = std::ranges::find_if(
+    const auto found = std::ranges::find_if(
       blobs_, [ & ](const pipeline_binary_blob& blob) -> bool {
         return keys_equal(blob.key, binary_key);
       });
-    if (it == blobs_.end()) { return std::nullopt; }
-    return std::span {it->data};
+    if (found == blobs_.end()) { return std::nullopt; }
+    return std::span {found->data};
   }
 
   [[nodiscard]]
@@ -178,8 +178,8 @@ public:
     {
       ordered.push_back(blob.key);
       const auto existing = std::ranges::find_if(
-        blobs_, [ & ](const pipeline_binary_blob& b) -> bool {
-          return keys_equal(b.key, blob.key);
+        blobs_, [ & ](const pipeline_binary_blob& stored) -> bool {
+          return keys_equal(stored.key, blob.key);
         });
       if (existing != blobs_.end())
       {
@@ -295,9 +295,9 @@ public:
     input.seekg(begin_pos);
     auto remaining = static_cast<std::uint64_t>(end_pos - begin_pos);
 
-    auto need = [ & ](std::uint64_t n) -> bool {
-      if (n > remaining) { return false; }
-      remaining -= n;
+    auto need = [ & ](std::uint64_t byte_count) -> bool {
+      if (byte_count > remaining) { return false; }
+      remaining -= byte_count;
       return true;
     };
 
@@ -410,13 +410,13 @@ public:
   auto
   save(const std::filesystem::path& path) const -> std::expected<void, error_t>
   {
-    auto tmp {path};
-    tmp += ".tmp";
-    auto bak {path};
-    bak += ".bak";
+    auto temporary_path {path};
+    temporary_path += ".tmp";
+    auto backup_path {path};
+    backup_path += ".bak";
 
     {
-      std::ofstream output {tmp, std::ios::binary | std::ios::trunc};
+      std::ofstream output {temporary_path, std::ios::binary | std::ios::trunc};
       if (!output)
       {
         return std::unexpected {make_app_error(app_error_code::file_open)};
@@ -447,9 +447,9 @@ public:
         output.write(
           reinterpret_cast<const char*>(entry.pipeline_key.key.data()),
           vk::MaxPipelineBinaryKeySizeKHR);
-        if (
-          !write_le(
-            output, static_cast<std::uint32_t>(entry.ordered_binary_keys.size())))
+        if (!write_le(
+              output,
+              static_cast<std::uint32_t>(entry.ordered_binary_keys.size())))
         {
           return std::unexpected {make_app_error(app_error_code::file_write)};
         }
@@ -499,27 +499,27 @@ public:
     }
 
     std::error_code ec {};
-    std::filesystem::remove(bak, ec);
+    std::filesystem::remove(backup_path, ec);
     ec.clear();
     if (std::filesystem::exists(path))
     {
-      std::filesystem::rename(path, bak, ec);
+      std::filesystem::rename(path, backup_path, ec);
       if (ec)
       {
         return std::unexpected {make_app_error(app_error_code::file_write)};
       }
     }
-    std::filesystem::rename(tmp, path, ec);
+    std::filesystem::rename(temporary_path, path, ec);
     if (ec)
     {
-      if (std::filesystem::exists(bak))
+      if (std::filesystem::exists(backup_path))
       {
         std::error_code restore_ec {};
-        std::filesystem::rename(bak, path, restore_ec);
+        std::filesystem::rename(backup_path, path, restore_ec);
       }
       return std::unexpected {make_app_error(app_error_code::file_write)};
     }
-    std::filesystem::remove(bak, ec);
+    std::filesystem::remove(backup_path, ec);
     return {};
   }
 
@@ -602,9 +602,10 @@ public:
               initial = {};
             }
             return pipeline_cache::create(device, initial)
-              .transform([](class pipeline_cache&& cache) -> pipeline_persistence {
-                return pipeline_persistence {std::move(cache)};
-              });
+              .transform(
+                [](class pipeline_cache&& cache) -> pipeline_persistence {
+                  return pipeline_persistence {std::move(cache)};
+                });
           });
     case pipeline_persistence_mode::application_binary :
       return query_global_pipeline_binary_key(device, diagnostics)
@@ -623,10 +624,10 @@ public:
           });
     case pipeline_persistence_mode::internal_binary :
     {
-      const auto& props = capabilities.pipeline_binary_properties;
+      const auto& properties = capabilities.pipeline_binary_properties;
       if (
-        props.pipelineBinaryInternalCache != vk::True ||
-        props.pipelineBinaryPrefersInternalCache != vk::True)
+        properties.pipelineBinaryInternalCache != vk::True ||
+        properties.pipelineBinaryPrefersInternalCache != vk::True)
       {
         return std::unexpected {
           make_app_error(app_error_code::invalid_state),
@@ -670,14 +671,17 @@ public:
   auto
   store() -> pipeline_binary_store*
   {
-    return mode_ == pipeline_persistence_mode::application_binary ? &store_ : nullptr;
+    return mode_ == pipeline_persistence_mode::application_binary
+             ? &store_
+             : nullptr;
   }
 
   [[nodiscard]]
   auto
   save_application_store_if_dirty() -> std::expected<void, error_t>
   {
-    return (mode_ != pipeline_persistence_mode::application_binary || !store_dirty_)
+    return (mode_ != pipeline_persistence_mode::application_binary ||
+             !store_dirty_)
              ? std::expected<void, error_t> {}
              : store_.save(store_path_).transform([ this ] -> void {
                  store_dirty_ = false;
