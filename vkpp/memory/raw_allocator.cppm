@@ -152,8 +152,9 @@ private:
   }
 
   auto
-  find_memory_type(std::uint32_t type_filter, vk::MemoryPropertyFlags properties)
-    const -> std::expected<std::uint32_t, vkpp::error_t>
+  find_memory_type(
+    std::uint32_t type_filter, vk::MemoryPropertyFlags properties) const
+    -> std::expected<std::uint32_t, vkpp::error_t>
   {
     const auto available_properties = physical_device_->getMemoryProperties();
     const auto memory_types =

@@ -122,7 +122,8 @@ export struct mesh_interleaved_cpu
 
 export [[nodiscard]]
 auto
-pack_interleaved_vertices(const mesh_streams_cpu& streams) -> mesh_interleaved_cpu
+pack_interleaved_vertices(const mesh_streams_cpu& streams)
+  -> mesh_interleaved_cpu
 {
   mesh_interleaved_cpu packed {
     .indices      = streams.indices,

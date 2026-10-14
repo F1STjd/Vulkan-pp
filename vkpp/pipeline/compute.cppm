@@ -53,8 +53,8 @@ private:
 
 export
 template<
-  descriptor_table_backend Backend    = descriptor_table_backend::classic,
-  class Layout                        = void,
+  descriptor_table_backend Backend     = descriptor_table_backend::classic,
+  class Layout                         = void,
   diagnostics_policy DiagnosticsPolicy = diagnostics_off
 >
   requires (Backend == descriptor_table_backend::classic)

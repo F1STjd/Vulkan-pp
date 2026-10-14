@@ -472,7 +472,7 @@ write_descriptor(
     .dstArrayElement = 0U,
     .descriptorCount = 1U,
     .descriptorType  = row.descriptor_type,
-    .pImageInfo     = &image_info
+    .pImageInfo      = &image_info
   };
 
   device.updateDescriptorSets(write, nullptr);

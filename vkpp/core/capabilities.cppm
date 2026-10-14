@@ -99,10 +99,12 @@ export struct enabled_device_features
 
 export struct selected_device_capabilities
 {
-  std::string              profile_name {};
-  std::uint32_t            profile_index {};
-  descriptor_table_backend descriptor {descriptor_table_backend::classic};
-  pipeline_persistence_mode pipeline {pipeline_persistence_mode::pipeline_cache};
+  std::string               profile_name {};
+  std::uint32_t             profile_index {};
+  descriptor_table_backend  descriptor {descriptor_table_backend::classic};
+  pipeline_persistence_mode pipeline {
+    pipeline_persistence_mode::pipeline_cache
+  };
   enabled_device_features                       enabled {};
   vk::PhysicalDevicePipelineBinaryPropertiesKHR pipeline_binary_properties {};
   bool                                          descriptor_heap_enabled {false};

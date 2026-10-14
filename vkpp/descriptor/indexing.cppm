@@ -110,7 +110,7 @@ public:
   template<
     class PushLayout,
     declared_resource_layout Layout,
-    diagnostics_policy        DiagnosticsPolicy
+    diagnostics_policy       DiagnosticsPolicy
   >
   [[nodiscard]]
   static
@@ -216,7 +216,8 @@ public:
     -> std::expected<void, error_t>
   {
     static_assert(
-      Layout::template declaration_of<Tag>::kind == resource_declaration_kind::cis_table,
+      Layout::template declaration_of<Tag>::kind ==
+        resource_declaration_kind::cis_table,
       "write_bindless_cis: Tag is not a cis_table_resource");
     if (index >= bindless_capacity_)
     {

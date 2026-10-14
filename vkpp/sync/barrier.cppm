@@ -67,7 +67,8 @@ record_barriers(
     });
   }
   const vk::DependencyInfo dependency_info {
-    .imageMemoryBarrierCount = static_cast<std::uint32_t>(native_barriers.size()),
+    .imageMemoryBarrierCount =
+      static_cast<std::uint32_t>(native_barriers.size()),
     .pImageMemoryBarriers = native_barriers.data(),
   };
   command_buffer.pipelineBarrier2(dependency_info);
@@ -159,9 +160,10 @@ export [[nodiscard]]
 constexpr
 auto
 transfer_dst_to_transfer_src(
-  vk::Image     image,
-  std::uint32_t mip,
-  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor) -> image_barrier
+  vk::Image            image,
+  std::uint32_t        mip,
+  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor)
+  -> image_barrier
 {
   return {
     .src_stage  = vk::PipelineStageFlagBits2::eTransfer,
@@ -184,9 +186,10 @@ export [[nodiscard]]
 constexpr
 auto
 transfer_src_to_shader_read(
-  vk::Image     image,
-  std::uint32_t mip,
-  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor) -> image_barrier
+  vk::Image            image,
+  std::uint32_t        mip,
+  vk::ImageAspectFlags aspect = vk::ImageAspectFlagBits::eColor)
+  -> image_barrier
 {
   return {
     .src_stage  = vk::PipelineStageFlagBits2::eTransfer,

@@ -124,7 +124,8 @@ struct image_traits<image_kind::color_sampled>
 {
   static constexpr image_type_spec spec {
     .usage =
-      vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+      vk::ImageUsageFlagBits::eColorAttachment |
+      vk::ImageUsageFlagBits::eSampled,
     .aspect = vk::ImageAspectFlagBits::eColor,
   };
 };

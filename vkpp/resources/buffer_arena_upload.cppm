@@ -70,10 +70,12 @@ submit_arena_copy_single_queue(
     create_info.device.device(),
     create_info.device.graphics_queue(),
   };
-  return single_time.begin().and_then([ & ] -> std::expected<submission, error_t> {
-    single_time.command_buffer().copyBuffer(staging, create_info.arena, regions);
-    return single_time.end_and_submit(upload::deferred);
-  });
+  return single_time.begin().and_then(
+    [ & ] -> std::expected<submission, error_t> {
+      single_time.command_buffer().copyBuffer(
+        staging, create_info.arena, regions);
+      return single_time.end_and_submit(upload::deferred);
+    });
 }
 
 [[nodiscard]]
@@ -111,7 +113,8 @@ submit_arena_copy_dual_queue(
               upload::deferred, {.signal = *copy_done});
           })
           .and_then(
-            [ & ](submission&& release_submitted) -> std::expected<void, error_t> {
+            [ & ](
+              submission&& release_submitted) -> std::expected<void, error_t> {
               single_time_submit graphics_submit {
                 create_info.pool,
                 create_info.device.device(),
@@ -125,7 +128,8 @@ submit_arena_copy_dual_queue(
                     vk::PipelineStageFlagBits2::eAllCommands,
                     vk::AccessFlagBits2::eMemoryRead);
                   record_barriers(
-                    graphics_submit.command_buffer(), std::span {&acquire, 1UZ});
+                    graphics_submit.command_buffer(),
+                    std::span {&acquire, 1UZ});
                   return graphics_submit.end_and_submit(
                     upload::deferred, {.wait = *copy_done});
                 })

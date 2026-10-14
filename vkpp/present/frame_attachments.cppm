@@ -193,7 +193,8 @@ public:
       .imageView   = color_view,
       .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
       .resolveMode =
-        msaa ? vk::ResolveModeFlagBits::eAverage : vk::ResolveModeFlagBits::eNone,
+        msaa ? vk::ResolveModeFlagBits::eAverage
+             : vk::ResolveModeFlagBits::eNone,
       .resolveImageView = msaa ? one_x : vk::ImageView {},
       .resolveImageLayout =
         msaa ? vk::ImageLayout::eColorAttachmentOptimal : vk::ImageLayout {},

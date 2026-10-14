@@ -148,7 +148,7 @@ index_spirv_module(
   }
   const std::optional<std::uint32_t> execution_model =
     spirv_execution_model_of(stage);
-  if (execution_model)
+  if (!execution_model)
   {
     return std::unexpected {spirv_binding_issue {.kind = unsupported_stage}};
   }
@@ -391,8 +391,9 @@ template<declared_resource_layout Layout>
 [[nodiscard]]
 auto
 validate_spirv_bindings(
-  std::span<const std::uint32_t> words, std::string_view entry, vk::ShaderStageFlagBits stage)
-  -> std::expected<void, spirv_binding_issue>
+  std::span<const std::uint32_t> words,
+  std::string_view               entry,
+  vk::ShaderStageFlagBits stage) -> std::expected<void, spirv_binding_issue>
 {
   return index_spirv_module(words, entry, stage)
     .and_then(
@@ -414,8 +415,8 @@ validate_spirv_bindings(
           {
             return std::unexpected {
               spirv_binding_issue {
-                .kind   = binding_not_declared,
-                .set    = set,
+                .kind    = binding_not_declared,
+                .set     = set,
                 .binding = binding,
               },
             };
@@ -425,8 +426,8 @@ validate_spirv_bindings(
           {
             return std::unexpected {
               spirv_binding_issue {
-                .kind   = descriptor_type_mismatch,
-                .set    = set,
+                .kind    = descriptor_type_mismatch,
+                .set     = set,
                 .binding = binding,
               },
             };
@@ -437,13 +438,14 @@ validate_spirv_bindings(
           {
             return std::unexpected {
               spirv_binding_issue {
-                .kind   = stage_not_declared,
-                .set    = set,
+                .kind    = stage_not_declared,
+                .set     = set,
                 .binding = binding,
               },
             };
           }
         }
+        return {};
       });
 }
 
@@ -452,7 +454,7 @@ template<class Layout, diagnostics_policy DiagnosticsPolicy>
 [[nodiscard]]
 auto
 check_spirv_bindings(
-  std::span<const char>    spirv,
+  std::span<const char>             spirv,
   std::string_view                  entry,
   vk::ShaderStageFlagBits           stage,
   std::optional<diagnostic_buffer&> diagnostics) -> std::expected<void, error_t>
@@ -475,24 +477,22 @@ check_spirv_bindings(
       word_count,
     };
     return validate_spirv_bindings<Layout>(words, entry, stage)
-    .or_else(
-      [&](const spirv_binding_issue& issue) -> std::expected<void, error_t>
-      {
-        if (diagnostics)
-        {
-          diagnostics->report(
-            diagnostic_severity::error,
-            error,
-            std::source_location::current(),
-            "SPIR-V binding check, entry '{}': {} (set {}, bindings {})",
-            entry,
-            issue_text(issue.kind),
-            issue.set,
-            issue.binding);
-        }
-        return std::unexpected {error};
-      }
-    );
+      .or_else(
+        [ & ](const spirv_binding_issue& issue) -> std::expected<void, error_t> {
+          if (diagnostics)
+          {
+            diagnostics->report(
+              diagnostic_severity::error,
+              error,
+              std::source_location::current(),
+              "SPIR-V binding check, entry '{}': {} (set {}, bindings {})",
+              entry,
+              issue_text(issue.kind),
+              issue.set,
+              issue.binding);
+          }
+          return std::unexpected {error};
+        });
   }
 }
 

@@ -48,7 +48,10 @@ template<class T>
   requires (
     std::is_trivially_copyable_v<T> &&
     sizeof(T) == alignof(T) &&
-    (sizeof(T) == 1UZ || sizeof(T) == 2UZ || sizeof(T) == 4UZ || sizeof(T) == 8UZ) &&
+    (sizeof(T) == 1UZ ||
+      sizeof(T) == 2UZ ||
+      sizeof(T) == 4UZ ||
+      sizeof(T) == 8UZ) &&
     !std::is_same_v<T, std::uint32_t> &&
     !std::is_same_v<T, std::uint64_t>)
 struct shader_layout_traits<T>
@@ -96,7 +99,8 @@ push_offsets_array() -> std::array<std::uint32_t, sizeof...(Fields)>
   auto consider = [ & ]<class Field>() {
     constexpr auto align =
       shader_layout_traits<typename Field::value_type>::align;
-    constexpr auto size = shader_layout_traits<typename Field::value_type>::size;
+    constexpr auto size =
+      shader_layout_traits<typename Field::value_type>::size;
     cursor              = (cursor + align - 1U) / align * align;
     offsets[ index++ ]  = cursor;
     cursor             += size;
@@ -114,8 +118,10 @@ push_total_bytes() -> std::uint32_t
   else
   {
     constexpr auto offsets = push_offsets_array<Fields...>();
-    using last             = typename std::
-      tuple_element_t<sizeof...(Fields) - 1UZ, std::tuple<Fields...>>;
+    using last             = typename std::tuple_element_t<
+      sizeof...(Fields) - 1UZ,
+      std::tuple<Fields...>
+    >;
     const auto raw =
       offsets.back() + shader_layout_traits<typename last::value_type>::size;
     return (raw + 3U) / 4U * 4U;
@@ -329,8 +335,11 @@ detail::resource_declaration<resource_declaration_kind::cis, Tag, Traits...> {};
 
 export template<class Tag, class... Traits>
 struct cis_table_resource :
-detail::
-  resource_declaration<resource_declaration_kind::cis_table, Tag, Traits...> {};
+detail::resource_declaration<
+  resource_declaration_kind::cis_table,
+  Tag,
+  Traits...
+> {};
 
 export struct binding_assignment
 {
@@ -454,7 +463,8 @@ struct resource_layout
   assignment_table()
     -> std::array<binding_assignment, std::tuple_size_v<scoped_declarations>>
   {
-    std::array<binding_assignment, std::tuple_size_v<scoped_declarations>> table;
+    std::array<binding_assignment, std::tuple_size_v<scoped_declarations>>
+                                                table;
     std::array<std::uint32_t, set_count>        next_binding {};
     std::array<bool, set_count>                 scope_has_update_after_bind {};
     std::array<bool, set_count>                 scope_has_dynamic {};
@@ -546,8 +556,10 @@ struct resource_layout
   };
 
   template<class Tag>
-  using declaration_of = typename std::
-    tuple_element_t<resource_index_of<Tag>(), scoped_declarations>::declaration;
+  using declaration_of = typename std::tuple_element_t<
+    resource_index_of<Tag>(),
+    scoped_declarations
+  >::declaration;
 
   template<class Tag>
   static consteval

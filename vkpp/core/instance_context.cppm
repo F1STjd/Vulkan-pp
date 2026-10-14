@@ -68,7 +68,8 @@ public:
 
     auto check_extensions = [ & ]() -> std::expected<void, error_t> {
       return map_vk_error(
-        output.context_.enumerateInstanceExtensionProperties(), info.diagnostics)
+        output.context_.enumerateInstanceExtensionProperties(),
+        info.diagnostics)
         .and_then(
           [ & ](std::span<const vk::ExtensionProperties> available)
             -> std::expected<void, error_t> {
@@ -169,7 +170,9 @@ private:
       "validation type={} id={} name={} msg={}",
       vk::to_string(type),
       callback_data->messageIdNumber,
-      callback_data->pMessageIdName != nullptr ? callback_data->pMessageIdName : "",
+      callback_data->pMessageIdName != nullptr
+        ? callback_data->pMessageIdName
+        : "",
       callback_data->pMessage != nullptr ? callback_data->pMessage : "");
     return vk::False;
   }
@@ -223,9 +226,10 @@ private:
     return map_vk_error(
       context.instance_.createDebugUtilsMessengerEXT(create_info),
       context.diagnostics_)
-      .transform([ & ](vk::raii::DebugUtilsMessengerEXT&& debug_messenger) -> void {
-        context.debug_messenger_ = std::move(debug_messenger);
-      });
+      .transform(
+        [ & ](vk::raii::DebugUtilsMessengerEXT&& debug_messenger) -> void {
+          context.debug_messenger_ = std::move(debug_messenger);
+        });
   }
 
   vk::raii::Context                       context_;

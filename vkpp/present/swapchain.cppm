@@ -93,7 +93,8 @@ public:
     surface_build_info build {};
 
     return map_vk_error(
-      device.physical_device().getSurfaceCapabilitiesKHR(*surface), std::nullopt)
+      device.physical_device().getSurfaceCapabilitiesKHR(*surface),
+      std::nullopt)
       .and_then(
         [ & ](const vk::SurfaceCapabilitiesKHR& caps)
           -> std::expected<void, error_t> {
@@ -212,7 +213,9 @@ public:
     surface_format_ = vk::SurfaceFormatKHR {};
 
     return create(device, surface, window, choose_extent, *previous)
-      .transform([ & ](swapchain&& swapchain) { *this = std::move(swapchain); });
+      .transform([ & ](swapchain&& swapchain) {
+        *this = std::move(swapchain);
+      });
   }
 
   [[nodiscard]]
@@ -242,7 +245,8 @@ public:
       choose_extent) -> std::expected<presentability, error_t>
   {
     return map_vk_error(
-      device.physical_device().getSurfaceCapabilitiesKHR(*surface), std::nullopt)
+      device.physical_device().getSurfaceCapabilitiesKHR(*surface),
+      std::nullopt)
       .transform(
         [ & ](const vk::SurfaceCapabilitiesKHR& capabilities) -> presentability {
           const vk::Extent2D extent =
