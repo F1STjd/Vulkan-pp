@@ -50,24 +50,12 @@ bind_graphics(
   if (!sets.empty())
   {
     command_buffer.bindDescriptorSets(
-      vk::PipelineBindPoint::eGraphics, layout, first_set, sets, dynamic_offsets);
+      vk::PipelineBindPoint::eGraphics,
+      layout,
+      first_set,
+      sets,
+      dynamic_offsets);
   }
-}
-
-export
-template<class Layout, class... Tags>
-consteval auto
-dynamic_offsets_for() -> std::array<std::uint32_t, sizeof...(Tags)>
-{
-  static_assert(
-    ((Layout::template binding_of<Tags>().set,
-       Layout::assignment_table()[ Layout::template resource_index_of<Tags>() ]
-         .dynamic) &&
-      ...),
-    "dynamic_offsets_for: every Tag must be dynamic in Layout");
-  return std::array<std::uint32_t, sizeof...(Tags)> {
-    Layout::template dynamic_offset_index<Tags>()...
-  };
 }
 
 template<class>
@@ -136,12 +124,9 @@ template<descriptor_table_backend Backend>
   requires (Backend == descriptor_table_backend::heap)
 void
 bind_graphics_descriptors(
-  vk::raii::CommandBuffer&                            command_buffer,
-  vk::Pipeline                                        pipeline,
-  [[maybe_unused]] vk::PipelineLayout                 layout,
-  [[maybe_unused]] std::span<const vk::DescriptorSet> sets,
-  [[maybe_unused]] std::span<const std::uint32_t>     dynamic_offsets,
-  const descriptor_heap_arena&                        arena)
+  vk::raii::CommandBuffer&     command_buffer,
+  vk::Pipeline                 pipeline,
+  const descriptor_heap_arena& arena)
 {
   command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline);
   arena.bind(command_buffer);
@@ -163,11 +148,9 @@ template<descriptor_table_backend Backend>
   requires (Backend == descriptor_table_backend::heap)
 void
 bind_compute_descriptors(
-  vk::raii::CommandBuffer&                            command_buffer,
-  vk::Pipeline                                        pipeline,
-  [[maybe_unused]] vk::PipelineLayout                 layout,
-  [[maybe_unused]] std::span<const vk::DescriptorSet> sets,
-  const descriptor_heap_arena&                        arena)
+  vk::raii::CommandBuffer&     command_buffer,
+  vk::Pipeline                 pipeline,
+  const descriptor_heap_arena& arena)
 {
   command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline);
   arena.bind(command_buffer);
@@ -180,14 +163,14 @@ push_data(
   vk::raii::CommandBuffer& command_buffer, std::uint32_t offset, const T& value)
 {
   static_assert(std::is_trivially_copyable_v<T>);
-  const vk::PushDataInfoEXT info {
+  const vk::PushDataInfoEXT push_data_info {
     .offset = offset,
     .data   = vk::HostAddressRangeConstEXT {
       .address = &value,
       .size    = sizeof(T),
     },
   };
-  command_buffer.pushDataEXT(info);
+  command_buffer.pushDataEXT(push_data_info);
 }
 
 export

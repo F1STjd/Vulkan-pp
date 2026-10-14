@@ -19,7 +19,6 @@ export struct frame
 {
   vk::raii::Semaphore     present_complete {nullptr};
   vk::raii::CommandBuffer command_buffer {nullptr};
-  vk::DescriptorSet       descriptor_set {};
 };
 
 export struct frames_create_info

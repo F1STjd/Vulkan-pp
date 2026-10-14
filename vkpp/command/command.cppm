@@ -47,7 +47,7 @@ public:
 
   ~submission()
   {
-    if (device_.has_value() && fence_ != nullptr) { (void)wait(); }
+    if (device_.has_value() && fence_ != nullptr) { auto _ = wait(); }
   }
 
   [[nodiscard]]
