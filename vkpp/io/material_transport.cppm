@@ -107,7 +107,8 @@ static_assert(
   offsetof(material_record_transmission, texture_presence_mask) == 72UZ);
 static_assert(
   offsetof(material_record_transmission, transmission_factor) == 76UZ);
-static_assert(offsetof(material_record_transmission, transmission_slot) == 80UZ);
+static_assert(
+  offsetof(material_record_transmission, transmission_slot) == 80UZ);
 
 export struct alignas(16) material_record_clearcoat
 {
@@ -183,7 +184,8 @@ static_assert(
   offsetof(material_record_transmission_clearcoat, texture_presence_mask) ==
   72UZ);
 static_assert(
-  offsetof(material_record_transmission_clearcoat, transmission_factor) == 76UZ);
+  offsetof(material_record_transmission_clearcoat, transmission_factor) ==
+  76UZ);
 static_assert(
   offsetof(material_record_transmission_clearcoat, transmission_slot) == 80UZ);
 static_assert(
@@ -307,7 +309,7 @@ struct material_transport_cpu
   std::uint32_t default_material_index {};
 };
 
-template<class DiagnosticsPolicy>
+template<diagnostics_policy DiagnosticsPolicy>
 [[nodiscard]]
 auto
 resolve_texture_use_slot(
@@ -379,7 +381,7 @@ resolve_texture_use_slot(
   return *slot;
 }
 
-template<material_transport_spec Spec, class DiagnosticsPolicy>
+template<material_transport_spec Spec, diagnostics_policy DiagnosticsPolicy>
 [[nodiscard]]
 auto
 extension_bags_supported(
@@ -437,7 +439,7 @@ extension_bags_supported(
   return {};
 }
 
-template<typename Record, class DiagnosticsPolicy>
+template<typename Record, diagnostics_policy DiagnosticsPolicy>
 [[nodiscard]]
 auto
 fill_common_fields(
@@ -510,7 +512,7 @@ fill_common_fields(
   return {};
 }
 
-template<material_transport_spec Spec, class DiagnosticsPolicy>
+template<material_transport_spec Spec, diagnostics_policy DiagnosticsPolicy>
 [[nodiscard]]
 auto
 pack_material_records_impl(
@@ -602,7 +604,7 @@ pack_material_records_impl(
 }
 
 export
-template<material_transport_spec Spec, class DiagnosticsPolicy>
+template<material_transport_spec Spec, diagnostics_policy DiagnosticsPolicy>
 [[nodiscard]]
 auto
 pack_material_records(
@@ -617,7 +619,7 @@ pack_material_records(
 }
 
 export
-template<material_transport_spec Spec, class DiagnosticsPolicy>
+template<material_transport_spec Spec, diagnostics_policy DiagnosticsPolicy>
 [[nodiscard]]
 auto
 pack_material_records(

@@ -181,7 +181,8 @@ create_graphics_pipeline_library_internal(
   }
   const vk::raii::PipelineCache null_cache {nullptr};
   return map_vk_error(
-    device.createGraphicsPipeline(null_cache, graphics_create_info), diagnostics)
+    device.createGraphicsPipeline(null_cache, graphics_create_info),
+    diagnostics)
     .transform(
       [ _ = std::move(held) ](
         vk::raii::Pipeline&& pipeline) mutable -> graphics_pipeline_library {
@@ -290,7 +291,7 @@ export template<
   graphics_pipeline_spec         Spec    = {},
   descriptor_table_backend       Backend = descriptor_table_backend::classic,
   class Layout                           = void,
-  class DiagnosticsPolicy                = diagnostics_off
+  diagnostics_policy DiagnosticsPolicy   = diagnostics_off
 >
   requires (validate(Spec) && Backend == descriptor_table_backend::classic)
 auto make_graphics_pipeline_library(
@@ -341,32 +342,22 @@ auto make_graphics_pipeline_library(
         make_app_error(app_error_code::missing_required_argument),
       };
     }
-    if constexpr (
-      !std::is_void_v<Layout> && DiagnosticsPolicy::check_spirv_bindings)
+    if (
+      auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
+        runtime_args.spirv,
+        runtime_args.vertex_entry,
+        vk::ShaderStageFlagBits::eVertex,
+        diagnostics);
+      !checked)
     {
-      const auto* words =
-        std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data());
-      const std::span<const std::uint32_t> spirv_u32 {
-        words,
-        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t),
-      };
-      if (
-        auto check = validate_spirv_bindings(
-          spirv_u32,
-          Layout {},
-          vk::ShaderStageFlagBits::eVertex |
-            vk::ShaderStageFlagBits::eFragment |
-            vk::ShaderStageFlagBits::eGeometry |
-            vk::ShaderStageFlagBits::eTessellationControl |
-            vk::ShaderStageFlagBits::eTessellationEvaluation);
-        !check)
-      {
-        return std::unexpected {check.error()};
-      }
+      return std::unexpected {checked.error()};
     }
+
     const vk::ShaderModuleCreateInfo module_info {
       .codeSize = runtime_args.spirv.size_bytes(),
-      .pCode = std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data()),
+      .pCode    = std::start_lifetime_as_array<std::uint32_t>(
+        runtime_args.spirv.data(),
+        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t)),
     };
     return map_vk_error(device.createShaderModule(module_info), diagnostics)
       .and_then(
@@ -432,32 +423,22 @@ auto make_graphics_pipeline_library(
         make_app_error(app_error_code::missing_required_argument),
       };
     }
-    if constexpr (
-      !std::is_void_v<Layout> && DiagnosticsPolicy::check_spirv_bindings)
+    if (
+      auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
+        runtime_args.spirv,
+        runtime_args.fragment_entry,
+        vk::ShaderStageFlagBits::eFragment,
+        diagnostics);
+      !checked)
     {
-      const auto* words =
-        std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data());
-      const std::span<const std::uint32_t> spirv_u32 {
-        words,
-        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t),
-      };
-      if (
-        auto check = validate_spirv_bindings(
-          spirv_u32,
-          Layout {},
-          vk::ShaderStageFlagBits::eVertex |
-            vk::ShaderStageFlagBits::eFragment |
-            vk::ShaderStageFlagBits::eGeometry |
-            vk::ShaderStageFlagBits::eTessellationControl |
-            vk::ShaderStageFlagBits::eTessellationEvaluation);
-        !check)
-      {
-        return std::unexpected {check.error()};
-      }
+      return std::unexpected {checked.error()};
     }
+
     const vk::ShaderModuleCreateInfo module_info {
       .codeSize = runtime_args.spirv.size_bytes(),
-      .pCode = std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data()),
+      .pCode    = std::start_lifetime_as_array<std::uint32_t>(
+        runtime_args.spirv.data(),
+        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t)),
     };
     return map_vk_error(device.createShaderModule(module_info), diagnostics)
       .and_then(
@@ -563,8 +544,8 @@ export template<
   graphics_pipeline_library_kind Kind,
   graphics_pipeline_spec         Spec = {},
   descriptor_table_backend       Backend,
-  class Layout            = void,
-  class DiagnosticsPolicy = diagnostics_off
+  class Layout                         = void,
+  diagnostics_policy DiagnosticsPolicy = diagnostics_off
 >
   requires (validate(Spec) && Backend == descriptor_table_backend::heap)
 auto make_graphics_pipeline_library(
@@ -610,32 +591,22 @@ auto make_graphics_pipeline_library(
         make_app_error(app_error_code::missing_required_argument),
       };
     }
-    if constexpr (
-      !std::is_void_v<Layout> && DiagnosticsPolicy::check_spirv_bindings)
+    if (
+      auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
+        runtime_args.spirv,
+        runtime_args.vertex_entry,
+        vk::ShaderStageFlagBits::eVertex,
+        diagnostics);
+      !checked)
     {
-      const auto* words =
-        std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data());
-      const std::span<const std::uint32_t> spirv_u32 {
-        words,
-        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t),
-      };
-      if (
-        auto check = validate_spirv_bindings(
-          spirv_u32,
-          Layout {},
-          vk::ShaderStageFlagBits::eVertex |
-            vk::ShaderStageFlagBits::eFragment |
-            vk::ShaderStageFlagBits::eGeometry |
-            vk::ShaderStageFlagBits::eTessellationControl |
-            vk::ShaderStageFlagBits::eTessellationEvaluation);
-        !check)
-      {
-        return std::unexpected {check.error()};
-      }
+      return std::unexpected {checked.error()};
     }
+
     const vk::ShaderModuleCreateInfo module_info {
       .codeSize = runtime_args.spirv.size_bytes(),
-      .pCode = std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data()),
+      .pCode    = std::start_lifetime_as_array<std::uint32_t>(
+        runtime_args.spirv.data(),
+        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t)),
     };
     return map_vk_error(device.createShaderModule(module_info), diagnostics)
       .and_then(
@@ -697,32 +668,22 @@ auto make_graphics_pipeline_library(
         make_app_error(app_error_code::missing_required_argument),
       };
     }
-    if constexpr (
-      !std::is_void_v<Layout> && DiagnosticsPolicy::check_spirv_bindings)
+    if (
+      auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
+        runtime_args.spirv,
+        runtime_args.fragment_entry,
+        vk::ShaderStageFlagBits::eFragment,
+        diagnostics);
+      !checked)
     {
-      const auto* words =
-        std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data());
-      const std::span<const std::uint32_t> spirv_u32 {
-        words,
-        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t),
-      };
-      if (
-        auto check = validate_spirv_bindings(
-          spirv_u32,
-          Layout {},
-          vk::ShaderStageFlagBits::eVertex |
-            vk::ShaderStageFlagBits::eFragment |
-            vk::ShaderStageFlagBits::eGeometry |
-            vk::ShaderStageFlagBits::eTessellationControl |
-            vk::ShaderStageFlagBits::eTessellationEvaluation);
-        !check)
-      {
-        return std::unexpected {check.error()};
-      }
+      return std::unexpected {checked.error()};
     }
+
     const vk::ShaderModuleCreateInfo module_info {
       .codeSize = runtime_args.spirv.size_bytes(),
-      .pCode = std::start_lifetime_as<std::uint32_t>(runtime_args.spirv.data()),
+      .pCode    = std::start_lifetime_as_array<std::uint32_t>(
+        runtime_args.spirv.data(),
+        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t)),
     };
     return map_vk_error(device.createShaderModule(module_info), diagnostics)
       .and_then(

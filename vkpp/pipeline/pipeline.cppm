@@ -105,7 +105,7 @@ export struct graphics_pipeline_shaders
   const char*           fragment_entry {"fragment_main"};
 };
 
-template<graphics_pipeline_spec Spec, class DiagnosticsPolicy>
+template<graphics_pipeline_spec Spec, diagnostics_policy DiagnosticsPolicy>
   requires (validate(Spec))
 auto
 make_graphics_pipeline_classic_impl(
@@ -125,7 +125,8 @@ make_graphics_pipeline_classic_impl(
 
   const vk::ShaderModuleCreateInfo module_info {
     .codeSize = shaders.spirv.size_bytes(),
-    .pCode    = std::start_lifetime_as<std::uint32_t>(shaders.spirv.data()),
+    .pCode    = std::start_lifetime_as_array<std::uint32_t>(
+      shaders.spirv.data(), shaders.spirv.size_bytes() / sizeof(std::uint32_t)),
   };
 
   if constexpr (DiagnosticsPolicy::enabled)
@@ -151,7 +152,8 @@ make_graphics_pipeline_classic_impl(
           return map_vk_error(
             device.createPipelineLayout(layout_info), diagnostics)
             .and_then(
-              [ &, module = std::move(module) ](vk::raii::PipelineLayout&& layout)
+              [ &, module = std::move(module) ](
+                vk::raii::PipelineLayout&& layout)
                 -> std::expected<graphics_pipeline, error_t> {
                 // Removed static constexpr from everything, because GCC's ICE
                 // was triggered
@@ -297,7 +299,8 @@ make_graphics_pipeline_classic_impl(
 
           return map_vk_error(device.createPipelineLayout(layout_info))
             .and_then(
-              [ &, module = std::move(module) ](vk::raii::PipelineLayout&& layout)
+              [ &, module = std::move(module) ](
+                vk::raii::PipelineLayout&& layout)
                 -> std::expected<graphics_pipeline, error_t> {
                 // Removed static constexpr from everything, because GCC's ICE
                 // was triggered
@@ -426,7 +429,7 @@ export
 template<
   descriptor_table_backend Backend,
   graphics_pipeline_spec   Spec,
-  class DiagnosticsPolicy
+  diagnostics_policy       DiagnosticsPolicy
 >
   requires (
     validate(Spec) &&
@@ -448,7 +451,7 @@ export
 template<
   descriptor_table_backend Backend,
   graphics_pipeline_spec   Spec,
-  class DiagnosticsPolicy
+  diagnostics_policy       DiagnosticsPolicy
 >
   requires (
     validate(Spec) &&
@@ -468,7 +471,7 @@ make_graphics_pipeline(
 }
 
 export
-template<graphics_pipeline_spec Spec, class DiagnosticsPolicy>
+template<graphics_pipeline_spec Spec, diagnostics_policy DiagnosticsPolicy>
   requires (validate(Spec))
 auto
 make_graphics_pipeline_heap_impl(
@@ -489,7 +492,8 @@ make_graphics_pipeline_heap_impl(
 
   const vk::ShaderModuleCreateInfo module_info {
     .codeSize = shaders.spirv.size_bytes(),
-    .pCode    = std::start_lifetime_as<std::uint32_t>(shaders.spirv.data()),
+    .pCode    = std::start_lifetime_as_array<std::uint32_t>(
+      shaders.spirv.data(), shaders.spirv.size_bytes() / sizeof(std::uint32_t)),
   };
 
   if constexpr (DiagnosticsPolicy::enabled)
@@ -504,7 +508,8 @@ make_graphics_pipeline_heap_impl(
             .pVertexBindingDescriptions = runtime_args.vertex_bindings.data(),
             .vertexAttributeDescriptionCount =
               static_cast<std::uint32_t>(runtime_args.vertex_attributes.size()),
-            .pVertexAttributeDescriptions = runtime_args.vertex_attributes.data(),
+            .pVertexAttributeDescriptions =
+              runtime_args.vertex_attributes.data(),
           };
           const vk::PipelineInputAssemblyStateCreateInfo input_assembly {
             .topology = Spec.topology
@@ -634,7 +639,8 @@ make_graphics_pipeline_heap_impl(
             .pVertexBindingDescriptions = runtime_args.vertex_bindings.data(),
             .vertexAttributeDescriptionCount =
               static_cast<std::uint32_t>(runtime_args.vertex_attributes.size()),
-            .pVertexAttributeDescriptions = runtime_args.vertex_attributes.data(),
+            .pVertexAttributeDescriptions =
+              runtime_args.vertex_attributes.data(),
           };
           const vk::PipelineInputAssemblyStateCreateInfo input_assembly {
             .topology = Spec.topology
@@ -758,7 +764,7 @@ export
 template<
   descriptor_table_backend Backend,
   graphics_pipeline_spec   Spec,
-  class DiagnosticsPolicy
+  diagnostics_policy       DiagnosticsPolicy
 >
   requires (
     validate(Spec) &&
@@ -781,7 +787,7 @@ export
 template<
   descriptor_table_backend Backend,
   graphics_pipeline_spec   Spec,
-  class DiagnosticsPolicy
+  diagnostics_policy       DiagnosticsPolicy
 >
   requires (
     validate(Spec) &&

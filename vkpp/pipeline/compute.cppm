@@ -53,9 +53,9 @@ private:
 
 export
 template<
-  descriptor_table_backend Backend = descriptor_table_backend::classic,
-  class Layout                     = void,
-  class DiagnosticsPolicy          = diagnostics_off
+  descriptor_table_backend Backend    = descriptor_table_backend::classic,
+  class Layout                        = void,
+  diagnostics_policy DiagnosticsPolicy = diagnostics_off
 >
   requires (Backend == descriptor_table_backend::classic)
 [[nodiscard]]
@@ -74,27 +74,19 @@ make_compute_pipeline(
       make_app_error(app_error_code::missing_required_argument),
     };
   }
-  if constexpr (
-    !std::is_void_v<Layout> && DiagnosticsPolicy::check_spirv_bindings)
+
+  if (
+    auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
+      shader.spirv, shader.entry, vk::ShaderStageFlagBits::eCompute, diagnostics);
+    !checked)
   {
-    const auto* words =
-      std::start_lifetime_as<std::uint32_t>(shader.spirv.data());
-    const std::span<const std::uint32_t> spirv_u32 {
-      words,
-      shader.spirv.size_bytes() / sizeof(std::uint32_t),
-    };
-    if (
-      auto check = validate_spirv_bindings(
-        spirv_u32, Layout {}, vk::ShaderStageFlagBits::eCompute);
-      !check)
-    {
-      return std::unexpected {check.error()};
-    }
+    return std::unexpected {checked.error()};
   }
 
   const vk::ShaderModuleCreateInfo module_info {
     .codeSize = shader.spirv.size_bytes(),
-    .pCode    = std::start_lifetime_as<std::uint32_t>(shader.spirv.data()),
+    .pCode    = std::start_lifetime_as_array<std::uint32_t>(
+      shader.spirv.data(), shader.spirv.size_bytes() / sizeof(std::uint32_t)),
   };
 
   return map_vk_error(device.createShaderModule(module_info), diagnostics)
@@ -148,8 +140,8 @@ make_compute_pipeline(
 export
 template<
   descriptor_table_backend Backend,
-  class Layout            = void,
-  class DiagnosticsPolicy = diagnostics_off
+  class Layout                         = void,
+  diagnostics_policy DiagnosticsPolicy = diagnostics_off
 >
   requires (Backend == descriptor_table_backend::heap)
 [[nodiscard]]
@@ -169,26 +161,19 @@ make_compute_pipeline(
       make_app_error(app_error_code::missing_required_argument),
     };
   }
-  if constexpr (
-    !std::is_void_v<Layout> && DiagnosticsPolicy::check_spirv_bindings)
+
+  if (
+    auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
+      shader.spirv, shader.entry, vk::ShaderStageFlagBits::eCompute, diagnostics);
+    !checked)
   {
-    const auto* words =
-      std::start_lifetime_as<std::uint32_t>(shader.spirv.data());
-    const std::span<const std::uint32_t> spirv_u32 {
-      words,
-      shader.spirv.size_bytes() / sizeof(std::uint32_t),
-    };
-    if (
-      auto check = validate_spirv_bindings(
-        spirv_u32, Layout {}, vk::ShaderStageFlagBits::eCompute);
-      !check)
-    {
-      return std::unexpected {check.error()};
-    }
+    return std::unexpected {checked.error()};
   }
+
   const vk::ShaderModuleCreateInfo module_info {
     .codeSize = shader.spirv.size_bytes(),
-    .pCode    = std::start_lifetime_as<std::uint32_t>(shader.spirv.data()),
+    .pCode    = std::start_lifetime_as_array<std::uint32_t>(
+      shader.spirv.data(), shader.spirv.size_bytes() / sizeof(std::uint32_t)),
   };
 
   return map_vk_error(device.createShaderModule(module_info), diagnostics)
@@ -218,12 +203,13 @@ make_compute_pipeline(
         return map_vk_error(
           device.createComputePipeline(cache, compute_pipeline_info),
           diagnostics)
-          .transform([](vk::raii::Pipeline&& pipeline) mutable -> compute_pipeline {
-            return compute_pipeline {
-              {nullptr},
-              std::move(pipeline),
-            };
-          });
+          .transform(
+            [](vk::raii::Pipeline&& pipeline) mutable -> compute_pipeline {
+              return compute_pipeline {
+                {nullptr},
+                std::move(pipeline),
+              };
+            });
       });
 }
 

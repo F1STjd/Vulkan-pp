@@ -17,28 +17,30 @@ export enum class diagnostic_severity : std::uint8_t
   verbose,
 };
 
+inline constexpr bool spirv_binding_checks_in_build {
+#ifndef NDEBUG
+  true
+#else
+  false
+#endif
+};
+
 export struct diagnostics_on
 {
   static constexpr bool enabled {true};
-  static constexpr bool check_spirv_bindings {
-#ifndef NDEBUG
-    true
-#else
-    false
-#endif
-  };
+  static constexpr bool check_spirv_bindings {spirv_binding_checks_in_build};
 };
 
 export struct diagnostics_off
 {
   static constexpr bool enabled {false};
-  static constexpr bool check_spirv_bindings {
-#ifndef NDEBUG
-    true
-#else
-    false
-#endif
-  };
+  static constexpr bool check_spirv_bindings {spirv_binding_checks_in_build};
+};
+
+export template<class Policy>
+concept diagnostics_policy = requires {
+  { Policy::enabled } -> std::convertible_to<bool>;
+  { Policy::check_spirv_bindings } -> std::convertible_to<bool>;
 };
 
 export struct diagnostic_record
@@ -55,14 +57,14 @@ export class diagnostic_buffer
 {
 public:
   diagnostic_buffer(
-    std::span<diagnostic_record> storage, diagnostic_severity threshhold)
-  : storage_ {storage}, threshhold_ {threshhold}
+    std::span<diagnostic_record> storage, diagnostic_severity threshold)
+  : storage_ {storage}, threshold_ {threshold}
   {}
 
   [[nodiscard]]
   auto
   threshold() const -> diagnostic_severity
-  { return threshhold_; }
+  { return threshold_; }
 
   [[nodiscard]]
   auto
@@ -80,11 +82,11 @@ public:
     diagnostic_severity         severity,
     std::optional<error_t>      error,
     std::source_location        location,
-    std::format_string<Args...> fmt,
+    std::format_string<Args...> format,
     Args&&... args)
   {
-    if (threshhold_ == diagnostic_severity::off) { return; }
-    if (severity > threshhold_) { return; }
+    if (threshold_ == diagnostic_severity::off) { return; }
+    if (severity > threshold_) { return; }
     if (storage_.empty()) { return; }
 
     diagnostic_record record {
@@ -93,13 +95,13 @@ public:
       .location = location,
     };
     auto [ _, count ] = std::format_to_n(
-      record.text.begin(), 255, fmt, std::forward<Args>(args)...);
+      record.text.begin(), 255, format, std::forward<Args>(args)...);
     const auto written = static_cast<std::size_t>(count);
     record.text_size   = static_cast<std::uint16_t>(std::min(written, 255UZ));
     record.truncated   = written > 255UZ;
     record.text[ record.text_size ] = '\0';
 
-    const std::scoped_lock loc {mutex_};
+    const std::scoped_lock lock {mutex_};
     if (count_ < storage_.size())
     {
       storage_[ count_++ ] = std::move(record);
@@ -115,36 +117,38 @@ public:
   copy_and_clear(std::span<diagnostic_record> destination) -> std::size_t
   {
     const std::scoped_lock lock {mutex_};
-    const auto             n = std::min(count_, destination.size());
+    const auto             copied = std::min(count_, destination.size());
     if (count_ < storage_.size() || head_ == 0UZ)
     {
       std::ranges::copy_n(
-        storage_.begin(), static_cast<std::ptrdiff_t>(n), destination.begin());
+        storage_.begin(),
+        static_cast<std::ptrdiff_t>(copied),
+        destination.begin());
     }
     else
     {
       const auto first      = storage_.size() - head_;
-      const auto copy_first = std::min(first, n);
+      const auto copy_first = std::min(first, copied);
       std::ranges::copy_n(
         storage_.begin() + static_cast<std::ptrdiff_t>(head_),
         static_cast<std::ptrdiff_t>(copy_first),
         destination.begin());
-      if (copy_first < n)
+      if (copy_first < copied)
       {
         std::ranges::copy_n(
           storage_.begin(),
-          static_cast<std::ptrdiff_t>(n - copy_first),
+          static_cast<std::ptrdiff_t>(copied - copy_first),
           destination.begin() + static_cast<std::ptrdiff_t>(copy_first));
       }
     }
     count_ = 0UZ;
     head_  = 0UZ;
-    return n;
+    return copied;
   }
 
 private:
   std::span<diagnostic_record> storage_ {};
-  diagnostic_severity          threshhold_ {diagnostic_severity::error};
+  diagnostic_severity          threshold_ {diagnostic_severity::error};
   std::size_t                  count_ {};
   std::size_t                  head_ {};
   std::size_t                  dropped_ {};

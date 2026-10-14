@@ -47,6 +47,7 @@ export enum class app_error_code : std::int32_t
   feature_not_supported,
   feature_not_enabled,
   corrupt_persistent_data,
+  shader_binding_mismatch,
 };
 
 export struct error_t
@@ -131,6 +132,8 @@ app_error_message(app_error_code code) -> std::string_view
   case app_error_code::feature_not_enabled   : return "feature_not_enabled";
   case app_error_code::corrupt_persistent_data :
     return "corrupt_persistent_data";
+  case app_error_code::shader_binding_mismatch :
+    return "shader_binding_mismatch";
   }
   return "unknown_app_error_code";
 }
