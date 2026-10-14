@@ -6,11 +6,14 @@ import vkpp.error;
 import vkpp.sampler;
 import vkpp.texture;
 import vkpp.descriptor.indexing;
+import vkpp.descriptor.layout_decl;
 
 namespace vkpp
 {
 
-export [[nodiscard]]
+export
+template<declared_resource_layout Layout, class Tag>
+[[nodiscard]]
 auto
 register_combined_image_sampler(
   classic_bindless_table& table,
@@ -18,6 +21,10 @@ register_combined_image_sampler(
   vk::Sampler             sampler,
   const texture<>&        image) -> std::expected<std::uint32_t, error_t>
 {
+  static_assert(
+    Layout::template declaration_of<Tag>::kind ==
+      resource_declaration_kind::cis_table,
+    "register_combined_image_sampler: Tag must name a cis_table_resource");
   return table.register_combined_image_sampler(device, sampler, *image.view());
 }
 

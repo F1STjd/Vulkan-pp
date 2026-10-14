@@ -5,34 +5,15 @@ import vulkan;
 
 import vkpp.error;
 import vkpp.diagnostics;
-import vkpp.buffer;
 import vkpp.descriptor.layout_decl;
 
 namespace vkpp
 {
 
-export
-auto
-make_descriptor_set_layout(
-  const vk::raii::Device&                         device,
-  std::span<const vk::DescriptorSetLayoutBinding> bindings)
-  -> std::expected<vk::raii::DescriptorSetLayout, error_t>
-{
-  const vk::DescriptorSetLayoutCreateInfo create_info {
-    .bindingCount = static_cast<std::uint32_t>(bindings.size()),
-    .pBindings    = bindings.data(),
-  };
-  return map_vk_error(
-    device.createDescriptorSetLayout(create_info), std::nullopt);
-}
-
 export class descriptor_pool
 {
 public:
   descriptor_pool() = default;
-  explicit descriptor_pool(vk::raii::DescriptorPool&& pool)
-  : pool_ {std::move(pool)}
-  {}
 
   [[nodiscard]]
   static
@@ -44,13 +25,13 @@ public:
     vk::DescriptorPoolCreateFlags           flags = {})
     -> std::expected<descriptor_pool, error_t>
   {
-    const vk::DescriptorPoolCreateInfo info {
+    const vk::DescriptorPoolCreateInfo create_info {
       .flags         = flags,
       .maxSets       = max_sets,
       .poolSizeCount = static_cast<std::uint32_t>(pool_sizes.size()),
       .pPoolSizes    = pool_sizes.data(),
     };
-    return map_vk_error(device.createDescriptorPool(info), std::nullopt)
+    return map_vk_error(device.createDescriptorPool(create_info), std::nullopt)
       .transform([](vk::raii::DescriptorPool&& pool) -> descriptor_pool {
         return descriptor_pool {std::move(pool)};
       });
@@ -59,18 +40,21 @@ public:
   [[nodiscard]]
   auto
   allocate(
-    const vk::raii::Device&              device,
-    const vk::raii::DescriptorSetLayout& layout,
-    std::uint32_t                        count)
+    const vk::raii::Device& device,
+    vk::DescriptorSetLayout layout,
+    std::uint32_t           count)
     -> std::expected<std::vector<vk::DescriptorSet>, error_t>
   {
-    std::vector                         layouts(count, *layout);
-    const vk::DescriptorSetAllocateInfo info {
+    std::vector layouts(count, layout);
+
+    const vk::DescriptorSetAllocateInfo allocate_info {
       .descriptorPool     = *pool_,
       .descriptorSetCount = count,
       .pSetLayouts        = layouts.data(),
     };
-    return map_vk_error(device.allocateDescriptorSets(info), std::nullopt)
+
+    return map_vk_error(
+      device.allocateDescriptorSets(allocate_info), std::nullopt)
       .transform([](std::vector<vk::raii::DescriptorSet>&& owned) {
         std::vector<vk::DescriptorSet> handles;
         handles.reserve(owned.size());
@@ -93,6 +77,10 @@ public:
   { return std::forward_like<decltype(self)>(self.pool_); }
 
 private:
+  explicit descriptor_pool(vk::raii::DescriptorPool&& pool)
+  : pool_ {std::move(pool)}
+  {}
+
   vk::raii::DescriptorPool pool_ {nullptr};
 };
 
@@ -138,173 +126,156 @@ pool_sizes_for(
   return pool_sizes;
 }
 
-export
-template<class Layout>
-consteval auto
-bindings_for_set(std::uint32_t set)
-  -> std::array<vk::DescriptorSetLayoutBinding, Layout::resource_count()>
+namespace detail
 {
-  std::array<vk::DescriptorSetLayoutBinding, Layout::resource_count()> out {};
-  constexpr auto table = Layout::assignment_table();
-  std::size_t    n {};
-  for (const auto& row : table)
+
+template<declared_resource_layout Layout>
+struct set_layout_rows
+{
+  std::array<vk::DescriptorSetLayoutBinding, Layout::resource_count()>
+    bindings {};
+  std::array<vk::DescriptorBindingFlags, Layout::resource_count()>
+    binding_flags {};
+
+  std::uint32_t                      count {};
+  vk::DescriptorSetLayoutCreateFlags layout_flags {};
+};
+
+template<declared_resource_layout Layout>
+consteval
+auto
+rows_for_set(std::uint32_t set) -> set_layout_rows<Layout>
+{
+  set_layout_rows<Layout> rows {};
+  for (const binding_assignment& row : Layout::assignment_table())
   {
     if (row.set != set) { continue; }
-    out[ n++ ] = {
+    rows.bindings[ rows.count ] = {
       .binding            = row.binding,
       .descriptorType     = row.descriptor_type,
       .descriptorCount    = row.count,
       .stageFlags         = row.stage_flags,
       .pImmutableSamplers = nullptr,
     };
-  }
-  return out;
-}
-
-export
-template<class Layout>
-consteval auto
-binding_count_for_set(std::uint32_t set) -> std::uint32_t
-{
-  constexpr auto table = Layout::assignment_table();
-  return static_cast<std::uint32_t>(std::ranges::count_if(
-    table, [ set ](const binding_assignment& assignment) -> bool {
-      return assignment.set == set;
-    }));
-}
-
-export
-template<class Layout>
-consteval auto
-binding_flags_for_set(std::uint32_t set)
-  -> std::array<vk::DescriptorBindingFlags, Layout::resource_count()>
-{
-  std::array<vk::DescriptorBindingFlags, Layout::resource_count()> out {};
-  constexpr auto table = Layout::assignment_table();
-  std::size_t    n {0U};
-  for (const auto& row : table)
-  {
-    if (row.set != set) { continue; }
-    out[ n++ ] =
-      row.update_after_bind
-        ? (vk::DescriptorBindingFlagBits::eUpdateAfterBind |
-            vk::DescriptorBindingFlagBits::eVariableDescriptorCount |
-            vk::DescriptorBindingFlagBits::ePartiallyBound)
-        : vk::DescriptorBindingFlags {};
-  }
-  return out;
-}
-
-export
-template<class Layout>
-consteval auto
-pool_sizes_for_layout() -> std::array<vk::DescriptorPoolSize, 4>
-{
-  std::array<vk::DescriptorPoolSize, 4> out {};
-  std::uint32_t                         used {};
-  auto add = [ & ](vk::DescriptorType type, std::uint32_t count) {
-    for (auto index : std::views::indices(used))
+    rows.binding_flags[ rows.count ] = row.binding_flags;
+    if (row.update_after_bind)
     {
-      if (out[ index ].type == type)
-      {
-        out[ index ].descriptorCount += count;
-        return;
-      }
+      rows.layout_flags |=
+        vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool;
     }
-    out[ used++ ] = vk::DescriptorPoolSize {
-      .type            = type,
-      .descriptorCount = count,
-    };
-  };
-  constexpr auto table = Layout::assignment_table();
-  for (const auto& row : table) { add(row.descriptor_type, row.count); }
-  return out;
+    ++rows.count;
+  }
+  return rows;
 }
 
-export
-template<class Layout>
+template<declared_resource_layout Layout, std::uint32_t Set>
+[[nodiscard]]
 auto
-make_set_layouts(const vk::raii::Device& device) -> std::expected<
-  std::array<vk::raii::DescriptorSetLayout, Layout::set_count>,
-  error_t
->
+make_set_layout(const vk::raii::Device& device)
+  -> std::expected<vk::raii::DescriptorSetLayout, error_t>
 {
-  static_assert(Layout::set_count == 4U);
-  std::array<vk::raii::DescriptorSetLayout, Layout::set_count> layouts {
+  static constexpr set_layout_rows<Layout> rows {rows_for_set<Layout>(Set)};
+
+  const vk::StructureChain chain {
+    vk::DescriptorSetLayoutCreateInfo {
+      .flags        = rows.layout_flags,
+      .bindingCount = rows.count,
+      .pBindings    = rows.bindings.data(),
+    },
+    vk::DescriptorSetLayoutBindingFlagsCreateInfo {
+      .bindingCount  = rows.count,
+      .pBindingFlags = rows.binding_flags.data(),
+    },
+  };
+  return map_vk_error(
+    device.createDescriptorSetLayout(
+      chain.get<vk::DescriptorSetLayoutCreateInfo>()),
+    std::nullopt);
+}
+
+} // namespace detail
+
+export template<declared_resource_layout Layout>
+class descriptor_set_layouts
+{
+  static_assert(
+    Layout::set_count == 4U, "descriptor_set_layouts: expects 4 scopes");
+
+public:
+  descriptor_set_layouts() = default;
+
+  [[nodiscard]]
+  static
+  auto
+  create(const vk::raii::Device& device)
+    -> std::expected<descriptor_set_layouts, error_t>
+  {
+    return
+      [ & ]<std::uint32_t... Sets>(std::integer_sequence<std::uint32_t, Sets...>)
+        -> std::expected<descriptor_set_layouts, error_t> {
+        std::array<
+          std::expected<vk::raii::DescriptorSetLayout, error_t>,
+          Layout::set_count
+        >
+          created {detail::make_set_layout<Layout, Sets>(device)...};
+
+        const auto failed = std::ranges::find_if(
+          created,
+          [](const std::expected<vk::raii::DescriptorSetLayout, error_t>& layout)
+            -> bool { return !layout.has_value(); });
+        if (failed != created.end())
+        {
+          return std::unexpected {failed->error()};
+        }
+
+        return descriptor_set_layouts {
+          std::array<vk::raii::DescriptorSetLayout, Layout::set_count> {
+            std::move(*created[ Sets ])...,
+          },
+        };
+      }(std::make_integer_sequence<std::uint32_t, Layout::set_count> {});
+  }
+
+  [[nodiscard]]
+  auto
+  layout(resource_scope scope) const -> vk::DescriptorSetLayout
+  { return *layouts_[ slot_of(scope) ]; }
+
+  [[nodiscard]]
+  auto
+  handles() const -> std::array<vk::DescriptorSetLayout, Layout::set_count>
+  {
+    std::array<vk::DescriptorSetLayout, Layout::set_count> handles {};
+    std::ranges::transform(
+      layouts_,
+      handles.begin(),
+      [](const vk::raii::DescriptorSetLayout& layout)
+        -> vk::DescriptorSetLayout { return *layout; });
+    return handles;
+  }
+
+private:
+  explicit descriptor_set_layouts(
+    std::array<vk::raii::DescriptorSetLayout, Layout::set_count>&& layouts)
+  : layouts_ {std::move(layouts)}
+  {}
+
+  std::array<vk::raii::DescriptorSetLayout, Layout::set_count> layouts_ {
     nullptr, nullptr, nullptr, nullptr
   };
-  constexpr auto table = Layout::assignment_table();
-  for (auto set : std::views::indices(Layout::set_count))
-  {
-    std::vector<vk::DescriptorSetLayoutBinding> bindings;
-    std::vector<vk::DescriptorBindingFlags>     flags;
-    bool                                        any_uab {false};
-    for (const auto& row : table)
-    {
-      if (row.set != set) { continue; }
-      bindings.push_back({
-        .binding            = row.binding,
-        .descriptorType     = row.descriptor_type,
-        .descriptorCount    = row.count,
-        .stageFlags         = row.stage_flags,
-        .pImmutableSamplers = nullptr,
-      });
-      const auto f =
-        row.update_after_bind
-          ? (vk::DescriptorBindingFlagBits::eUpdateAfterBind |
-              vk::DescriptorBindingFlagBits::eVariableDescriptorCount |
-              vk::DescriptorBindingFlagBits::ePartiallyBound)
-          : vk::DescriptorBindingFlags {};
-      flags.push_back(f);
-      any_uab = any_uab || row.update_after_bind;
-    }
-    if (any_uab)
-    {
-      const vk::StructureChain chain {
-        vk::DescriptorSetLayoutCreateInfo {
-          .flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
-          .bindingCount = static_cast<std::uint32_t>(bindings.size()),
-          .pBindings    = bindings.data(),
-        },
-        vk::DescriptorSetLayoutBindingFlagsCreateInfo {
-          .bindingCount  = static_cast<std::uint32_t>(flags.size()),
-          .pBindingFlags = flags.data(),
-        },
-      };
-      auto created = map_vk_error(
-        device.createDescriptorSetLayout(
-          chain.get<vk::DescriptorSetLayoutCreateInfo>()),
-        std::nullopt);
-      if (!created) { return std::unexpected {created.error()}; }
-      layouts[ set ] = std::move(*created);
-    }
-    else
-    {
-      const vk::DescriptorSetLayoutCreateInfo info {
-        .bindingCount = static_cast<std::uint32_t>(bindings.size()),
-        .pBindings    = bindings.data(),
-      };
-      auto created_no_flags =
-        map_vk_error(device.createDescriptorSetLayout(info), std::nullopt);
-      if (!created_no_flags)
-      {
-        return std::unexpected {created_no_flags.error()};
-      }
-      layouts[ set ] = std::move(*created_no_flags);
-    }
-  }
-  return layouts;
-}
+};
 
 export
 void
 update_descriptor_sets(
-  const vk::raii::Device& device, std::span<const vk::WriteDescriptorSet> writes)
+  const vk::raii::Device&                 device,
+  std::span<const vk::WriteDescriptorSet> writes)
 { device.updateDescriptorSets(writes, {}); }
 
 export struct descriptor_set_arena_create_info
 {
   const vk::raii::Device&                         device;
+  vk::DescriptorSetLayout                         layout {};
   std::span<const vk::DescriptorSetLayoutBinding> bindings {};
   std::uint32_t                                   set_count {1U};
   vk::DescriptorPoolCreateFlags                   pool_flags {};
@@ -316,16 +287,9 @@ export class descriptor_set_arena
 public:
   descriptor_set_arena() = default;
 
-  descriptor_set_arena(
-    vk::raii::DescriptorSetLayout&&  layout,
-    descriptor_pool&&                pool,
-    std::vector<vk::DescriptorSet>&& sets)
-  : layout_ {std::move(layout)}, pool_ {std::move(pool)}, sets_ {std::move(sets)}
-  {}
-
   [[nodiscard]]
   auto
-  layout() const -> const vk::raii::DescriptorSetLayout&
+  layout() const -> vk::DescriptorSetLayout
   { return layout_; }
 
   [[nodiscard]]
@@ -344,189 +308,174 @@ public:
   create(const descriptor_set_arena_create_info& create_info)
     -> std::expected<descriptor_set_arena, error_t>
   {
-    return make_descriptor_set_layout(create_info.device, create_info.bindings)
+    if (create_info.layout == vk::DescriptorSetLayout {})
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::missing_required_argument),
+      };
+    }
+    std::vector<vk::DescriptorPoolSize>     derived {};
+    std::span<const vk::DescriptorPoolSize> sizes =
+      create_info.pool_sizes_escape;
+    if (sizes.empty())
+    {
+      derived = pool_sizes_for(create_info.bindings, create_info.set_count);
+      sizes   = derived;
+    }
+    return descriptor_pool::create(
+      create_info.device, create_info.set_count, sizes, create_info.pool_flags)
       .and_then(
-        [ & ](vk::raii::DescriptorSetLayout&& layout)
+        [ & ](descriptor_pool&& pool)
           -> std::expected<descriptor_set_arena, error_t> {
-          std::vector<vk::DescriptorPoolSize>     derived;
-          std::span<const vk::DescriptorPoolSize> sizes =
-            create_info.pool_sizes_escape;
-          if (sizes.empty())
-          {
-            derived =
-              pool_sizes_for(create_info.bindings, create_info.set_count);
-            sizes = derived;
-          }
-          return descriptor_pool::create(
-            create_info.device,
-            create_info.set_count,
-            sizes,
-            create_info.pool_flags)
-            .and_then(
-              [ &, layout = std::move(layout) ](descriptor_pool&& pool) mutable
-                -> std::expected<descriptor_set_arena, error_t> {
-                return pool
-                  .allocate(create_info.device, layout, create_info.set_count)
-                  .transform(
-                    [ &, layout = std::move(layout), pool = std::move(pool) ](
-                      std::vector<vk::DescriptorSet>&& sets) mutable
-                      -> descriptor_set_arena {
-                      return descriptor_set_arena {
-                        std::move(layout),
-                        std::move(pool),
-                        std::move(sets),
-                      };
-                    });
+          return pool
+            .allocate(
+              create_info.device, create_info.layout, create_info.set_count)
+            .transform(
+              [ & ](std::vector<vk::DescriptorSet>&& sets) mutable
+                -> descriptor_set_arena {
+                return descriptor_set_arena {
+                  create_info.layout,
+                  std::move(pool),
+                  std::move(sets),
+                };
               });
         });
   }
 
 private:
-  vk::raii::DescriptorSetLayout  layout_ {nullptr};
+  descriptor_set_arena(
+    vk::DescriptorSetLayout          layout,
+    descriptor_pool&&                pool,
+    std::vector<vk::DescriptorSet>&& sets)
+  : layout_ {layout}, pool_ {std::move(pool)}, sets_ {std::move(sets)}
+  {}
+
+  vk::DescriptorSetLayout        layout_ {};
   descriptor_pool                pool_ {};
   std::vector<vk::DescriptorSet> sets_ {};
 };
 
-export
-void
-write_buffer_descriptor(
-  const vk::raii::Device& device,
-  vk::DescriptorSet       set,
-  std::uint32_t           binding,
-  vk::DescriptorType      type,
-  vk::Buffer              buffer,
-  vk::DeviceSize          offset,
-  vk::DeviceSize          range)
+export template<declared_resource_layout Layout, resource_scope Scope>
+  requires (Scope != resource_scope::bindless)
+class descriptor_scope_arena
 {
+public:
+  static constexpr std::uint32_t set_index {slot_of(Scope)};
+
+  descriptor_scope_arena() = default;
+
+  [[nodiscard]]
+  static
+  auto
+  create(
+    const vk::raii::Device&               device,
+    const descriptor_set_layouts<Layout>& layouts,
+    std::uint32_t                         set_count = 1U)
+    -> std::expected<descriptor_scope_arena, error_t>
+  {
+    static constexpr detail::set_layout_rows<Layout> rows {
+      detail::rows_for_set<Layout>(set_index),
+    };
+    return descriptor_set_arena::create(
+      {
+        .device    = device,
+        .layout    = layouts.layout(Scope),
+        .bindings  = std::span {rows.bindings.data(), rows.count},
+        .set_count = set_count,
+      })
+      .transform([](descriptor_set_arena&& arena) -> descriptor_scope_arena {
+        return descriptor_scope_arena {std::move(arena)};
+      });
+  }
+
+  [[nodiscard]]
+  auto
+  set(std::uint32_t index = 0) const -> vk::DescriptorSet
+  { return arena_.set(index); }
+
+  [[nodiscard]]
+  auto
+  layout() const -> vk::DescriptorSetLayout
+  { return arena_.layout(); }
+
+private:
+  explicit descriptor_scope_arena(descriptor_set_arena&& arena)
+  : arena_ {std::move(arena)}
+  {}
+
+  descriptor_set_arena arena_ {};
+};
+
+export
+template<class Tag, declared_resource_layout Layout, resource_scope Scope>
+void
+write_descriptor(
+  const descriptor_scope_arena<Layout, Scope>& arena,
+  const vk::raii::Device&                      device,
+  vk::Buffer                                   buffer,
+  vk::DeviceSize                               range,
+  vk::DeviceSize                               offset    = 0U,
+  std::uint32_t                                set_index = 0U)
+{
+  constexpr binding_assignment row = Layout::template assignment_of<Tag>;
+  static_assert(
+    row.scope == Scope, "write_descriptor: Tag is declared in another scope");
+  static_assert(
+    row.descriptor_type == vk::DescriptorType::eStorageBuffer ||
+      row.descriptor_type == vk::DescriptorType::eUniformBuffer ||
+      row.descriptor_type == vk::DescriptorType::eUniformBufferDynamic,
+    "write_descriptor: Tag is not a buffer resource");
+
   const vk::DescriptorBufferInfo buffer_info {
     .buffer = buffer,
     .offset = offset,
     .range  = range,
   };
   const vk::WriteDescriptorSet write {
-    .dstSet          = set,
-    .dstBinding      = binding,
+    .dstSet          = arena.set(set_index),
+    .dstBinding      = row.binding,
     .dstArrayElement = 0U,
     .descriptorCount = 1U,
-    .descriptorType  = type,
-    .pBufferInfo     = &buffer_info,
+    .descriptorType  = row.descriptor_type,
+    .pBufferInfo     = &buffer_info
   };
-  update_descriptor_sets(device, std::span {&write, 1UZ});
+
+  device.updateDescriptorSets(write, nullptr);
 }
 
 export
+template<class Tag, declared_resource_layout Layout, resource_scope Scope>
 void
-write_uniform_buffer(
-  const vk::raii::Device& device,
-  vk::DescriptorSet       set,
-  std::uint32_t           binding,
-  vk::Buffer              buffer,
-  vk::DeviceSize          range,
-  vk::DeviceSize          offset = 0UZ)
+write_descriptor(
+  const descriptor_scope_arena<Layout, Scope>& arena,
+  const vk::raii::Device&                      device,
+  vk::Sampler                                  sampler,
+  vk::ImageView                                view,
+  vk::ImageLayout image_layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+  std::uint32_t   set_index    = 0U)
 {
-  write_buffer_descriptor(
-    device, set, binding, vk::DescriptorType::eUniformBuffer, buffer, offset, range);
-}
+  constexpr binding_assignment row = Layout::template assignment_of<Tag>;
+  static_assert(
+    row.scope == Scope, "write_descriptor: Tag is declared in another scope");
+  static_assert(
+    row.descriptor_type == vk::DescriptorType::eCombinedImageSampler,
+    "write_descriptor: Tag is not a combined image sampler");
 
-export
-void
-write_storage_buffer(
-  const vk::raii::Device& device,
-  vk::DescriptorSet       set,
-  std::uint32_t           binding,
-  vk::Buffer              buffer,
-  vk::DeviceSize          range,
-  vk::DeviceSize          offset = 0UZ)
-{
-  write_buffer_descriptor(
-    device, set, binding, vk::DescriptorType::eStorageBuffer, buffer, offset, range);
-}
-
-export
-template<buffer_kind Kind, class T, class Address>
-void
-write_storage_buffer(
-  const vk::raii::Device&              device,
-  vk::DescriptorSet                    set,
-  std::uint32_t                        binding,
-  const buffer_view<Kind, T, Address>& view)
-{
-  write_storage_buffer(
-    device, set, binding, view.buffer(), view.size(), view.offset());
-}
-
-export
-void
-write_uniform_buffer_dynamic(
-  const vk::raii::Device& device,
-  vk::DescriptorSet       set,
-  std::uint32_t           binding,
-  vk::Buffer              buffer,
-  vk::DeviceSize          range,
-  vk::DeviceSize          offset = 0UZ)
-{
-  write_buffer_descriptor(
-    device,
-    set,
-    binding,
-    vk::DescriptorType::eUniformBufferDynamic,
-    buffer,
-    offset,
-    range);
-}
-
-export
-template<buffer_kind Kind, class T, class Address>
-void
-write_uniform_buffer_dynamic(
-  const vk::raii::Device&              device,
-  vk::DescriptorSet                    set,
-  std::uint32_t                        binding,
-  const buffer_view<Kind, T, Address>& view)
-{
-  write_uniform_buffer_dynamic(
-    device, set, binding, view.buffer(), view.size(), view.offset());
-}
-
-export
-void
-write_combined_image_sampler(
-  const vk::raii::Device& device,
-  vk::DescriptorSet       set,
-  std::uint32_t           binding,
-  vk::Sampler             sampler,
-  vk::ImageView           view,
-  vk::ImageLayout         layout = vk::ImageLayout::eShaderReadOnlyOptimal)
-{
   const vk::DescriptorImageInfo image_info {
     .sampler     = sampler,
     .imageView   = view,
-    .imageLayout = layout,
+    .imageLayout = image_layout,
   };
   const vk::WriteDescriptorSet write {
-    .dstSet          = set,
-    .dstBinding      = binding,
+    .dstSet          = arena.set(set_index),
+    .dstBinding      = row.binding,
     .dstArrayElement = 0U,
     .descriptorCount = 1U,
-    .descriptorType  = vk::DescriptorType::eCombinedImageSampler,
-    .pImageInfo      = &image_info,
+    .descriptorType  = row.descriptor_type,
+    .pImageInfo     = &image_info
   };
-  update_descriptor_sets(device, std::span {&write, 1UZ});
-}
 
-export
-void
-write_ubo_and_combined_image(
-  const vk::raii::Device& device,
-  vk::DescriptorSet       destination,
-  vk::Buffer              ubo,
-  vk::DeviceSize          ubo_range,
-  vk::Sampler             sampler,
-  vk::ImageView           view,
-  vk::ImageLayout         layout = vk::ImageLayout::eShaderReadOnlyOptimal)
-{
-  write_uniform_buffer(device, destination, 0U, ubo, ubo_range);
-  write_combined_image_sampler(device, destination, 1U, sampler, view, layout);
+  device.updateDescriptorSets(write, nullptr);
 }
 
 } // namespace vkpp

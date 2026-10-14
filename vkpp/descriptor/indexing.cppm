@@ -17,6 +17,19 @@ namespace vkpp
 
 using namespace std::string_view_literals;
 
+inline constexpr vk::DeviceSize absent_region {
+  std::numeric_limits<vk::DeviceSize>::max(),
+};
+
+constexpr
+auto
+align_up(vk::DeviceSize value, vk::DeviceSize alignment) -> vk::DeviceSize
+{
+  return alignment <= 1UZ
+           ? value
+           : (value + alignment - 1UZ) / alignment * alignment;
+}
+
 export struct descriptor_heap_arena_create_info
 {
   std::uint32_t bindless_capacity {1'024U};
@@ -69,7 +82,11 @@ public:
     mappings_ {std::move(mappings)}
   {}
 
-  template<class PushLayout, class Layout, class DiagnosticsPolicy>
+  template<
+    class PushLayout,
+    declared_resource_layout Layout,
+    diagnostics_policy       DiagnosticsPolicy
+  >
   [[nodiscard]]
   static
   auto
@@ -90,7 +107,11 @@ public:
       device, physical, allocator, capabilities, create_info);
   }
 
-  template<class PushLayout, class Layout, class DiagnosticsPolicy>
+  template<
+    class PushLayout,
+    declared_resource_layout Layout,
+    diagnostics_policy        DiagnosticsPolicy
+  >
   [[nodiscard]]
   static
   auto
@@ -132,7 +153,7 @@ public:
       .reservedRangeSize   = resource_reserved_size_,
     };
     command_buffer.bindSamplerHeapEXT(sampler_info);
-    command_buffer.bindSamplerHeapEXT(resource_info);
+    command_buffer.bindResourceHeapEXT(resource_info);
   }
 
   [[nodiscard]]
@@ -195,17 +216,15 @@ public:
     -> std::expected<void, error_t>
   {
     static_assert(
-      std::tuple_element_t<
-        Layout::template resource_index_of<Tag>(),
-        typename Layout::scoped_decls
-      >::declaration::kind == resource_declaration_kind::cis_table,
-      "write_bindless_cis: Tag is not cis_table");
+      Layout::template declaration_of<Tag>::kind == resource_declaration_kind::cis_table,
+      "write_bindless_cis: Tag is not a cis_table_resource");
     if (index >= bindless_capacity_)
     {
       return std::unexpected {make_app_error(app_error_code::out_of_range)};
     }
     auto* const sampler_base = static_cast<std::byte*>(sampler_heap_.mapped());
-    auto* const resource_base = static_cast<std::byte*>(resource_heap_.mapped());
+    auto* const resource_base =
+      static_cast<std::byte*>(resource_heap_.mapped());
     if (sampler_base == nullptr || resource_base == nullptr)
     {
       return std::unexpected {make_app_error(app_error_code::mapping_failed)};
@@ -249,16 +268,15 @@ public:
     const buffer_view<Kind, T, addressed>& view) -> std::expected<void, error_t>
   {
     static_assert(
-      std::tuple_element_t<
-        Layout::template resource_index_of<Tag>(),
-        typename Layout::scoped_decls
-      >::declaration::kind == resource_declaration_kind::dynamic_uniform,
-      "write_uniform: Tag is not dynamic_uniform");
+      Layout::template declaration_of<Tag>::kind ==
+        resource_declaration_kind::dynamic_uniform,
+      "write_uniform: Tag is not a dynamic_uniform_resource");
     if (frame_index >= frames_in_flight_)
     {
       return std::unexpected {make_app_error(app_error_code::out_of_range)};
     }
-    auto* const resource_base = static_cast<std::byte*>(resource_heap_.mapped());
+    auto* const resource_base =
+      static_cast<std::byte*>(resource_heap_.mapped());
     if (resource_base == nullptr)
     {
       return std::unexpected {make_app_error(app_error_code::mapping_failed)};
@@ -289,24 +307,16 @@ public:
     -> std::expected<void, error_t>
   {
     static_assert(
-      std::is_same_v<
-        typename std::tuple_element_t<
-          Layout::template resource_index_of<Tag>(),
-          typename Layout::scoped_decls
-        >::declaration::tag,
-        Tag
-      > &&
-        std::tuple_element_t<
-          Layout::template resource_index_of<Tag>(),
-          typename Layout::scoped_decls
-        >::declaration::kind == resource_declaration_kind::storage,
-      "write_storage: Tag/kind/T mismatch");
+      Layout::template declaration_of<Tag>::kind ==
+        resource_declaration_kind::storage,
+      "write_storage: Tag is not a storage_resource");
     const vk::DeviceSize base = region_base_of<Layout, Tag>();
-    if (base == vk::DeviceSize {~0ULL})
+    if (base == absent_region)
     {
       return std::unexpected {make_app_error(app_error_code::out_of_range)};
     }
-    auto* const resource_base = static_cast<std::byte*>(resource_heap_.mapped());
+    auto* const resource_base =
+      static_cast<std::byte*>(resource_heap_.mapped());
     if (resource_base == nullptr)
     {
       return std::unexpected {make_app_error(app_error_code::mapping_failed)};
@@ -338,26 +348,24 @@ public:
     -> std::expected<void, error_t>
   {
     static_assert(
-      std::tuple_element_t<
-        Layout::template resource_index_of<Tag>(),
-        typename Layout::scoped_decls
-      >::declaration::kind == resource_declaration_kind::cis,
-      "write_cis: Tag is not cis");
-    const vk::DeviceSize sampler_base_off =
-      sampler_region_base_of<Layout, Tag>();
-    const vk::DeviceSize resource_base_off = region_base_of<Layout, Tag>();
+      Layout::template declaration_of<Tag>::kind ==
+        resource_declaration_kind::cis,
+      "write_cis: Tag is not a cis_resource");
+    const vk::DeviceSize sampler_offset = sampler_region_base_of<Layout, Tag>();
+    const vk::DeviceSize resource_offset = region_base_of<Layout, Tag>();
     auto* const sampler_base = static_cast<std::byte*>(sampler_heap_.mapped());
-    auto* const resource_base = static_cast<std::byte*>(resource_heap_.mapped());
+    auto* const resource_base =
+      static_cast<std::byte*>(resource_heap_.mapped());
     if (sampler_base == nullptr || resource_base == nullptr)
     {
       return std::unexpected {make_app_error(app_error_code::mapping_failed)};
     }
     const vk::HostAddressRangeEXT sampler_range {
-      .address = sampler_base + sampler_base_off,
+      .address = sampler_base + sampler_offset,
       .size    = static_cast<std::uint32_t>(sampler_descriptor_size_),
     };
     const vk::HostAddressRangeEXT resource_range {
-      .address = resource_base + resource_base_off,
+      .address = resource_base + resource_offset,
       .size    = static_cast<std::uint32_t>(image_descriptor_size_),
     };
     const vk::ImageDescriptorInfoEXT image_descriptor {
@@ -401,10 +409,10 @@ private:
       vk::PhysicalDeviceProperties2,
       vk::PhysicalDeviceDescriptorHeapPropertiesEXT
     >();
-    const auto& heap_props =
+    const auto& heap_properties =
       properties.get<vk::PhysicalDeviceDescriptorHeapPropertiesEXT>();
 
-    if (PushLayout::total_bytes > heap_props.maxPushDataSize)
+    if (PushLayout::total_bytes > heap_properties.maxPushDataSize)
     {
       return std::unexpected {
         make_app_error(app_error_code::invalid_data_size),
@@ -420,18 +428,13 @@ private:
     const auto storage_descriptor_size =
       physical.getDescriptorSizeEXT(vk::DescriptorType::eStorageBuffer);
 
-    const auto align_up =
-      [](vk::DeviceSize value, vk::DeviceSize alignment) -> vk::DeviceSize {
-      return alignment <= 1UZ
-               ? value
-               : (value + alignment - 1UZ) / alignment * alignment;
-    };
-
     constexpr auto        table        = Layout::assignment_table();
     constexpr std::size_t region_count = table.size();
     static_assert(region_count == Layout::resource_count());
-    std::vector<vk::DeviceSize> resource_region_bases(region_count, ~0UZ);
-    std::vector<vk::DeviceSize> sampler_region_bases(region_count, ~0UZ);
+    std::vector<vk::DeviceSize> resource_region_bases(
+      region_count, absent_region);
+    std::vector<vk::DeviceSize> sampler_region_bases(
+      region_count, absent_region);
     std::vector<vk::DescriptorSetAndBindingMappingEXT> mappings(region_count);
 
     vk::DeviceSize resource_cursor {};
@@ -452,8 +455,9 @@ private:
         const vk::DescriptorMappingSourcePushIndexEXT uniform_push {
           .heapOffset =
             static_cast<std::uint32_t>(resource_region_bases[ index ]),
-          .pushOffset = PushLayout::
-            template offset_of<typename PushLayout::frame_slot_tag>(),
+          .pushOffset = PushLayout::template offset_of<
+            typename PushLayout::frame_slot_tag
+          >(),
           .heapIndexStride = static_cast<std::uint32_t>(uniform_descriptor_size),
           .heapArrayStride = static_cast<std::uint32_t>(uniform_descriptor_size),
         };
@@ -468,7 +472,7 @@ private:
         resource_cursor = align_up(
           resource_cursor +
             uniform_descriptor_size * create_info.frames_in_flight,
-          heap_props.bufferDescriptorAlignment);
+          heap_properties.bufferDescriptorAlignment);
       }
       else if (kind == resource_declaration_kind::storage)
       {
@@ -488,7 +492,7 @@ private:
         };
         resource_cursor = align_up(
           resource_cursor + storage_descriptor_size,
-          heap_props.bufferDescriptorAlignment);
+          heap_properties.bufferDescriptorAlignment);
       }
       else
       {
@@ -517,28 +521,29 @@ private:
         };
         resource_cursor = align_up(
           resource_cursor + image_descriptor_size * cis_count,
-          heap_props.imageDescriptorAlignment);
+          heap_properties.imageDescriptorAlignment);
         sampler_cursor = align_up(
           sampler_cursor + sampler_descriptor_size * cis_count,
-          heap_props.samplerDescriptorAlignment);
+          heap_properties.samplerDescriptorAlignment);
       }
     }
 
-    const auto resource_reserved = heap_props.minResourceHeapReservedRange;
+    const auto resource_reserved = heap_properties.minResourceHeapReservedRange;
     const auto resource_payload  = resource_cursor;
     const auto resource_size     = align_up(
-      resource_payload + resource_reserved, heap_props.resourceHeapAlignment);
+      resource_payload + resource_reserved,
+      heap_properties.resourceHeapAlignment);
     const auto resource_reserved_offset = resource_size - resource_reserved;
 
-    const auto sampler_reserved = heap_props.minSamplerHeapReservedRange;
+    const auto sampler_reserved = heap_properties.minSamplerHeapReservedRange;
     const auto sampler_payload  = sampler_cursor;
     const auto sampler_size     = align_up(
-      sampler_payload + sampler_reserved, heap_props.samplerHeapAlignment);
+      sampler_payload + sampler_reserved, heap_properties.samplerHeapAlignment);
     const auto sampler_reserved_offset = sampler_size - sampler_reserved;
 
     if (
-      resource_size > heap_props.maxResourceHeapSize ||
-      sampler_size > heap_props.maxSamplerHeapSize)
+      resource_size > heap_properties.maxResourceHeapSize ||
+      sampler_size > heap_properties.maxSamplerHeapSize)
     {
       return std::unexpected {
         make_app_error(app_error_code::capacity_exhausted),
@@ -605,8 +610,8 @@ private:
   auto
   region_base_of() const -> vk::DeviceSize
   {
-    constexpr std::size_t idx = Layout::template resource_index_of<Tag>();
-    return resource_region_bases_[ idx ];
+    constexpr std::size_t index = Layout::template resource_index_of<Tag>();
+    return resource_region_bases_[ index ];
   }
 
   template<class Layout, class Tag>
@@ -614,8 +619,8 @@ private:
   auto
   sampler_region_base_of() const -> vk::DeviceSize
   {
-    constexpr std::size_t idx = Layout::template resource_index_of<Tag>();
-    return sampler_region_bases_[ idx ];
+    constexpr std::size_t index = Layout::template resource_index_of<Tag>();
+    return sampler_region_bases_[ index ];
   }
 
   [[nodiscard]]
@@ -661,12 +666,6 @@ private:
   std::vector<vk::DescriptorSetAndBindingMappingEXT> mappings_ {};
 };
 
-export struct bindless_table_create_info
-{
-  std::uint32_t        capacity {1'024U};
-  vk::ShaderStageFlags stages {vk::ShaderStageFlagBits::eFragment};
-};
-
 export template<descriptor_table_backend Backend>
 class bindless_table;
 
@@ -676,99 +675,60 @@ class bindless_table<descriptor_table_backend::classic>
 public:
   bindless_table() = default;
 
-  bindless_table(
-    vk::raii::DescriptorSetLayout&& layout,
-    vk::raii::DescriptorPool&&      pool,
-    vk::DescriptorSet               set,
-    std::uint32_t                   capacity)
-  : layout_ {std::move(layout)},
-    pool_ {std::move(pool)},
-    set_ {set},
-    capacity_ {capacity}
-  {}
-
+  template<declared_resource_layout Layout, class Tag>
   [[nodiscard]]
   static
   auto
-  create(
-    const vk::raii::Device&           device,
-    const bindless_table_create_info& create_info)
+  create(const vk::raii::Device& device, vk::DescriptorSetLayout layout)
     -> std::expected<bindless_table, error_t>
   {
-    const vk::DescriptorSetLayoutBinding binding {
-      .binding         = 0U,
-      .descriptorType  = vk::DescriptorType::eCombinedImageSampler,
-      .descriptorCount = create_info.capacity,
-      .stageFlags      = create_info.stages,
+    static_assert(
+      Layout::template declaration_of<Tag>::kind ==
+        resource_declaration_kind::cis_table,
+      "classic bindless_table: Tag must name a cis_table_resource");
+    constexpr binding_assignment row = Layout::template assignment_of<Tag>;
+    const vk::DescriptorPoolSize pool_size {
+      .type            = row.descriptor_type,
+      .descriptorCount = row.count,
     };
-    const vk::DescriptorBindingFlags binding_flags {
-      vk::DescriptorBindingFlagBits::ePartiallyBound |
-      vk::DescriptorBindingFlagBits::eUpdateAfterBind |
-      vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending |
-      vk::DescriptorBindingFlagBits::eVariableDescriptorCount
-    };
-    const vk::StructureChain layout_chain {
-      vk::DescriptorSetLayoutCreateInfo {
-        .flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
-        .bindingCount = 1U,
-        .pBindings    = &binding,
-      },
-      vk::DescriptorSetLayoutBindingFlagsCreateInfo {
-        .bindingCount  = 1U,
-        .pBindingFlags = &binding_flags,
-      },
+    const vk::DescriptorPoolCreateInfo pool_create_info {
+      .flags         = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind,
+      .maxSets       = 1U,
+      .poolSizeCount = 1U,
+      .pPoolSizes    = &pool_size,
     };
 
     return map_vk_error(
-      device.createDescriptorSetLayout(
-        layout_chain.get<vk::DescriptorSetLayoutCreateInfo>()),
-      std::nullopt)
+      device.createDescriptorPool(pool_create_info), std::nullopt)
       .and_then(
-        [ & ](vk::raii::DescriptorSetLayout&& layout)
+        [ & ](vk::raii::DescriptorPool&& pool)
           -> std::expected<bindless_table, error_t> {
-          const vk::DescriptorPoolSize pool_size {
-            .type            = vk::DescriptorType::eCombinedImageSampler,
-            .descriptorCount = create_info.capacity,
+          const std::uint32_t      variable_count {row.count};
+          const vk::StructureChain allocate_chain {
+            vk::DescriptorSetAllocateInfo {
+              .descriptorPool     = *pool,
+              .descriptorSetCount = 1U,
+              .pSetLayouts        = &layout,
+            },
+            vk::DescriptorSetVariableDescriptorCountAllocateInfo {
+              .descriptorSetCount = 1U,
+              .pDescriptorCounts  = &variable_count,
+            },
           };
-          const vk::DescriptorPoolCreateInfo pool_info {
-            .flags         = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind,
-            .maxSets       = 1U,
-            .poolSizeCount = 1U,
-            .pPoolSizes    = &pool_size,
-          };
-          return map_vk_error(
-            device.createDescriptorPool(pool_info), std::nullopt)
-            .and_then(
-              [ &, layout = std::move(layout) ](
-                vk::raii::DescriptorPool&& pool) mutable
-                -> std::expected<bindless_table, error_t> {
-                const std::uint32_t      variable_count {create_info.capacity};
-                const vk::StructureChain allocate_chain {
-                  vk::DescriptorSetAllocateInfo {
-                    .descriptorPool     = *pool,
-                    .descriptorSetCount = 1U,
-                    .pSetLayouts        = &*layout,
-                  },
-                  vk::DescriptorSetVariableDescriptorCountAllocateInfo {
-                    .descriptorSetCount = 1U,
-                    .pDescriptorCounts  = &variable_count,
-                  },
-                };
 
-                return map_vk_error(
-                  device.allocateDescriptorSets(
-                    allocate_chain.get<vk::DescriptorSetAllocateInfo>()),
-                  std::nullopt)
-                  .transform(
-                    [ & ](std::vector<vk::raii::DescriptorSet>&& sets) mutable
-                      -> bindless_table {
-                      return bindless_table {
-                        std::move(layout),
-                        std::move(pool),
-                        sets.front().release(),
-                        create_info.capacity,
-                      };
-                    });
+          return map_vk_error(
+            device.allocateDescriptorSets(
+              allocate_chain.get<vk::DescriptorSetAllocateInfo>()),
+            std::nullopt)
+            .transform(
+              [ & ](
+                std::vector<vk::raii::DescriptorSet>&& sets) -> bindless_table {
+                return bindless_table {
+                  layout,
+                  std::move(pool),
+                  sets.front().release(),
+                  row.count,
+                };
               });
         });
   }
@@ -788,7 +748,8 @@ public:
   }
 
   void
-  release_index(std::uint32_t index, std::uint64_t earliest_reuse_timeline_value)
+  release_index(
+    std::uint32_t index, std::uint64_t earliest_reuse_timeline_value)
   { pending_retire_.emplace_back(index, earliest_reuse_timeline_value); }
 
   void
@@ -797,8 +758,8 @@ public:
     const auto split = std::ranges::stable_partition(
       pending_retire_,
       [ completed_timeline_value ](
-        const std::pair<std::uint32_t, std::uint64_t>& e) -> bool {
-        return e.second > completed_timeline_value;
+        const std::pair<std::uint32_t, std::uint64_t>& entry) -> bool {
+        return entry.second > completed_timeline_value;
       });
     for (const auto& entry : split) { free_list_.push_back(entry.first); }
     pending_retire_.erase(split.begin(), split.end());
@@ -848,7 +809,7 @@ public:
 
   [[nodiscard]]
   auto
-  layout() const -> const vk::raii::DescriptorSetLayout&
+  layout() const -> const vk::DescriptorSetLayout
   { return layout_; }
 
   [[nodiscard]]
@@ -857,7 +818,15 @@ public:
   { return set_; }
 
 private:
-  vk::raii::DescriptorSetLayout                        layout_ {nullptr};
+  bindless_table(
+    vk::DescriptorSetLayout    layout,
+    vk::raii::DescriptorPool&& pool,
+    vk::DescriptorSet          set,
+    std::uint32_t              capacity)
+  : layout_ {layout}, pool_ {std::move(pool)}, set_ {set}, capacity_ {capacity}
+  {}
+
+  vk::DescriptorSetLayout                              layout_ {};
   vk::raii::DescriptorPool                             pool_ {nullptr};
   vk::DescriptorSet                                    set_ {};
   std::uint32_t                                        capacity_ {0U};
@@ -906,7 +875,8 @@ public:
   }
 
   void
-  release_index(std::uint32_t index, std::uint64_t earliest_reuse_timeline_value)
+  release_index(
+    std::uint32_t index, std::uint64_t earliest_reuse_timeline_value)
   { arena_->release_bindless_index(index, earliest_reuse_timeline_value); }
 
   void
