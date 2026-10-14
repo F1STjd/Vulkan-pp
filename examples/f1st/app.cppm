@@ -223,15 +223,16 @@ float_to_half_bits(float value) -> std::uint16_t
 }
 
 void
-store_rgba16f(std::byte* dst, float r, float g, float b, float a)
+store_rgba16f(
+  std::byte* destination, float red, float green, float blue, float alpha)
 {
   const std::array<std::uint16_t, 4> halves {
-    float_to_half_bits(r),
-    float_to_half_bits(g),
-    float_to_half_bits(b),
-    float_to_half_bits(a),
+    float_to_half_bits(red),
+    float_to_half_bits(green),
+    float_to_half_bits(blue),
+    float_to_half_bits(alpha),
   };
-  std::memcpy(dst, halves.data(), sizeof(halves));
+  std::memcpy(destination, halves.data(), sizeof(halves));
 }
 
 [[nodiscard]]
@@ -259,12 +260,13 @@ hammersley(std::uint32_t index, std::uint32_t count) -> std::array<float, 2>
 [[nodiscard]]
 auto
 importance_sample_ggx(
-  std::array<float, 2> xi, float roughness, const glm::vec3& n) -> glm::vec3
+  std::array<float, 2> xi, float roughness, const glm::vec3& normal)
+  -> glm::vec3
 {
-  const float a   = roughness * roughness;
-  const float phi = 2.0F * 3.14159265359F * xi[ 0 ];
+  const float alpha = roughness * roughness;
+  const float phi   = 2.0F * 3.14159265359F * xi[ 0 ];
   const float cos_theta =
-    std::sqrt((1.0F - xi[ 1 ]) / (1.0F + (a * a - 1.0F) * xi[ 1 ]));
+    std::sqrt((1.0F - xi[ 1 ]) / (1.0F + (alpha * alpha - 1.0F) * xi[ 1 ]));
   const float     sin_theta = std::sqrt(1.0F - cos_theta * cos_theta);
   const glm::vec3 h {
     std::cos(phi) * sin_theta,
@@ -272,20 +274,20 @@ importance_sample_ggx(
     cos_theta,
   };
   const glm::vec3 up =
-    std::abs(n.z) < 0.999F
+    std::abs(normal.z) < 0.999F
       ? glm::vec3 {0.0F, 0.0F, 1.0F}
       : glm::vec3 {1.0F, 0.0F, 0.0F};
-  const glm::vec3 tangent   = glm::normalize(glm::cross(up, n));
-  const glm::vec3 bitangent = glm::cross(n, tangent);
-  return glm::normalize(tangent * h.x + bitangent * h.y + n * h.z);
+  const glm::vec3 tangent   = glm::normalize(glm::cross(up, normal));
+  const glm::vec3 bitangent = glm::cross(normal, tangent);
+  return glm::normalize(tangent * h.x + bitangent * h.y + normal * h.z);
 }
 
 [[nodiscard]]
 auto
 geometry_schlick_ggx_ibl(float n_dot_v, float roughness) -> float
 {
-  const float a = roughness;
-  const float k = (a * a) / 2.0F;
+  const float alpha = roughness;
+  const float k     = (alpha * alpha) / 2.0F;
   return n_dot_v / (n_dot_v * (1.0F - k) + k);
 }
 
@@ -314,14 +316,14 @@ generate_brdf_lut_rgba16f(std::vector<std::byte>& out)
         0.0F,
         n_dot_v,
       };
-      const glm::vec3 n {0.0F, 0.0F, 1.0F};
-      float           a {0.0F};
-      float           b {0.0F};
+      const glm::vec3 normal {0.0F, 0.0F, 1.0F};
+      float           scale {0.0F};
+      float           bias {0.0F};
       for (auto sample_index : std::views::indices(brdf_sample_count))
       {
         const auto xi = hammersley(
           static_cast<std::uint32_t>(sample_index), brdf_sample_count);
-        const glm::vec3 h       = importance_sample_ggx(xi, roughness, n);
+        const glm::vec3 h       = importance_sample_ggx(xi, roughness, normal);
         const glm::vec3 l       = glm::normalize(2.0F * glm::dot(v, h) * h - v);
         const float     n_dot_l = std::max(l.z, 0.0F);
         const float     n_dot_h = std::max(h.z, 0.0F);
@@ -329,22 +331,23 @@ generate_brdf_lut_rgba16f(std::vector<std::byte>& out)
         if (n_dot_l > 0.0F)
         {
           const float g = geometry_smith_ibl(n_dot_v, n_dot_l, roughness);
-          const float g_vis = (g * v_dot_h) / std::max(n_dot_h * n_dot_v, 1e-4F);
+          const float g_vis =
+            (g * v_dot_h) / std::max(n_dot_h * n_dot_v, 1e-4F);
           const float fc = std::pow(1.0F - v_dot_h, 5.0F);
 
-          a += (1.0F - fc) * g_vis;
-          b += fc * g_vis;
+          scale += (1.0F - fc) * g_vis;
+          bias  += fc * g_vis;
         }
       }
-      a /= static_cast<float>(brdf_sample_count);
-      b /= static_cast<float>(brdf_sample_count);
+      scale /= static_cast<float>(brdf_sample_count);
+      bias  /= static_cast<float>(brdf_sample_count);
       store_rgba16f(
         out.data() +
           (static_cast<std::size_t>(y) * brdf_lut_size +
             static_cast<std::size_t>(x)) *
             8UZ,
-        a,
-        b,
+        scale,
+        bias,
         0.0F,
         0.0F);
     }
@@ -376,13 +379,20 @@ using resource_layout = vkpp::resource_layout<
   >,
   vkpp::scope<
     vkpp::resource_scope::bindless,
-    vkpp::cis_table_resource<bindless_textures_tag, vkpp::variable_count<1'024>>
+    vkpp::cis_table_resource<
+      bindless_textures_tag,
+      vkpp::variable_count<1'024>,
+      vkpp::stages<vk::ShaderStageFlagBits::eFragment>
+    >
   >,
   vkpp::scope<
     vkpp::resource_scope::per_frame,
     vkpp::dynamic_uniform_resource<
       frame_ubo_tag,
-      vkpp::stages<vk::ShaderStageFlagBits::eVertex, vk::ShaderStageFlagBits::eFragment>
+      vkpp::stages<
+        vk::ShaderStageFlagBits::eVertex,
+        vk::ShaderStageFlagBits::eFragment
+      >
     >
   >,
   vkpp::scope<
@@ -413,34 +423,33 @@ static_assert(
   resource_layout::binding_of<histogram_image_tag>().set == 3U &&
   resource_layout::binding_of<histogram_image_tag>().binding == 0U);
 
+template<vkpp::resource_scope Scope>
+using scope_arena = vkpp::descriptor_scope_arena<resource_layout, Scope>;
+
 template<vkpp::descriptor_table_backend Backend>
-class app_session_bindings;
+struct session_bindings;
 
 template<>
-class app_session_bindings<vkpp::descriptor_table_backend::classic>
+struct session_bindings<vkpp::descriptor_table_backend::classic>
 {
-protected:
-  vkpp::classic_bindless_table bindless_table_ {};
-  std::array<vk::raii::DescriptorSetLayout, resource_layout::set_count>
-                             set_layouts_ {nullptr, nullptr, nullptr, nullptr};
-  vkpp::descriptor_set_arena set0_arena_ {};
-  vkpp::descriptor_set_arena per_frame_arena_ {};
-  vk::raii::PipelineLayout   graphics_pipeline_layout_ {nullptr};
+  vkpp::descriptor_set_layouts<resource_layout> set_layouts {};
+  vkpp::classic_bindless_table                  bindless_table {};
+  scope_arena<vkpp::resource_scope::persistent> persistent_arena {};
+  scope_arena<vkpp::resource_scope::per_frame>  per_frame_arena {};
+  vk::raii::PipelineLayout graphics_pipeline_layout {nullptr};
 };
 
 template<>
-class app_session_bindings<vkpp::descriptor_table_backend::heap>
+struct session_bindings<vkpp::descriptor_table_backend::heap>
 {
-protected:
-  vkpp::descriptor_heap_arena heap_arena_ {};
-  vkpp::heap_bindless_table   bindless_table_ {};
+  vkpp::descriptor_set_layouts<resource_layout> set_layouts {};
+  vkpp::descriptor_heap_arena                   heap_arena {};
+  vkpp::heap_bindless_table                     bindless_table {};
 };
 
 export template<vkpp::descriptor_table_backend Backend>
-class app_session : app_session_bindings<Backend>
+class app_session
 {
-  using app_session_bindings<Backend>::bindless_table_;
-
 public:
   [[nodiscard]]
   auto
@@ -453,16 +462,19 @@ public:
     instance_ = std::move(instance);
     device_   = std::move(device);
 
+    auto set_layouts =
+      vkpp::descriptor_set_layouts<resource_layout>::create(device_.device());
+    if (!set_layouts) { return std::unexpected {set_layouts.error()}; }
+    bindings_.set_layouts = std::move(*set_layouts);
     if constexpr (Backend == vkpp::descriptor_table_backend::classic)
     {
-      auto table = vkpp::classic_bindless_table::create(
-        device_.device(),
-        {
-          .capacity = 1'024U,
-          .stages   = vk::ShaderStageFlagBits::eFragment,
-        });
+      auto table = vkpp::classic_bindless_table::create<
+        resource_layout,
+        bindless_textures_tag
+      >(device_.device(),
+        bindings_.set_layouts.layout(vkpp::resource_scope::bindless));
       if (!table) { return std::unexpected {table.error()}; }
-      bindless_table_ = std::move(*table);
+      bindings_.bindless_table = std::move(*table);
     }
     else if constexpr (Backend == vkpp::descriptor_table_backend::heap)
     {
@@ -481,13 +493,15 @@ public:
         device_.allocator(),
         device_.selected_capabilities(),
         {
-          .bindless_capacity = 1'024U,
-          .frames_in_flight  = max_frames_in_flight,
+          .bindless_capacity =
+            resource_layout::assignment_of<bindless_textures_tag>.count,
+          .frames_in_flight = max_frames_in_flight,
         },
         diagnostic_buffer_);
       if (!arena) { return std::unexpected {arena.error()}; }
-      this->heap_arena_ = std::move(*arena);
-      bindless_table_   = vkpp::heap_bindless_table {this->heap_arena_};
+      bindings_.heap_arena = std::move(*arena);
+      bindings_.bindless_table =
+        vkpp::heap_bindless_table {bindings_.heap_arena};
     }
     else
     {
@@ -495,44 +509,45 @@ public:
         false, "Backend not supported, because... it does not exist yet");
     }
 
-    using S      = app_session;
-    using step_t = std::expected<void, vkpp::error_t>;
+    using session = app_session;
+    using step_t  = std::expected<void, vkpp::error_t>;
 
     auto sequence = [ & ](auto... steps) mutable -> step_t {
       step_t result {};
-      (void)(... && (result = (this->*steps)()).has_value());
+      auto   _ = (... && (result = (this->*steps)()).has_value());
       return result;
     };
 
     return sequence(
-      &S::create_sampler_cache,
-      &S::create_swap_chain,
-      &S::create_command_pool,
-      &S::create_upload_pool,
-      &S::create_transfer_upload_pool,
-      &S::create_stage_pool,
-      &S::create_frames,
-      &S::create_uniform_ring,
-      &S::create_frame_timeline,
-      &S::create_timestamp_ring)
+      &session::create_sampler_cache,
+      &session::create_swap_chain,
+      &session::create_command_pool,
+      &session::create_upload_pool,
+      &session::create_transfer_upload_pool,
+      &session::create_stage_pool,
+      &session::create_frames,
+      &session::create_uniform_ring,
+      &session::create_frame_timeline,
+      &session::create_timestamp_ring)
       .and_then([ & ]() -> step_t {
         if constexpr (Backend == vkpp::descriptor_table_backend::classic)
         {
-          return sequence(&S::create_set0_arena, &S::create_buffers)
+          return sequence(
+            &session::create_scope_arenas, &session::create_buffers)
             .transform([ & ] { create_descriptor_sets(); });
         }
         else
         {
-          return sequence(&S::create_buffers);
+          return sequence(&session::create_buffers);
         }
       })
       .and_then([ & ] {
         return sequence(
-          &S::create_graphics_pipelines,
-          &S::create_imgui_descriptor_pool,
-          &S::init_imgui,
-          &S::create_scene_sampler,
-          &S::create_histogram);
+          &session::create_graphics_pipelines,
+          &session::create_imgui_descriptor_pool,
+          &session::init_imgui,
+          &session::create_scene_sampler,
+          &session::create_histogram);
       });
   }
 
@@ -542,7 +557,7 @@ public:
   {
     const auto result = main_loop();
 
-    (void)device_.device().waitIdle();
+    auto _ = device_.device().waitIdle();
     using enum vkpp::pipeline_persistence_mode;
     if (pipeline_persistence_.mode() == pipeline_cache)
     {
@@ -550,7 +565,7 @@ public:
       {
         if (auto blob = cache->data(); blob)
         {
-          (void)vkpp::save_pipeline_cache_file(
+          auto _ = vkpp::save_pipeline_cache_file(
             pipeline_cache_path, std::as_bytes(std::span {*blob}));
         }
         else
@@ -674,7 +689,8 @@ private:
       instance_.surface(),
       framebuffer_extent_request(),
       [ this ](
-        const vk::SurfaceCapabilitiesKHR& capabilities, vk::Extent2D framebuffer) {
+        const vk::SurfaceCapabilitiesKHR& capabilities,
+        vk::Extent2D                      framebuffer) {
         return choose_swap_extent(capabilities, framebuffer);
       })
       .transform([ this ](vkpp::swapchain&& swap_chain) {
@@ -722,19 +738,8 @@ private:
     };
     constexpr auto vertex_attributes =
       vkpp::vertex::get_attribute_descriptions();
-    const std::array        color_formats {swap_chain_.format()};
-    constexpr std::uint32_t persistent_set =
-      resource_layout::binding_of<material_tag>().set;
-    constexpr std::uint32_t per_frame_set =
-      resource_layout::binding_of<frame_ubo_tag>().set;
-    constexpr std::uint32_t per_pass_set =
-      resource_layout::binding_of<histogram_image_tag>().set;
-    const std::array set_layouts {
-      *this->set_layouts_[ persistent_set ],
-      *this->bindless_table_.layout(),
-      *this->set_layouts_[ per_frame_set ],
-      *this->set_layouts_[ per_pass_set ],
-    };
+    const std::array color_formats {swap_chain_.format()};
+    const auto       set_layouts = bindings_.set_layouts.handles();
 
     auto depth_format =
       vkpp::find_depth_attachment_format(device_.physical_device());
@@ -762,9 +767,9 @@ private:
         device_.device().createPipelineLayout(layout_info), diagnostic_buffer_);
     };
 
-    auto gpl_layout = make_layout();
-    if (!gpl_layout) { return std::unexpected {gpl_layout.error()}; }
-    this->graphics_pipeline_layout_ = std::move(*gpl_layout);
+    auto pipeline_layout = make_layout();
+    if (!pipeline_layout) { return std::unexpected {pipeline_layout.error()}; }
+    bindings_.graphics_pipeline_layout = std::move(*pipeline_layout);
 
     auto layout_opaque = make_layout();
     if (!layout_opaque) { return std::unexpected {layout_opaque.error()}; }
@@ -772,7 +777,7 @@ private:
     auto layout_blend = make_layout();
     if (!layout_blend) { return std::unexpected {layout_blend.error()}; }
 
-    const vkpp::graphics_pipeline_library_runtime_args lib_args {
+    const vkpp::graphics_pipeline_library_runtime_args runtime_args {
       .vertex_bindings    = vertex_bindings,
       .vertex_attributes  = vertex_attributes,
       .spirv              = *spirv,
@@ -780,7 +785,7 @@ private:
       .push_constant_size = static_cast<std::uint32_t>(sizeof(draw_push)),
       .push_constant_stages =
         vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
-      .layout        = *this->graphics_pipeline_layout_,
+      .layout        = *bindings_.graphics_pipeline_layout,
       .color_formats = color_formats,
       .depth_format  = *depth_format,
       .samples       = device_.msaa_samples(),
@@ -803,54 +808,83 @@ private:
       std::to_underlying(pipeline_persistence_.mode()));
 
     using enum vkpp::graphics_pipeline_library_kind;
-    auto vi = vkpp::make_graphics_pipeline_library<vertex_input, pipeline_spec>(
-      device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
-    if (!vi) { return std::unexpected {vi.error()}; }
-    gpl_vertex_input_ = std::move(*vi);
 
-    auto pre = vkpp::make_graphics_pipeline_library<
+    auto vertex_input_library = vkpp::make_graphics_pipeline_library<
+      vertex_input,
+      pipeline_spec
+    >(device_.device(), runtime_args, pipeline_persistence_, diagnostic_buffer_);
+    if (!vertex_input_library)
+    {
+      return std::unexpected {
+        vertex_input_library.error(),
+      };
+    }
+    gpl_vertex_input_ = std::move(*vertex_input_library);
+
+    auto pre_raseterization_library = vkpp::make_graphics_pipeline_library<
       pre_rasterization,
       pipeline_spec,
       vkpp::descriptor_table_backend::classic,
       resource_layout,
       vkpp::diagnostics_on
-    >(device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
-    if (!pre) { return std::unexpected {pre.error()}; }
-    gpl_pre_raster_ = std::move(*pre);
+    >(device_.device(), runtime_args, pipeline_persistence_, diagnostic_buffer_);
+    if (!pre_raseterization_library)
+    {
+      return std::unexpected {
+        pre_raseterization_library.error(),
+      };
+    }
+    gpl_pre_raster_ = std::move(*pre_raseterization_library);
 
-    auto frag_opaque = vkpp::make_graphics_pipeline_library<
+    auto fragment_opaque_library = vkpp::make_graphics_pipeline_library<
       fragment,
       pipeline_spec,
       vkpp::descriptor_table_backend::classic,
       resource_layout,
       vkpp::diagnostics_on
-    >(device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
-    if (!frag_opaque) { return std::unexpected {frag_opaque.error()}; }
-    gpl_fragment_opaque_ = std::move(*frag_opaque);
+    >(device_.device(), runtime_args, pipeline_persistence_, diagnostic_buffer_);
+    if (!fragment_opaque_library)
+    {
+      return std::unexpected {
+        fragment_opaque_library.error(),
+      };
+    }
+    gpl_fragment_opaque_ = std::move(*fragment_opaque_library);
 
-    auto out_opaque = vkpp::make_graphics_pipeline_library<
+    auto output_opaque_library = vkpp::make_graphics_pipeline_library<
       fragment_output,
       pipeline_spec
-    >(device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
-    if (!out_opaque) { return std::unexpected {out_opaque.error()}; }
-    gpl_fragment_output_opaque_ = std::move(*out_opaque);
+    >(device_.device(), runtime_args, pipeline_persistence_, diagnostic_buffer_);
+    if (!output_opaque_library)
+    {
+      return std::unexpected {
+        output_opaque_library.error(),
+      };
+    }
+    gpl_fragment_output_opaque_ = std::move(*output_opaque_library);
 
-    auto frag_blend = vkpp::make_graphics_pipeline_library<
+    auto fragment_blend_library = vkpp::make_graphics_pipeline_library<
       fragment,
       blend_pipeline_spec,
       vkpp::descriptor_table_backend::classic,
       resource_layout,
       vkpp::diagnostics_on
-    >(device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
-    if (!frag_blend) { return std::unexpected {frag_blend.error()}; }
-    gpl_fragment_blend_ = std::move(*frag_blend);
+    >(device_.device(), runtime_args, pipeline_persistence_, diagnostic_buffer_);
+    if (!fragment_blend_library)
+    {
+      return std::unexpected {fragment_blend_library.error()};
+    }
+    gpl_fragment_blend_ = std::move(*fragment_blend_library);
 
-    auto out_blend = vkpp::make_graphics_pipeline_library<
+    auto output_blend_library = vkpp::make_graphics_pipeline_library<
       fragment_output,
       blend_pipeline_spec
-    >(device_.device(), lib_args, pipeline_persistence_, diagnostic_buffer_);
-    if (!out_blend) { return std::unexpected {out_blend.error()}; }
-    gpl_fragment_output_blend_ = std::move(*out_blend);
+    >(device_.device(), runtime_args, pipeline_persistence_, diagnostic_buffer_);
+    if (!output_blend_library)
+    {
+      return std::unexpected {output_blend_library.error()};
+    }
+    gpl_fragment_output_blend_ = std::move(*output_blend_library);
 
     const auto&      link_cache = pipeline_persistence_.cache_for_create();
     const std::array opaque_libs {
@@ -863,7 +897,7 @@ private:
       device_.device(),
       opaque_libs,
       false,
-      *this->graphics_pipeline_layout_,
+      *bindings_.graphics_pipeline_layout,
       link_cache);
     if (!opaque) { return std::unexpected {opaque.error()}; }
 
@@ -877,7 +911,7 @@ private:
       device_.device(),
       blend_libs,
       false,
-      *this->graphics_pipeline_layout_,
+      *bindings_.graphics_pipeline_layout,
       link_cache);
     if (!blend) { return std::unexpected {blend.error()}; }
 
@@ -911,7 +945,7 @@ private:
     auto spirv = vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
     if (!spirv) { return std::unexpected {spirv.error()}; }
 
-    const vkpp::graphics_pipeline_library_runtime_args lib_args {
+    const vkpp::graphics_pipeline_library_runtime_args runtime_args {
       .vertex_bindings    = vertex_bindings,
       .vertex_attributes  = vertex_attributes,
       .spirv              = *spirv,
@@ -942,83 +976,101 @@ private:
     using enum vkpp::graphics_pipeline_library_kind;
     using enum vkpp::descriptor_table_backend;
 
-    auto vi = vkpp::make_graphics_pipeline_library<
+    auto vertex_input_library = vkpp::make_graphics_pipeline_library<
       vertex_input,
       pipeline_spec,
       heap
     >(device_.device(),
-      lib_args,
+      runtime_args,
       pipeline_persistence_,
-      this->heap_arena_,
+      bindings_.heap_arena,
       diagnostic_buffer_);
-    if (!vi) { return std::unexpected {vi.error()}; }
-    gpl_vertex_input_ = std::move(*vi);
+    if (!vertex_input_library)
+    {
+      return std::unexpected {vertex_input_library.error()};
+    }
+    gpl_vertex_input_ = std::move(*vertex_input_library);
 
-    auto pre = vkpp::make_graphics_pipeline_library<
+    auto pre_rasterization_library = vkpp::make_graphics_pipeline_library<
       pre_rasterization,
       pipeline_spec,
       heap,
       resource_layout,
       vkpp::diagnostics_on
     >(device_.device(),
-      lib_args,
+      runtime_args,
       pipeline_persistence_,
-      this->heap_arena_,
+      bindings_.heap_arena,
       diagnostic_buffer_);
-    if (!pre) { return std::unexpected {pre.error()}; }
-    gpl_pre_raster_ = std::move(*pre);
+    if (!pre_rasterization_library)
+    {
+      return std::unexpected {pre_rasterization_library.error()};
+    }
+    gpl_pre_raster_ = std::move(*pre_rasterization_library);
 
-    auto frag_opaque = vkpp::make_graphics_pipeline_library<
+    auto fragment_opaque_library = vkpp::make_graphics_pipeline_library<
       fragment,
       pipeline_spec,
       heap,
       resource_layout,
       vkpp::diagnostics_on
     >(device_.device(),
-      lib_args,
+      runtime_args,
       pipeline_persistence_,
-      this->heap_arena_,
+      bindings_.heap_arena,
       diagnostic_buffer_);
-    if (!frag_opaque) { return std::unexpected {frag_opaque.error()}; }
-    gpl_fragment_opaque_ = std::move(*frag_opaque);
+    if (!fragment_opaque_library)
+    {
+      return std::unexpected {fragment_opaque_library.error()};
+    }
+    gpl_fragment_opaque_ = std::move(*fragment_opaque_library);
 
-    auto out_opaque = vkpp::make_graphics_pipeline_library<
+    auto out_opaque_library = vkpp::make_graphics_pipeline_library<
       fragment_output,
       pipeline_spec,
       heap
     >(device_.device(),
-      lib_args,
+      runtime_args,
       pipeline_persistence_,
-      this->heap_arena_,
+      bindings_.heap_arena,
       diagnostic_buffer_);
-    if (!out_opaque) { return std::unexpected {out_opaque.error()}; }
-    gpl_fragment_output_opaque_ = std::move(*out_opaque);
+    if (!out_opaque_library)
+    {
+      return std::unexpected {out_opaque_library.error()};
+    }
+    gpl_fragment_output_opaque_ = std::move(*out_opaque_library);
 
-    auto frag_blend = vkpp::make_graphics_pipeline_library<
+    auto fragment_blend_library = vkpp::make_graphics_pipeline_library<
       fragment,
       blend_pipeline_spec,
       heap,
       resource_layout,
       vkpp::diagnostics_on
     >(device_.device(),
-      lib_args,
+      runtime_args,
       pipeline_persistence_,
-      this->heap_arena_,
+      bindings_.heap_arena,
       diagnostic_buffer_);
-    if (!frag_blend) { return std::unexpected {frag_blend.error()}; }
-    gpl_fragment_blend_ = std::move(*frag_blend);
+    if (!fragment_blend_library)
+    {
+      return std::unexpected {fragment_blend_library.error()};
+    }
+    gpl_fragment_blend_ = std::move(*fragment_blend_library);
 
-    auto out_blend = vkpp::make_graphics_pipeline_library<
+    auto output_blend_library = vkpp::make_graphics_pipeline_library<
       fragment_output,
       blend_pipeline_spec,
       heap
     >(device_.device(),
-      lib_args,
+      runtime_args,
       pipeline_persistence_,
-      this->heap_arena_,
+      bindings_.heap_arena,
       diagnostic_buffer_);
-    if (!out_blend) { return std::unexpected {out_blend.error()}; }
-    gpl_fragment_output_blend_ = std::move(*out_blend);
+    if (!output_blend_library)
+    {
+      return std::unexpected {output_blend_library.error()};
+    }
+    gpl_fragment_output_blend_ = std::move(*output_blend_library);
 
     const auto&      link_cache = pipeline_persistence_.cache_for_create();
     const std::array opaque_libs {
@@ -1161,14 +1213,14 @@ private:
 
   auto
   write_ibl_radiance_cis(
-    vk::Sampler sampler, const vkpp::sampler_create_info& sampler_info)
+    vk::Sampler                                       sampler,
+    [[maybe_unused]] const vkpp::sampler_create_info& sampler_info)
     -> std::expected<void, vkpp::error_t>
     requires (Backend == vkpp::descriptor_table_backend::classic)
   {
-    vkpp::write_combined_image_sampler(
+    vkpp::write_descriptor<ibl_tag>(
+      bindings_.persistent_arena,
       device_.device(),
-      this->set0_arena_.set(0U),
-      resource_layout::binding_of<ibl_tag>().binding,
       sampler,
       *ibl_radiance_.view());
     return {};
@@ -1176,12 +1228,13 @@ private:
 
   auto
   write_ibl_radiance_cis(
-    vk::Sampler sampler, const vkpp::sampler_create_info& sampler_info)
+    [[maybe_unused]] vk::Sampler     sampler,
+    const vkpp::sampler_create_info& sampler_info)
     -> std::expected<void, vkpp::error_t>
     requires (Backend == vkpp::descriptor_table_backend::heap)
   {
     return vkpp::write_cis<resource_layout, ibl_tag>(
-      this->heap_arena_,
+      bindings_.heap_arena,
       device_.device(),
       device_.physical_device(),
       sampler_info,
@@ -1319,7 +1372,8 @@ private:
               {
                 return std::unexpected {sampler_create_info.error()};
               }
-              auto sampler = sampler_cache_->get_or_create(*sampler_create_info);
+              auto sampler =
+                sampler_cache_->get_or_create(*sampler_create_info);
               if (!sampler) { return std::unexpected {sampler.error()}; }
               const auto slot = register_bindless_cis(
                 *sampler, *sampler_create_info, textures_[ host_index ]);
@@ -1570,15 +1624,17 @@ private:
   {
     if constexpr (Backend == vkpp::descriptor_table_backend::classic)
     {
-      return vkpp::register_combined_image_sampler(
-        bindless_table_, device_.device(), sampler, image);
+      return vkpp::register_combined_image_sampler<
+        resource_layout,
+        bindless_textures_tag
+      >(bindings_.bindless_table, device_.device(), sampler, image);
     }
     else
     {
       return vkpp::register_combined_image_sampler<
         resource_layout,
         bindless_textures_tag
-      >(bindless_table_,
+      >(bindings_.bindless_table,
         device_.device(),
         device_.physical_device(),
         sampler_info,
@@ -1592,9 +1648,8 @@ private:
     return vkpp::create_frames<max_frames_in_flight>(
       {.device = device_, .pool = command_pool_})
       .transform(
-        [ this ](std::array<vkpp::frame, max_frames_in_flight>&& frames) -> void {
-          frames_ = std::move(frames);
-        });
+        [ this ](std::array<vkpp::frame, max_frames_in_flight>&& frames)
+          -> void { frames_ = std::move(frames); });
   }
 
   auto
@@ -1660,7 +1715,7 @@ private:
     model_matrix_ = glm::gtc::rotate(
       glm::mat4 {1.0F}, time * degrees, glm::vec3 {0.0F, 1.0F, 0.0F});
     view_matrix_ = glm::gtc::lookAt(camera_position, target, up);
-    uniform_buffer_object ubo {
+    uniform_buffer_object frame_uniforms {
       .model      = model_matrix_,
       .view       = view_matrix_,
       .projection = glm::gtc::perspective(
@@ -1672,61 +1727,28 @@ private:
       .brdf_lut_index  = ibl_brdf_lut_index_,
       .ambient_scale   = 0.30F,
     };
-    ubo.projection[ 1 ][ 1 ] *= -1;
+    frame_uniforms.projection[ 1 ][ 1 ] *= -1;
     const auto offset =
       vkpp::uniform_slice_offset(current_frame, uniform_ring_stride_);
-    uniform_ring_.write(&ubo, sizeof(ubo), static_cast<std::size_t>(offset));
+    uniform_ring_.write(
+      &frame_uniforms, sizeof(frame_uniforms), static_cast<std::size_t>(offset));
   }
 
   auto
-  create_set0_arena() -> std::expected<void, vkpp::error_t>
+  create_scope_arenas() -> std::expected<void, vkpp::error_t>
     requires (Backend == vkpp::descriptor_table_backend::classic)
   {
-    static constexpr std::uint32_t persistent_set =
-      resource_layout::binding_of<material_tag>().set;
-    static constexpr auto persistent_bindings =
-      vkpp::bindings_for_set<resource_layout>(persistent_set);
-    static constexpr std::uint32_t persistent_count =
-      vkpp::binding_count_for_set<resource_layout>(persistent_set);
-
-    static constexpr std::uint32_t per_frame_set =
-      resource_layout::binding_of<frame_ubo_tag>().set;
-    static constexpr auto per_frame_bindings =
-      vkpp::bindings_for_set<resource_layout>(per_frame_set);
-    static constexpr std::uint32_t per_frame_count =
-      vkpp::binding_count_for_set<resource_layout>(per_frame_set);
-
-    auto layouts = vkpp::make_set_layouts<resource_layout>(device_.device());
-    if (!layouts) { return std::unexpected {layouts.error()}; }
-    this->set_layouts_ = std::move(*layouts);
-
-    return vkpp::descriptor_set_arena::create(
-      {
-        .device = device_.device(),
-        .bindings =
-          std::span<const vk::DescriptorSetLayoutBinding> {
-            persistent_bindings.data(),
-            persistent_count,
-          },
-        .set_count = 1U,
-      })
+    return scope_arena<vkpp::resource_scope::persistent>::create(
+      device_.device(), bindings_.set_layouts)
       .and_then(
-        [ this ](vkpp::descriptor_set_arena&& persistent)
+        [ this ](scope_arena<vkpp::resource_scope::persistent>&& persistent)
           -> std::expected<void, vkpp::error_t> {
-          this->set0_arena_ = std::move(persistent);
-          return vkpp::descriptor_set_arena::create(
-            {
-              .device = device_.device(),
-              .bindings =
-                std::span<const vk::DescriptorSetLayoutBinding> {
-                  per_frame_bindings.data(),
-                  per_frame_count,
-                },
-              .set_count = 1U,
-            })
-            .transform([ this ](vkpp::descriptor_set_arena&& per_frame) -> void {
-              this->per_frame_arena_ = std::move(per_frame);
-            });
+          bindings_.persistent_arena = std::move(persistent);
+          return scope_arena<vkpp::resource_scope::per_frame>::create(
+            device_.device(), bindings_.set_layouts)
+            .transform(
+              [ this ](scope_arena<vkpp::resource_scope::per_frame>&& per_frame)
+                -> void { bindings_.per_frame_arena = std::move(per_frame); });
         });
   }
 
@@ -1734,28 +1756,19 @@ private:
   create_descriptor_sets()
     requires (Backend == vkpp::descriptor_table_backend::classic)
   {
-    const auto set0 = this->set0_arena_.set(0U);
-    const auto set2 = this->per_frame_arena_.set(0U);
-    for (auto index : std::views::indices(max_frames_in_flight))
-    {
-      frames_[ index ].descriptor_set = set0;
-    }
-    vkpp::write_uniform_buffer_dynamic(
+    vkpp::write_descriptor<frame_ubo_tag>(
+      bindings_.per_frame_arena,
       device_.device(),
-      set2,
-      resource_layout::binding_of<frame_ubo_tag>().binding,
       uniform_ring_.buffer(),
       sizeof(uniform_buffer_object));
-    vkpp::write_storage_buffer(
+    vkpp::write_descriptor<material_tag>(
+      bindings_.persistent_arena,
       device_.device(),
-      set0,
-      resource_layout::binding_of<material_tag>().binding,
       material_buffer_.buffer(),
       material_buffer_.size());
-    vkpp::write_storage_buffer(
+    vkpp::write_descriptor<draw_ssbo_tag>(
+      bindings_.persistent_arena,
       device_.device(),
-      set0,
-      resource_layout::binding_of<draw_ssbo_tag>().binding,
       draw_buffer_.buffer(),
       draw_buffer_.size());
   }
@@ -1801,7 +1814,8 @@ private:
     ImGui_ImplVulkan_InitInfo init_info {
       .ApiVersion = VK_API_VERSION_1_4,
       .Instance   = static_cast<VkInstance>(*instance_.instance()),
-      .PhysicalDevice = static_cast<VkPhysicalDevice>(*device_.physical_device()),
+      .PhysicalDevice =
+        static_cast<VkPhysicalDevice>(*device_.physical_device()),
       .Device         = static_cast<VkDevice>(*device_.device()),
       .QueueFamily    = device_.graphics_qf_index(),
       .Queue          = static_cast<VkQueue>(*device_.graphics_queue()),
@@ -1878,67 +1892,54 @@ private:
       histogram_readbacks_[ index ] = std::move(*readback);
     }
 
-    static constexpr std::uint32_t per_pass_set =
-      resource_layout::binding_of<histogram_image_tag>().set;
-    static constexpr auto per_pass_bindings =
-      vkpp::bindings_for_set<resource_layout>(per_pass_set);
-    static constexpr std::uint32_t per_pass_count =
-      vkpp::binding_count_for_set<resource_layout>(per_pass_set);
-
-    auto arena = vkpp::descriptor_set_arena::create({
-      .device = device_.device(),
-      .bindings =
-        std::span<const vk::DescriptorSetLayoutBinding> {
-          per_pass_bindings.data(),
-          per_pass_count,
-        },
-      .set_count = 1U,
-    });
+    auto arena = scope_arena<vkpp::resource_scope::per_pass>::create(
+      device_.device(), bindings_.set_layouts);
     if (!arena) { return std::unexpected {arena.error()}; }
     histogram_arena_ = std::move(*arena);
 
     auto spirv = vkpp::load_shader_file(SHADER_DIRECTORY "slang.spv");
     if (!spirv) { return std::unexpected {spirv.error()}; }
 
-    std::array<vk::raii::DescriptorSetLayout, resource_layout::set_count>
-      owned_hist_layouts {nullptr, nullptr, nullptr, nullptr};
-    std::array<vk::DescriptorSetLayout, resource_layout::set_count>
-      hist_set_layouts {};
+    const auto histogram_set_layouts = bindings_.set_layouts.handles();
+
+    const vkpp::compute_pipeline_runtime_args runtime_args {
+      .set_layouts        = histogram_set_layouts,
+      .push_constant_size = sizeof(histogram_push_cpu),
+    };
+    const vkpp::compute_shader shader {
+      .spirv = *spirv,
+      .entry = "histogram_main",
+    };
+    const auto store_pipeline =
+      [ this ](vkpp::compute_pipeline&& pipeline) -> void {
+      histogram_pipeline_ = std::move(pipeline);
+    };
+
     if constexpr (Backend == vkpp::descriptor_table_backend::classic)
     {
-      std::ranges::transform(
-        this->set_layouts_,
-        hist_set_layouts.begin(),
-        [](const vk::raii::DescriptorSetLayout& layout) { return *layout; });
+      return vkpp::make_compute_pipeline<
+        Backend,
+        resource_layout,
+        vkpp::diagnostics_on
+      >(device_.device(),
+        runtime_args,
+        shader,
+        pipeline_persistence_.cache_for_create())
+        .transform(store_pipeline);
     }
     else
     {
-      auto layouts = vkpp::make_set_layouts<resource_layout>(device_.device());
-      if (!layouts) { return std::unexpected {layouts.error()}; }
-      owned_hist_layouts = std::move(*layouts);
-      std::ranges::transform(
-        owned_hist_layouts,
-        hist_set_layouts.begin(),
-        [](const vk::raii::DescriptorSetLayout& layout) { return *layout; });
+      return vkpp::make_compute_pipeline<
+        Backend,
+        resource_layout,
+        vkpp::diagnostics_on
+      >(device_.device(),
+        runtime_args,
+        shader,
+        bindings_.heap_arena,
+        pipeline_persistence_.cache_for_create())
+        .transform(store_pipeline);
     }
-
-    return vkpp::make_compute_pipeline<
-      vkpp::descriptor_table_backend::classic,
-      resource_layout,
-      vkpp::diagnostics_on
-    >(device_.device(),
-      {
-        .set_layouts        = hist_set_layouts,
-        .push_constant_size = sizeof(histogram_push_cpu),
-      },
-      {
-        .spirv = *spirv,
-        .entry = "histogram_main",
-      },
-      pipeline_persistence_.cache_for_create())
-      .transform([ this ](vkpp::compute_pipeline&& pipeline) -> void {
-        histogram_pipeline_ = std::move(pipeline);
-      });
   }
 
   auto
@@ -1975,10 +1976,9 @@ private:
               vkpp::make_app_error(vkpp::app_error_code::invalid_state),
             };
           }
-          vkpp::write_combined_image_sampler(
+          vkpp::write_descriptor<histogram_image_tag>(
+            histogram_arena_,
             device_.device(),
-            histogram_arena_.set(0),
-            resource_layout::binding_of<histogram_image_tag>().binding,
             *scene_sampler_,
             *scene_.resolve().view());
           return {};
@@ -2169,9 +2169,9 @@ private:
     requires (Backend == vkpp::descriptor_table_backend::classic)
   {
     const std::array sets {
-      frames_[ frame_index_ ].descriptor_set,
-      bindless_table_.set(),
-      this->per_frame_arena_.set(0U),
+      bindings_.persistent_arena.set(),
+      bindings_.bindless_table.set(),
+      bindings_.per_frame_arena.set(),
     };
     const auto dynamic_offsets = vkpp::pack_dynamic_offsets<
       resource_layout,
@@ -2194,9 +2194,10 @@ private:
     requires (Backend == vkpp::descriptor_table_backend::heap)
   {
     const auto frame_slot = frame_index_;
-    vkpp::push<Backend, push_layout, frame_slot_tag>(command_buffer, frame_slot);
+    vkpp::push<Backend, push_layout, frame_slot_tag>(
+      command_buffer, frame_slot);
     vkpp::bind_graphics_descriptors<Backend>(
-      command_buffer, *pipeline.pipeline(), {}, {}, {}, this->heap_arena_);
+      command_buffer, *pipeline.pipeline(), bindings_.heap_arena);
   }
 
   void
@@ -2380,13 +2381,13 @@ private:
         vkpp::record_buffer_use_transitions(
           command_buffer, std::span {&after_fill, 1UZ});
 
-        const std::array hist_sets {histogram_arena_.set(0)};
+        const std::array histogram_sets {histogram_arena_.set(0)};
         vkpp::bind_compute(
           command_buffer,
           *histogram_pipeline_.pipeline(),
           *histogram_pipeline_.layout(),
-          hist_sets,
-          resource_layout::binding_of<histogram_image_tag>().set);
+          histogram_sets,
+          histogram_arena_.set_index);
 
         vkpp::push_compute_constants(
           command_buffer,
@@ -2468,9 +2469,10 @@ private:
           vkpp::image_use::present,
           vk::ImageAspectFlagBits::eColor);
       })
-      .and_then([ &command_buffer, this ]() -> std::expected<void, vkpp::error_t> {
-        return map_vk_error(command_buffer.end(), diagnostic_buffer_);
-      });
+      .and_then(
+        [ &command_buffer, this ]() -> std::expected<void, vkpp::error_t> {
+          return map_vk_error(command_buffer.end(), diagnostic_buffer_);
+        });
   }
 
   auto
@@ -2513,7 +2515,8 @@ private:
           vk::Extent2D                      framebuffer) -> vk::Extent2D {
           return choose_swap_extent(capabilities, framebuffer);
         })
-      .and_then(std::bind_front(&app_session::reinitialize_imgui_renderer, this));
+      .and_then(
+        std::bind_front(&app_session::reinitialize_imgui_renderer, this));
   }
 
   auto
@@ -2524,7 +2527,8 @@ private:
       instance_.surface(),
       framebuffer_extent_request(),
       [ this ](
-        const vk::SurfaceCapabilitiesKHR& capabilities, vk::Extent2D framebuffer) {
+        const vk::SurfaceCapabilitiesKHR& capabilities,
+        vk::Extent2D                      framebuffer) {
         return choose_swap_extent(capabilities, framebuffer);
       });
   }
@@ -2629,10 +2633,9 @@ private:
     {
       return std::unexpected {uploaded.error()};
     }
-    vkpp::write_storage_buffer(
+    vkpp::write_descriptor<material_tag>(
+      bindings_.persistent_arena,
       device_.device(),
-      this->set0_arena_.set(0U),
-      resource_layout::binding_of<material_tag>().binding,
       material_buffer_.buffer(),
       material_buffer_.size());
     rebuild_bindless_pending_ = false;
@@ -2698,8 +2701,8 @@ private:
     const auto material_bound = bindable(material_buffer_);
     if (!material_bound) { return std::unexpected {material_bound.error()}; }
     if (
-      auto write =
-        this->heap_arena_.template write_storage<resource_layout, material_tag>(
+      auto write = bindings_.heap_arena
+        .template write_storage<resource_layout, material_tag>(
           device_.device(), *material_bound);
       !write)
     {
@@ -2734,7 +2737,7 @@ private:
     {
       return std::unexpected {vkpp::make_vk_error(result)};
     }
-    bindless_table_.retire(wait_value);
+    bindings_.bindless_table.retire(wait_value);
     if (rebuild_bindless_requested_)
     {
       const auto release_value = frame_counter_ + 1ULL + max_frames_in_flight;
@@ -2742,12 +2745,12 @@ private:
       {
         if (roles.srgb.has_value())
         {
-          bindless_table_.release_index(*roles.srgb, release_value);
+          bindings_.bindless_table.release_index(*roles.srgb, release_value);
           roles.srgb.reset();
         }
         if (roles.linear.has_value())
         {
-          bindless_table_.release_index(*roles.linear, release_value);
+          bindings_.bindless_table.release_index(*roles.linear, release_value);
           roles.linear.reset();
         }
       }
@@ -2890,8 +2893,8 @@ private:
   drain_diagnostics()
   {
     std::array<vkpp::diagnostic_record, 256> scratch {};
-    const auto n = diagnostic_buffer_.copy_and_clear(scratch);
-    for (auto index : std::views::indices(n))
+    const auto drained = diagnostic_buffer_.copy_and_clear(scratch);
+    for (auto index : std::views::indices(drained))
     {
       const auto& record = scratch[ index ];
       std::println(
@@ -2927,9 +2930,10 @@ private:
     diagnostic_storage_,
     vkpp::diagnostic_severity::warning,
   };
-  vkpp::instance_context instance_ {};
-  vkpp::device_context   device_ {};
-  vkpp::swapchain        swap_chain_ {};
+  vkpp::instance_context    instance_ {};
+  vkpp::device_context      device_ {};
+  session_bindings<Backend> bindings_ {};
+  vkpp::swapchain           swap_chain_ {};
 
   vk::raii::DescriptorPool              imgui_descriptor_pool_ {nullptr};
   std::chrono::steady_clock::time_point imgui_frame_time_ {};
@@ -3031,11 +3035,11 @@ private:
   vkpp::device_address_buffer histogram_bins_ {};
   vk::DeviceAddress           histogram_device_address_ {};
   std::array<vkpp::readback_buffer, max_frames_in_flight>
-                                            histogram_readbacks_ {};
-  vkpp::descriptor_set_arena                histogram_arena_ {};
-  vkpp::compute_pipeline                    histogram_pipeline_ {};
-  vk::raii::Sampler                         histogram_sampler_ {nullptr};
-  std::array<std::uint32_t, histogram_bins> histogram_cpu_ {};
+                                              histogram_readbacks_ {};
+  scope_arena<vkpp::resource_scope::per_pass> histogram_arena_ {};
+  vkpp::compute_pipeline                      histogram_pipeline_ {};
+  vk::raii::Sampler                           histogram_sampler_ {nullptr};
+  std::array<std::uint32_t, histogram_bins>   histogram_cpu_ {};
 
   vkpp::texture<> ibl_radiance_ {};
   vkpp::texture<> ibl_brdf_lut_ {};
