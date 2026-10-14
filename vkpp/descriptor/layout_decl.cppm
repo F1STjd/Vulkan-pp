@@ -310,12 +310,12 @@ struct resource_declaration
 
 } // namespace detail
 
-template<class Tag, class... Traits>
+export template<class Tag, class... Traits>
 struct storage_resource :
 detail::resource_declaration<resource_declaration_kind::storage, Tag, Traits...> {
 };
 
-template<class Tag, class... Traits>
+export template<class Tag, class... Traits>
 struct dynamic_uniform_resource :
 detail::resource_declaration<
   resource_declaration_kind::dynamic_uniform,
@@ -323,11 +323,11 @@ detail::resource_declaration<
   Traits...
 > {};
 
-template<class Tag, class... Traits>
+export template<class Tag, class... Traits>
 struct cis_resource :
 detail::resource_declaration<resource_declaration_kind::cis, Tag, Traits...> {};
 
-template<class Tag, class... Traits>
+export template<class Tag, class... Traits>
 struct cis_table_resource :
 detail::
   resource_declaration<resource_declaration_kind::cis_table, Tag, Traits...> {};
@@ -423,7 +423,7 @@ tags_unique() -> bool
     []<class... Scoped>(Scoped...) -> bool {
       std::size_t position {};
       return (
-        (tah_position<typename Scoped::declaration::tag, ScopedDeclarations>() ==
+        (tag_position<typename Scoped::declaration::tag, ScopedDeclarations>() ==
           position++) &&
         ...);
     },
