@@ -2,24 +2,14 @@ cmake_minimum_required(VERSION 4.0)
 
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
 
-set(CMAKE_CXX_STANDARD 26)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_SCAN_FOR_MODULES ON)
-set(CMAKE_CXX_MODULE_STD ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+project(vkpp LANGUAGES CXX)
 
-project(Vulkan++ LANGUAGES CXX)
-
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(ProjectWarnings)
 # include(ProjectReflection) # reflection is not used for now
 include(ProjectDiagnostics)
-include(ProjectContracts)
 
 find_package(Vulkan REQUIRED)
-include(ImGui)
-find_package(SFML 3 REQUIRED COMPONENTS Window Graphics System)
 find_package(fastgltf CONFIG REQUIRED)
 find_package(Ktx CONFIG REQUIRED)
 if(NOT TARGET Vulkan::Headers)
@@ -30,21 +20,12 @@ include(TinyObjLoader)
 include(VulkanCxxModule)
 include(VmaCxxModule)
 include(GlmCxxModule)
-include(SlangShaders)
 
-set(SHADER_SLANG_SOURCES ${CMAKE_SOURCE_DIR}/shaders/shader.slang)
-add_slang_shader_target(slang_shaders SOURCES ${SHADER_SLANG_SOURCES})
-
-set(TEXTURE_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/textures")
-set(MODEL_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/models")
-
-# vkpp is the primary product; f1st is the example app.
 add_subdirectory(vkpp)
-add_subdirectory(examples/f1st)
 
 # Root compile_commands.json is only useful for Clang IDE builds.
 # GCC builds produce .gcm files that clangd cannot consume.
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+if(PROJECT_IS_TOP_LEVEL AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   add_custom_target(copy_compile_commands ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${CMAKE_BINARY_DIR}/compile_commands.json"

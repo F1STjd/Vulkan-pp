@@ -1,7 +1,7 @@
 # Fetches tiny_obj_loader.h from the tinyobjloader release branch at build time.
 # https://github.com/tinyobjloader/tinyobjloader
 
-set(TINYOBJLOADER_DIR "${CMAKE_SOURCE_DIR}/third-party/tinyobjloader")
+set(TINYOBJLOADER_DIR "${CMAKE_CURRENT_LIST_DIR}/../third-party/tinyobjloader")
 set(TINYOBJLOADER_HEADER "${TINYOBJLOADER_DIR}/tiny_obj_loader.h")
 
 file(MAKE_DIRECTORY "${TINYOBJLOADER_DIR}")

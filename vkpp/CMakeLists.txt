@@ -1,12 +1,5 @@
-# The vkpp library (namespace vkpp). Successor to the old `utils` target.
-#
-# The full directory/file skeleton already exists (Phase 0.1). Module interface
-# units are added to the CXX_MODULES FILE_SET below *as they become populated*
-# (per the tutorial plan), so the project grows into its final shape instead of
-# being reorganized midway. Modules for later phases are listed but commented
-# out; uncomment each one when you start implementing it.
-
 add_library(vkpp STATIC)
+add_library(vkpp::vkpp ALIAS vkpp)
 
 target_include_directories(vkpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
