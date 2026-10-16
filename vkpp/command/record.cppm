@@ -1,3 +1,5 @@
+module;
+#include <type_traits>
 export module vkpp.command.record;
 
 import std;
@@ -6,6 +8,7 @@ import vulkan;
 import vkpp.capabilities;
 import vkpp.descriptor.indexing;
 import vkpp.descriptor.layout_decl;
+import vkpp.pipeline.compute;
 
 namespace vkpp
 {
@@ -172,6 +175,27 @@ push_data(
   };
   command_buffer.pushDataEXT(push_data_info);
 }
+
+export
+template<descriptor_table_backend Backend, class Value>
+  requires (
+    Backend == descriptor_table_backend::classic &&
+    std::is_trivially_copyable_v<Value>)
+void
+push_compute(
+  vk::raii::CommandBuffer& command_buffer,
+  const compute_pipeline&  pipeline,
+  const Value&             value)
+{ push_compute_constants(command_buffer, *pipeline.layout(), value); }
+
+export
+template<descriptor_table_backend Backend, class Value>
+  requires (
+    Backend == descriptor_table_backend::heap &&
+    std::is_trivially_copyable_v<Value>)
+void
+push_compute(vk::raii::CommandBuffer& command_buffer, const Value& value)
+{ push_data(command_buffer, 0U, value); }
 
 export
 template<descriptor_table_backend Backend, class PushLayout, class Tag, class T>

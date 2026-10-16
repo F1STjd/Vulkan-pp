@@ -17,14 +17,16 @@ class image_resource
 public:
   image_resource() = default;
   image_resource(
-    typename Alloc::image_handle&& handle,
+    Alloc::image_handle&&          handle,
     vk::raii::ImageView&&          view,
     vk::Extent2D                   extent,
-    vk::Format                     format)
+    vk::Format                     format,
+    const vk::ImageViewCreateInfo& view_info)
   : handle_ {std::move(handle)},
     view_ {std::move(view)},
     extent_ {extent},
-    format_ {format}
+    format_ {format},
+    view_info_ {view_info}
   {}
 
   [[nodiscard]]
@@ -39,6 +41,11 @@ public:
 
   [[nodiscard]]
   auto
+  view_create_info() const noexcept -> const vk::ImageViewCreateInfo&
+  { return view_info_; }
+
+  [[nodiscard]]
+  auto
   extent() const -> vk::Extent2D
   { return extent_; }
 
@@ -48,10 +55,11 @@ public:
   { return format_; }
 
 private:
-  typename Alloc::image_handle handle_ {};
-  vk::raii::ImageView          view_ {nullptr};
-  vk::Extent2D                 extent_ {};
-  vk::Format                   format_ {};
+  Alloc::image_handle     handle_ {};
+  vk::raii::ImageView     view_ {nullptr};
+  vk::Extent2D            extent_ {};
+  vk::Format              format_ {};
+  vk::ImageViewCreateInfo view_info_ {};
 };
 
 export struct image_type_spec
@@ -213,16 +221,15 @@ static_assert(validate(image_traits<image_kind::sampled_cube>::spec));
 export
 template<image_kind Kind>
   requires (validate(image_traits<Kind>::spec))
-auto
-make_image_view(
-  const vk::raii::Device& device,
-  vk::Image               image,
-  vk::Format              format,
-  std::uint32_t           mip_levels,
-  std::uint32_t array_layers) -> std::expected<vk::raii::ImageView, error_t>
+constexpr auto
+make_image_view_create_info(
+  vk::Image     image,
+  vk::Format    format,
+  std::uint32_t mip_levels,
+  std::uint32_t array_layers) -> vk::ImageViewCreateInfo
 {
-  constexpr image_type_spec     spec = image_traits<Kind>::spec;
-  const vk::ImageViewCreateInfo view_info {
+  constexpr image_type_spec spec = image_traits<Kind>::spec;
+  return {
     .image            = image,
     .viewType         = spec.view_type,
     .format           = format,
@@ -234,7 +241,24 @@ make_image_view(
       .layerCount     = array_layers,
     },
   };
-  return map_vk_error(device.createImageView(view_info), std::nullopt);
+}
+
+export
+template<image_kind Kind>
+  requires (validate(image_traits<Kind>::spec))
+auto
+make_image_view(
+  const vk::raii::Device& device,
+  vk::Image               image,
+  vk::Format              format,
+  std::uint32_t           mip_levels,
+  std::uint32_t array_layers) -> std::expected<vk::raii::ImageView, error_t>
+{
+  return map_vk_error(
+    device.createImageView(
+      make_image_view_create_info<Kind>(
+        image, format, mip_levels, array_layers)),
+    std::nullopt);
 }
 
 export
@@ -268,16 +292,18 @@ make_image_resource(
 
   return allocator.create_image(image_info, spec.intent)
     .and_then(
-      [ & ](typename Alloc::image_handle&& handle)
+      [ & ](Alloc::image_handle&& handle)
         -> std::expected<image_resource<Alloc>, error_t> {
-        return make_image_view<Kind>(
-          device, handle.get(), args.format, args.mip_levels, args.array_layers)
+        const auto view_info = make_image_view_create_info<Kind>(
+          handle.get(), args.format, args.mip_levels, args.array_layers);
+        return map_vk_error(device.createImageView(view_info), std::nullopt)
           .transform([ & ](vk::raii::ImageView&& view) {
             return image_resource<Alloc> {
               std::move(handle),
               std::move(view),
               args.extent,
               args.format,
+              view_info,
             };
           });
       });
