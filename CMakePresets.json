@@ -1,100 +1,35 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": {
-    "major": 4,
-    "minor": 0,
-    "patch": 0
-  },
+  "cmakeMinimumRequired": { "major": 4, "minor": 0, "patch": 0 },
   "configurePresets": [
     {
-      "name": "gcc-debug",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/gcc-debug",
+      "name": "base", "hidden": true, "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_CXX_COMPILER": "D:/msys2/mingw64/bin/g++.exe",
-        "CMAKE_CXX_FLAGS_INIT": "-O0 -g",
-        "CMAKE_CXX_STANDARD": "26",
-        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
-        "CMAKE_CXX_EXTENSIONS": "OFF",
-        "CMAKE_CXX_SCAN_FOR_MODULES": "ON",
-        "CMAKE_CXX_MODULE_STD": "ON",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+        "CMAKE_CXX_STANDARD": "26", "CMAKE_CXX_STANDARD_REQUIRED": "ON", "CMAKE_CXX_EXTENSIONS": "OFF",
+        "CMAKE_CXX_SCAN_FOR_MODULES": "ON", "CMAKE_CXX_MODULE_STD": "ON", "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
     },
     {
-      "name": "release-common",
-      "hidden": true,
+      "name": "clang-debug", "displayName": "Clang Debug (unoptimised, full warnings, clangd CDB)", "inherits": "base",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_CXX_FLAGS_INIT": "-O3 -DNDEBUG -march=native -ffunction-sections -fdata-sections -fvisibility=hidden -funroll-loops",
-        "CMAKE_EXE_LINKER_FLAGS_INIT": "-Wl,--gc-sections -Wl,-O3",
-        "CMAKE_SHARED_LINKER_FLAGS_INIT": "-Wl,--gc-sections -Wl,-O3"
+        "CMAKE_BUILD_TYPE": "Debug", "CMAKE_CXX_COMPILER": "D:/msys2/mingw64/bin/clang++.exe",
+        "CMAKE_CXX_FLAGS_INIT": "-O0 -g", "BASIC_WARNINGS": "OFF"
       }
     },
     {
-      "name": "gcc-release",
-      "inherits": ["gcc-debug", "release-common"],
-      "binaryDir": "${sourceDir}/build/gcc-release",
+      "name": "gcc-release-fast", "displayName": "GCC Release (fully optimised, critical warnings only)", "inherits": "base",
       "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release", "CMAKE_CXX_COMPILER": "D:/msys2/mingw64/bin/g++.exe",
         "CMAKE_CXX_FLAGS_INIT": "-O3 -DNDEBUG -march=native -ffunction-sections -fdata-sections -fvisibility=hidden -funroll-loops -fno-semantic-interposition -ftree-vectorize -fpredictive-commoning -fipa-pta",
         "CMAKE_EXE_LINKER_FLAGS_INIT": "-Wl,--gc-sections -Wl,-O3",
-        "CMAKE_SHARED_LINKER_FLAGS_INIT": "-Wl,--gc-sections -Wl,-O3"
-      }
-    },
-    {
-      "name": "gcc-release-fast",
-      "displayName": "GCC Release (optimized, basic warnings, fast iteration)",
-      "inherits": "gcc-release",
-      "binaryDir": "${sourceDir}/build/gcc-release-fast",
-      "cacheVariables": {
+        "CMAKE_SHARED_LINKER_FLAGS_INIT": "-Wl,--gc-sections -Wl,-O3",
         "BASIC_WARNINGS": "ON"
-      }
-    },
-    {
-      "name": "clang-debug",
-      "displayName": "Clang Debug (clangd / IDE)",
-      "inherits": "gcc-debug",
-      "binaryDir": "${sourceDir}/build/clang-debug",
-      "cacheVariables": {
-        "CMAKE_CXX_COMPILER": "D:/msys2/mingw64/bin/clang++.exe"
-      }
-    },
-    {
-      "name": "clang-release",
-      "displayName": "Clang Release",
-      "inherits": ["clang-debug", "release-common"],
-      "binaryDir": "${sourceDir}/build/clang-release",
-      "cacheVariables": {
-        "CMAKE_CXX_FLAGS_INIT": "-O3 -DNDEBUG -march=native -ffunction-sections -fdata-sections -fvisibility=hidden -funroll-loops -flto=thin",
-        "CMAKE_EXE_LINKER_FLAGS_INIT": "-flto=thin -fuse-ld=lld -Wl,--gc-sections -Wl,-O3",
-        "CMAKE_SHARED_LINKER_FLAGS_INIT": "-flto=thin -fuse-ld=lld -Wl,--gc-sections -Wl,-O3"
       }
     }
   ],
   "buildPresets": [
-    {
-      "name": "gcc-debug",
-      "configurePreset": "gcc-debug"
-    },
-    {
-      "name": "gcc-release-fast",
-      "configurePreset": "gcc-release-fast",
-      "nativeToolOptions": ["--quiet"]
-    },
-    {
-      "name": "gcc-release",
-      "configurePreset": "gcc-release"
-    },
-    {
-      "name": "clang-debug",
-      "configurePreset": "clang-debug",
-      "nativeToolOptions": ["--quiet"]
-    },
-    {
-      "name": "clang-release",
-      "configurePreset": "clang-release",
-      "nativeToolOptions": ["--quiet"]
-    }
+    { "name": "clang-debug", "configurePreset": "clang-debug", "nativeToolOptions": ["--quiet"] },
+    { "name": "gcc-release-fast", "configurePreset": "gcc-release-fast", "nativeToolOptions": ["--quiet"] }
   ]
 }

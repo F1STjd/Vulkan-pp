@@ -2,20 +2,13 @@
   "clangd.path": "D:/msys2/mingw64/bin/clangd.exe",
   "clangd.arguments": [
     "--experimental-modules-support",
-    "--compile-commands-dir=${workspaceFolder}/build/clang-debug",
     "--query-driver=D:/msys2/mingw64/bin/*",
     "--header-insertion=never",
     "--background-index",
     "--background-index-priority=background",
-    // Keep the preamble (which chains the 60MB vulkan + 34MB std BMIs) in RAM
-    // instead of re-reading it from disk on every completion. Biggest latency win.
     "--pch-storage=memory",
-    // Live clang-tidy re-runs the whole (very large) .clang-tidy check set on
-    // every edit. Disabled here for responsiveness; run it on demand via the
-    // "Lint: clang-tidy (current file)" task or at compile time instead.
     "--clang-tidy=false",
-    // Cap completion list work.
-    "--limit-results=100",
+    "--limit-results=50",
     "-j=3"
   ],
   "files.watcherExclude": {

@@ -22,12 +22,3 @@ include(VmaCxxModule)
 include(GlmCxxModule)
 
 add_subdirectory(vkpp)
-
-# Root compile_commands.json is only useful for Clang IDE builds.
-# GCC builds produce .gcm files that clangd cannot consume.
-if(PROJECT_IS_TOP_LEVEL AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  add_custom_target(copy_compile_commands ALL
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "${CMAKE_BINARY_DIR}/compile_commands.json"
-      "${CMAKE_SOURCE_DIR}/compile_commands.json")
-endif()
