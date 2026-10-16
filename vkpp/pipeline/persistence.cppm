@@ -713,7 +713,7 @@ make_pipeline_binaries_from_store(
   if (!keys) { return {}; }
   auto blobs = store.collect_blobs_for_pipeline(pipeline_key);
   if (!blobs) { return std::unexpected {blobs.error()}; }
-  return pipeline_binaries::create(device, *blobs)
+  return pipeline_binaries::create(device, *blobs, diagnostics)
     .transform([](pipeline_binaries&& binaries) {
       return std::optional<pipeline_binaries> {std::move(binaries)};
     });

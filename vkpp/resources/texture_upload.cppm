@@ -324,7 +324,7 @@ upload_texture_via_tranfer_queue(
               upload::deferred, {.signal = *copy_done});
           })
           .and_then(
-            [ & ](
+            [ & ]([[maybe_unused]]
               submission&& release_submitted) -> std::expected<void, error_t> {
               single_time_submit graphics_submit {
                 create_info.pool,

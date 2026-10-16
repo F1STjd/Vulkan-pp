@@ -23,29 +23,23 @@ public:
   pending_download() = default;
 
   pending_download(readback_buffer&& staging, submission&& copy_sobmitted)
-  : staging_ {std::move(staging)},
-    submissions_ {{std::move(copy_sobmitted), submission {}}},
-    submission_count_ {1U}
+  : staging_ {std::move(staging)}, submission_ {std::move(copy_sobmitted)}
   {}
 
   [[nodiscard]]
   auto
   join() && -> std::expected<readback_buffer, error_t>
   {
-    for (auto& submission : submissions_)
+    if (auto done = submission_.wait(); !done)
     {
-      if (auto done = submission.wait(); !done)
-      {
-        return std::unexpected {std::move(done).error()};
-      }
+      return std::unexpected {done.error()};
     }
     return std::move(staging_);
   }
 
 private:
-  readback_buffer           staging_ {};
-  std::array<submission, 2> submissions_ {};
-  std::uint32_t             submission_count_ {0U};
+  readback_buffer staging_;
+  submission      submission_;
 };
 
 export struct buffer_download_create_info

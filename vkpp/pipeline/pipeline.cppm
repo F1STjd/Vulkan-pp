@@ -463,7 +463,6 @@ make_graphics_pipeline(
   const vk::raii::Device&               device,
   const graphics_pipeline_runtime_args& runtime_args,
   const graphics_pipeline_shaders&      shaders,
-  const descriptor_heap_arena&          arena,
   const vk::raii::PipelineCache&        cache = {nullptr})
   -> std::expected<graphics_pipeline, error_t>
 {

@@ -1,3 +1,5 @@
+module;
+#include <optional>
 export module vkpp.pipeline.binary;
 
 import std;
@@ -64,7 +66,9 @@ public:
   static
   auto
   create(
-    const vk::raii::Device& device, std::span<const pipeline_binary_blob> blobs)
+    const vk::raii::Device&               device,
+    std::span<const pipeline_binary_blob> blobs,
+    std::optional<diagnostic_buffer&>     diagnostics = {})
     -> std::expected<pipeline_binaries, error_t>
   {
     if (blobs.empty())
@@ -95,7 +99,7 @@ public:
     };
 
     return map_vk_error(
-      device.createPipelineBinariesKHR(create_info), std::nullopt)
+      device.createPipelineBinariesKHR(create_info), diagnostics)
       .transform(
         [](std::vector<vk::raii::PipelineBinaryKHR>&& binaries)
           -> pipeline_binaries {
