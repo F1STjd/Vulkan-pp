@@ -274,4 +274,4 @@ create_command_pools(
   return pools;
 }
 
-}; // namespace vkpp
+} // namespace vkpp

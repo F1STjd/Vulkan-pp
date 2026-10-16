@@ -845,7 +845,7 @@ class bindless_table<descriptor_table_backend::heap>
 public:
   bindless_table() = default;
 
-  explicit bindless_table(descriptor_heap_arena& arena) : arena_ {arena} {};
+  explicit bindless_table(descriptor_heap_arena& arena) : arena_ {arena} {}
 
   template<class Layout, class Tag>
   [[nodiscard]]

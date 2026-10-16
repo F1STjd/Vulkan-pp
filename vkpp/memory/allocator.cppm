@@ -40,4 +40,4 @@ concept device_allocator = requires(
   { buffer.mapped() } -> std::same_as<void*>;
 };
 
-}; // namespace vkpp
+} // namespace vkpp

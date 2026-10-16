@@ -1015,4 +1015,4 @@ private:
   selected_device_capabilities selected_ {};
 };
 
-}; // namespace vkpp
+} // namespace vkpp

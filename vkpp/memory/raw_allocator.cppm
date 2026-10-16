@@ -181,4 +181,4 @@ private:
 
 static_assert(device_allocator<raw_policy>);
 
-}; // namespace vkpp
+} // namespace vkpp

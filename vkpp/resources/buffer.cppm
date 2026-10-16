@@ -858,4 +858,4 @@ uniform_slice_offset(std::uint32_t index, vk::DeviceSize stride)
   -> vk::DeviceSize
 { return static_cast<vk::DeviceSize>(index) * stride; }
 
-}; // namespace vkpp
+} // namespace vkpp

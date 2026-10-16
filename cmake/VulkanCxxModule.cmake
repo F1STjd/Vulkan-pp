@@ -19,5 +19,6 @@ target_compile_definitions(vulkan_cxx_module
     VULKAN_HPP_NO_EXCEPTIONS=1)
 target_link_libraries(vulkan_cxx_module PUBLIC Vulkan::Vulkan)
 set_target_properties(vulkan_cxx_module PROPERTIES CXX_MODULE_STD ON)
+vkpp_silence_third_party(vulkan_cxx_module)
 
 add_library(Vulkan::cppm ALIAS vulkan_cxx_module)

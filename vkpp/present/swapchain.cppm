@@ -370,4 +370,4 @@ private:
   std::vector<vk::raii::Semaphore> render_finished_semaphores_;
 };
 
-}; // namespace vkpp
+} // namespace vkpp

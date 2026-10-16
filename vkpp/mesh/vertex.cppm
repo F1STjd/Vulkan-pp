@@ -72,7 +72,7 @@ export struct vertex
   }
 };
 
-}; // namespace vkpp
+} // namespace vkpp
 
 namespace std
 {

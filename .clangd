@@ -1,6 +1,4 @@
 CompileFlags:
-  # clangd needs Clang-built PCMs (.pcm), not GCC gcm.cache (.gcm).
-  # Run once: cmake --preset clang-debug && cmake --build --preset clang-debug
   CompilationDatabase: build/clang-debug
   Remove:
     # Warnings stay in compile_commands.json for ninja builds; clangd skips them.

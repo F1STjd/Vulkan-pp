@@ -81,7 +81,8 @@ public:
   graphics_pipeline() = default;
   graphics_pipeline(
     vk::raii::PipelineLayout&& layout, vk::raii::Pipeline&& pipeline)
-  : layout_ {std::move(layout)}, pipeline_ {std::move(pipeline)} {};
+  : layout_ {std::move(layout)}, pipeline_ {std::move(pipeline)}
+  {}
 
   [[nodiscard]]
   auto

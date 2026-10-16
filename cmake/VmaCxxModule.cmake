@@ -116,6 +116,7 @@ target_include_directories(vma_cxx_module SYSTEM PUBLIC
 
 target_compile_features(vma_cxx_module PUBLIC cxx_std_26)
 set_target_properties(vma_cxx_module PROPERTIES CXX_MODULE_STD ON)
+vkpp_silence_third_party(vma_cxx_module)
 target_link_libraries(vma_cxx_module PUBLIC Vulkan::cppm)
 
 add_library(Vulkan::vma ALIAS vma_cxx_module)

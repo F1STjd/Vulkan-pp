@@ -239,4 +239,4 @@ private:
   std::optional<vkpp::diagnostic_buffer&> diagnostics_ {};
 };
 
-}; // namespace vkpp
+} // namespace vkpp

@@ -330,4 +330,4 @@ private:
 
 static_assert(device_allocator<vma_policy>);
 
-}; // namespace vkpp
+} // namespace vkpp

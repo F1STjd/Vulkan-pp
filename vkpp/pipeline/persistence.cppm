@@ -46,7 +46,7 @@ template<class T>
     std::is_trivially_copyable_v<T> && (sizeof(T) == 4UZ || sizeof(T) == 8UZ))
 [[nodiscard]]
 auto
-read_le(std::istream& in, T value) -> bool
+read_le(std::istream& in, T& value) -> bool
 {
   std::array<char, sizeof(T)> bytes {};
   in.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));

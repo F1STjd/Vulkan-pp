@@ -283,4 +283,4 @@ make_image_resource(
       });
 }
 
-}; // namespace vkpp
+} // namespace vkpp

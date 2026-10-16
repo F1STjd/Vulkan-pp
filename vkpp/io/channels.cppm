@@ -10,4 +10,4 @@ inline constexpr std::size_t two {2UZ};
 inline constexpr std::size_t three {3UZ};
 inline constexpr std::size_t four {4UZ};
 
-}; // namespace vkpp::channels
+} // namespace vkpp::channels

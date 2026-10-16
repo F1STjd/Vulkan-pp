@@ -80,8 +80,14 @@ target_sources(vkpp
 
 target_compile_features(vkpp PUBLIC cxx_std_26)
 set_target_properties(vkpp PROPERTIES CXX_MODULE_STD ON)
+vkpp_enable_warnings(vkpp)
 
 target_link_libraries(vkpp
   PUBLIC glm::glm glm::cppm Tutorial::stb Vulkan::cppm fastgltf::fastgltf KTX::ktx
   PRIVATE Tutorial::tinyobjloader Vulkan::vma)
 
+# Workaround (stopgap): GCC 16.2/MinGW emits function-local statics of inline
+# std templates (e.g. <format> __replace_rep) as strong non-COMDAT symbols when
+# instantiated via `import std`; every TU then defines them. Remove when fixed.
+target_link_options(vkpp INTERFACE
+  $<$<AND:$<BOOL:${MINGW}>,$<CXX_COMPILER_ID:GNU>>:LINKER:--allow-multiple-definition>)

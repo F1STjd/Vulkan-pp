@@ -12,10 +12,11 @@ if(BASIC_WARNINGS)
     -Wall
     -Wextra
     -Wpedantic
-    -Wno-free-nonheap-object) # GCC false positive on std::expected chains
+    -Wno-free-nonheap-object  # GCC false positive on std::expected chains
+    -Wno-expose-global-module-tu-local)
 
 else()
-# Full set: the strict, slower "feature finished" warnings.
+
 set(_warn_candidates
   -Wpedantic
   -pedantic-errors
@@ -79,7 +80,8 @@ set(_warn_candidates
   -Wfloat-equal
   -Woverloaded-virtual
   -Wplacement-new=2
-  -Wundef)
+  -Wundef
+  -Wno-expose-global-module-tu-local)
 endif()
 
 if(ENABLE_WEFFCPP)
@@ -105,3 +107,12 @@ foreach(_flag IN LISTS _warn_candidates)
     target_compile_options(project_warnings INTERFACE "${_flag}")
   endif()
 endforeach()
+
+function(vkpp_enable_warnings target)
+  target_link_libraries(${target} PRIVATE $<BUILD_INTERFACE:project_warnings>)
+endfunction()
+
+function(vkpp_silence_third_party target)
+  target_compile_options(${target} PRIVATE
+    -w $<$<CXX_COMPILER_ID:GNU>:-Wno-expose-global-module-tu-local>)
+endfunction()

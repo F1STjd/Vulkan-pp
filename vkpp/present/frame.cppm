@@ -60,4 +60,4 @@ create_frames(const frames_create_info& info)
     .transform([ & ] { return std::move(frames); });
 }
 
-}; // namespace vkpp
+} // namespace vkpp
