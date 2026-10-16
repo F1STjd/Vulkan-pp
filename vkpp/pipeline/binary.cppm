@@ -29,7 +29,7 @@ public:
       std::from_range,
       binaries_ |
         std::views::transform(
-          [](const vk::raii::PipelineBinaryKHR& binary)
+          [](const vk::raii::PipelineBinaryKHR& binary) noexcept
             -> vk::PipelineBinaryKHR { return *binary; })
     }
   {}

@@ -610,8 +610,9 @@ private:
     {
       const bool graphics = static_cast<bool>(
         properties[ property_index ].queueFlags & vk::QueueFlagBits::eGraphics);
-      const bool present = static_cast<bool>(
-        physical_device.getSurfaceSupportKHR(property_index, surface));
+      const bool present =
+        static_cast<bool>(physical_device.getSurfaceSupportKHR(
+          static_cast<std::uint32_t>(property_index), surface));
       if (graphics && present) { return property_index; }
     }
     return std::nullopt;
@@ -791,7 +792,8 @@ private:
     }
     const auto features = physical.getFeatures2<
       vk::PhysicalDeviceFeatures2,
-      vk::PhysicalDeviceVulkan12Features
+      vk::PhysicalDeviceVulkan12Features,
+      vk::PhysicalDevicePipelineBinaryFeaturesKHR
     >();
     if (
       features.get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress !=
@@ -826,10 +828,7 @@ private:
         }
         return false;
       }
-      const auto features = physical.getFeatures2<
-        vk::PhysicalDeviceFeatures2,
-        vk::PhysicalDevicePipelineBinaryFeaturesKHR
-      >();
+
       if (
         features.get<vk::PhysicalDevicePipelineBinaryFeaturesKHR>()
           .pipelineBinaries != vk::True)

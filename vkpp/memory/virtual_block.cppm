@@ -44,7 +44,7 @@ public:
       block_ = std::exchange(other.block_, nullptr);
     }
     return *this;
-  };
+  }
 
   ~virtual_block() { destroy(); }
 
@@ -53,8 +53,12 @@ public:
   auto
   create(vk::DeviceSize size) -> std::expected<virtual_block, error_t>
   {
-    const VmaVirtualBlockCreateInfo create_info {.size = size};
-    virtual_block                   out {};
+    const VmaVirtualBlockCreateInfo create_info {
+      .size                 = size,
+      .flags                = {},
+      .pAllocationCallbacks = nullptr,
+    };
+    virtual_block out {};
 
     if (vmaCreateVirtualBlock(&create_info, &out.block_) != VK_SUCCESS)
     {
@@ -71,6 +75,8 @@ public:
     const VmaVirtualAllocationCreateInfo allocation_info {
       .size      = size,
       .alignment = alignment,
+      .flags     = {},
+      .pUserData = nullptr,
     };
     virtual_slice slice {.size = size};
 

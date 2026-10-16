@@ -412,6 +412,7 @@ extension_bags_supported(
 
   if constexpr (!Spec.transmission)
   {
+    // TODO(Konrad): Same as somwhere else. Float comparison may not be correct
     if (
       auto result = reject(
         material.transmission.factor != 0.0F ||
@@ -419,7 +420,7 @@ extension_bags_supported(
         "transmission");
       !result)
     {
-      return result;
+      return std::unexpected {result.error()};
     }
   }
   if constexpr (!Spec.clearcoat)
@@ -433,7 +434,7 @@ extension_bags_supported(
       material.clearcoat.normal_scale != 1.0F;
     if (auto result = reject(clearcoat_used, "clearcoat"); !result)
     {
-      return result;
+      return std::unexpected {result.error()};
     }
   }
   return {};

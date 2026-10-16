@@ -213,8 +213,8 @@ public:
     surface_format_ = vk::SurfaceFormatKHR {};
 
     return create(device, surface, window, choose_extent, *previous)
-      .transform([ & ](swapchain&& swapchain) {
-        *this = std::move(swapchain);
+      .transform([ & ](swapchain&& swap_chain) {
+        *this = std::move(swap_chain);
       });
   }
 

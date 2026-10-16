@@ -35,7 +35,7 @@ host_image_from_stb(stbi_uc* pixels, std::int32_t width, std::int32_t height)
   };
   const auto mip_levels = static_cast<std::uint32_t>(
     std::floor(std::log2(std::max(width, height))) + 1);
-  constexpr auto to_byte = [](stbi_uc byte) static -> std::byte {
+  constexpr auto to_byte = [](stbi_uc byte) static noexcept -> std::byte {
     return std::byte {byte};
   };
   auto pixels_span = std::span {pixels, image_size};

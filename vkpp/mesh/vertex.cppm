@@ -62,6 +62,8 @@ export struct vertex
     };
   }
 
+  // TODO(Konrad): analyse if https://glm.g-truc.net/0.9.4/api/a00146.html
+  // should be used instead of float == float comparison.
   auto
   operator ==(const vertex& rhs) const -> bool
   {

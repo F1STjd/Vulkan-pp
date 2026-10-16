@@ -213,11 +213,20 @@ public:
       flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
     }
     const VmaAllocatorCreateInfo create_info {
-      .flags            = flags,
-      .physicalDevice   = static_cast<VkPhysicalDevice>(physical_device),
-      .device           = static_cast<VkDevice>(device),
-      .instance         = static_cast<VkInstance>(instance),
-      .vulkanApiVersion = api_version,
+      .flags          = flags,
+      .physicalDevice = static_cast<VkPhysicalDevice>(physical_device),
+      .device         = static_cast<VkDevice>(device),
+      .preferredLargeHeapBlockSize    = {},
+      .pAllocationCallbacks           = nullptr,
+      .pDeviceMemoryCallbacks         = nullptr,
+      .pHeapSizeLimit                 = nullptr,
+      .pVulkanFunctions               = nullptr,
+      .instance                       = static_cast<VkInstance>(instance),
+      .vulkanApiVersion               = api_version,
+      // It should only be here when the VMA_EXTERNAL_MEMORY macro is set,
+      // otherwise there is no such data member in the struct.
+      // TODO(Konrad): handle it somehow
+      .pTypeExternalMemoryHandleTypes = nullptr,
     };
 
     VmaAllocator allocator {};
@@ -299,27 +308,59 @@ private:
   {
     switch (intent)
     {
-    case memory_intent::gpu_only : return {.usage = VMA_MEMORY_USAGE_AUTO};
+    case memory_intent::gpu_only :
+      return {
+        .flags          = {},
+        .usage          = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags  = {},
+        .preferredFlags = {},
+        .memoryTypeBits = {},
+        .pool           = nullptr,
+        .pUserData      = nullptr,
+        .priority       = {},
+        .minAlignment   = {},
+      };
     case memory_intent::staging :
       return {
         .flags =
           VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
           VMA_ALLOCATION_CREATE_MAPPED_BIT,
-        .usage = VMA_MEMORY_USAGE_AUTO,
+        .usage          = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags  = {},
+        .preferredFlags = {},
+        .memoryTypeBits = {},
+        .pool           = nullptr,
+        .pUserData      = nullptr,
+        .priority       = {},
+        .minAlignment   = {},
       };
     case memory_intent::cpu_to_gpu :
       return {
         .flags =
           VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
           VMA_ALLOCATION_CREATE_MAPPED_BIT,
-        .usage = VMA_MEMORY_USAGE_AUTO,
+        .usage          = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags  = {},
+        .preferredFlags = {},
+        .memoryTypeBits = {},
+        .pool           = nullptr,
+        .pUserData      = nullptr,
+        .priority       = {},
+        .minAlignment   = {},
       };
     case memory_intent::gpu_to_cpu :
       return {
         .flags =
           VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
           VMA_ALLOCATION_CREATE_MAPPED_BIT,
-        .usage = VMA_MEMORY_USAGE_AUTO,
+        .usage          = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags  = {},
+        .preferredFlags = {},
+        .memoryTypeBits = {},
+        .pool           = nullptr,
+        .pUserData      = nullptr,
+        .priority       = {},
+        .minAlignment   = {},
       };
     }
     std::unreachable();

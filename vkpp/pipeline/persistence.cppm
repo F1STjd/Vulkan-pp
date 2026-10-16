@@ -376,8 +376,7 @@ public:
       }
       if (
         data_size > remaining ||
-        data_size >
-          static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
+        data_size > std::numeric_limits<std::size_t>::max())
       {
         return discard("data_size overflow");
       }
@@ -480,7 +479,7 @@ public:
         output.write(
           reinterpret_cast<const char*>(blob.key.key.data()),
           vk::MaxPipelineBinaryKeySizeKHR);
-        if (!write_le(output, static_cast<std::uint64_t>(blob.data.size())))
+        if (!write_le(output, blob.data.size()))
         {
           return std::unexpected {make_app_error(app_error_code::file_write)};
         }

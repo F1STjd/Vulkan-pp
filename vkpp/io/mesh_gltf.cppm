@@ -454,8 +454,11 @@ extract_image_source(
   -> std::expected<gltf::image_source_cpu, error_t>
 {
   gltf::image_source_cpu source {};
-  const auto             visit_bytes =
-    [ & ](std::span<const std::byte> bytes, fastgltf::MimeType mime)
+
+  // both std::span and fastgltf::span can be passed here
+  // templated so no conversion happens
+  const auto visit_bytes =
+    [ & ]<typename Span>(Span bytes, fastgltf::MimeType mime)
     -> std::expected<gltf::image_source_cpu, error_t> {
     switch (mime)
     {
@@ -488,7 +491,7 @@ extract_image_source(
   return std::visit(
     match {
       [ & ](const fastgltf::sources::BufferView& data) -> return_value {
-        const std::span<const std::byte> bytes =
+        const auto bytes =
           fastgltf::DefaultBufferDataAdapter {}(gltf, data.bufferViewIndex);
         return visit_bytes(bytes, data.mimeType);
       },
@@ -528,7 +531,7 @@ extract_image_source(
             return result;
           });
       },
-      [ & ](const auto& data) -> return_value {
+      [ & ](const auto&) -> return_value {
         return std::unexpected {
           make_app_error(app_error_code::unsupported_model_data),
         };

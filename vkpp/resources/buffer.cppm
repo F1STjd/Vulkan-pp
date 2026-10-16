@@ -328,10 +328,7 @@ public:
     -> std::expected<buffer_resource, error_t>
   {
     static_assert(std::is_trivially_copyable_v<T>);
-    return create(
-      allocator,
-      static_cast<vk::DeviceSize>(sizeof(T)) * count,
-      sharing_families);
+    return create(allocator, sizeof(T) * count, sharing_families);
   }
 
   template<typename T>
@@ -377,7 +374,7 @@ public:
   mapped_span() const -> std::expected<std::span<T>, error_t>
   {
     static_assert(std::is_trivially_copyable_v<T>);
-    auto* const ptr = mapped();
+    void* const ptr = mapped();
     if (ptr == nullptr)
     {
       return std::unexpected {make_app_error(app_error_code::mapping_failed)};
@@ -394,7 +391,7 @@ public:
     }
     return std::span<T> {
       static_cast<T*>(ptr),
-      static_cast<std::size_t>(size_ / sizeof(T)),
+      size_ / sizeof(T),
     };
   }
 

@@ -324,7 +324,8 @@ upload_texture_via_tranfer_queue(
               upload::deferred, {.signal = *copy_done});
           })
           .and_then(
-            [ & ](submission&& release_submitted) -> std::expected<void, error_t> {
+            [ & ](
+              submission&& release_submitted) -> std::expected<void, error_t> {
               single_time_submit graphics_submit {
                 create_info.pool,
                 create_info.device.device(),
@@ -344,7 +345,8 @@ upload_texture_via_tranfer_queue(
                     vk::ImageAspectFlagBits::eColor,
                     create_info.array_layers);
                   record_barriers(
-                    graphics_submit.command_buffer(), std::span {&acquire, 1UZ});
+                    graphics_submit.command_buffer(),
+                    std::span {&acquire, 1UZ});
                   return graphics_submit.end_and_submit(
                     upload::deferred, {.wait = *copy_done});
                 })
@@ -482,7 +484,8 @@ make_texture(const texture_create_info& create_info)
   {
     return create_info.stage_pool->allocate(byte_size, 4UZ)
       .and_then(
-        [ & ](stage_allocation&& allocation) -> std::expected<texture<>, error_t> {
+        [ & ](
+          stage_allocation&& allocation) -> std::expected<texture<>, error_t> {
           std::memcpy(allocation.mapped, create_info.pixels.data(), byte_size);
           const auto src_offset = allocation.offset;
           return make_sampled_image().and_then(
@@ -493,7 +496,8 @@ make_texture(const texture_create_info& create_info)
                 std::move(image), create_info.stage_pool->buffer(), src_offset)
                 .and_then(
                   [ &, allocation = std::move(allocation) ](
-                    texture<>&& tex) mutable -> std::expected<texture<>, error_t> {
+                    texture<>&& tex) mutable
+                    -> std::expected<texture<>, error_t> {
                     create_info.stage_pool->free(allocation);
                     return std::move(tex);
                   });
@@ -504,7 +508,8 @@ make_texture(const texture_create_info& create_info)
   return staging_buffer::create(
     create_info.device.allocator(), create_info.pixels)
     .and_then(
-      [ & ](staging_buffer&& staging_buffer) -> std::expected<texture<>, error_t> {
+      [ & ](
+        staging_buffer&& staging_buffer) -> std::expected<texture<>, error_t> {
         if (staging_buffer.mapped() == nullptr)
         {
           return std::unexpected {
