@@ -1,7 +1,6 @@
 CompileFlags:
   CompilationDatabase: build/clang-debug
   Remove:
-    # Warnings stay in compile_commands.json for ninja builds; clangd skips them.
     - -W*
     - -pedantic-errors
     - -fanalyzer
@@ -11,17 +10,13 @@ CompileFlags:
     - -fdiagnostics-parseable-fixits
     - -fdiagnostics-generate-patch
     - -fdiagnostics-show-option
-    # GCC-only module scanner flags (ignored for clang CDB anyway)
     - -fmodules-ts
     - -fmodule-mapper=*
     - -fdeps-format=*
 
 Diagnostics:
   UnusedIncludes: None
-  # ON/OFF switch for ALL squiggles. Uncomment the next line (or use the
-  # "Diagnostics: toggle squiggles" task) to hide every diagnostic. clangd
-  # hot-reloads this file on save, so no restart is needed.
-  # Suppress: "*"
+  MissingIncludes: None
 
 ---
 If:
