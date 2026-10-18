@@ -3,7 +3,8 @@
 /gcm.cache/
 /.cache/
 compile_commands.json
-/shaders/*.spv
+*.spv
+*.exe
 /third-party/tinyobjloader/tiny_obj_loader.h
 /third-party/tinyobjloader/.release_sha
 
