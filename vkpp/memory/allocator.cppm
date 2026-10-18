@@ -20,6 +20,17 @@ export enum class memory_intent
   gpu_to_cpu,
 };
 
+export [[nodiscard]]
+constexpr
+auto
+align_up(vk::DeviceSize value, vk::DeviceSize alignment) noexcept
+  -> vk::DeviceSize
+{
+  return alignment <= 1UZ
+           ? value
+           : (value + alignment - 1UZ) / alignment * alignment;
+}
+
 export template<typename Policy>
 concept device_allocator = requires(
   Policy                                policy,

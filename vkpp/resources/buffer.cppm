@@ -832,15 +832,6 @@ make_device_address_buffer(
   -> std::expected<device_address_buffer, error_t>
 { return device_address_buffer::create(allocator, size, sharing_families); }
 
-[[nodiscard]]
-constexpr
-auto
-align_up(vk::DeviceSize value, vk::DeviceSize alignment) -> vk::DeviceSize
-{
-  if (alignment <= 1UZ) { return value; }
-  return (value + alignment - 1UZ) / alignment * alignment;
-}
-
 export [[nodiscard]]
 constexpr
 auto

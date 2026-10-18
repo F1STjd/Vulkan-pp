@@ -21,15 +21,6 @@ inline constexpr vk::DeviceSize absent_region {
   std::numeric_limits<vk::DeviceSize>::max(),
 };
 
-constexpr
-auto
-align_up(vk::DeviceSize value, vk::DeviceSize alignment) -> vk::DeviceSize
-{
-  return alignment <= 1UZ
-           ? value
-           : (value + alignment - 1UZ) / alignment * alignment;
-}
-
 export struct descriptor_heap_arena_create_info
 {
   std::uint32_t bindless_capacity {1'024U};
@@ -250,7 +241,7 @@ public:
     };
     const vk::ResourceDescriptorInfoEXT resource_info {
       .type = vk::DescriptorType::eSampledImage,
-      .data = &image_descriptor,
+      .data = {.pImage = &image_descriptor},
     };
     return map_vk_error(
       device.writeSamplerDescriptorsEXT({sampler_info}, {sampler_range}))
@@ -288,7 +279,7 @@ public:
     };
     const vk::ResourceDescriptorInfoEXT resource_info {
       .type = vk::DescriptorType::eUniformBuffer,
-      .data = &address_range,
+      .data = {.pAddressRange = &address_range},
     };
     const vk::DeviceSize base =
       region_base_of<Layout, Tag>() + frame_index * uniform_descriptor_size_;
@@ -328,7 +319,7 @@ public:
     };
     const vk::ResourceDescriptorInfoEXT resource_info {
       .type = vk::DescriptorType::eStorageBuffer,
-      .data = &address_range,
+      .data = {.pAddressRange = &address_range},
     };
     const vk::HostAddressRangeEXT host_range {
       .address = resource_base + base,
@@ -375,7 +366,7 @@ public:
     };
     const vk::ResourceDescriptorInfoEXT resource_info {
       .type = vk::DescriptorType::eSampledImage,
-      .data = &image_descriptor,
+      .data = {.pImage = &image_descriptor},
     };
     return map_vk_error(
       device.writeSamplerDescriptorsEXT({sampler_info}, {sampler_range}))
@@ -468,7 +459,7 @@ private:
           .bindingCount  = 1U,
           .resourceMask  = mask,
           .source        = vk::DescriptorMappingSourceEXT::eHeapWithPushIndex,
-          .sourceData    = {uniform_push},
+          .sourceData    = {.pushIndex = uniform_push},
         };
         resource_cursor = align_up(
           resource_cursor +
@@ -489,7 +480,7 @@ private:
           .bindingCount  = 1U,
           .resourceMask  = mask,
           .source     = vk::DescriptorMappingSourceEXT::eHeapWithConstantOffset,
-          .sourceData = {storage},
+          .sourceData = {.constantOffset = storage},
         };
         resource_cursor = align_up(
           resource_cursor + storage_descriptor_size,
@@ -518,7 +509,7 @@ private:
           .bindingCount  = 1U,
           .resourceMask  = mask,
           .source     = vk::DescriptorMappingSourceEXT::eHeapWithConstantOffset,
-          .sourceData = {cis},
+          .sourceData = {.constantOffset = cis},
         };
         resource_cursor = align_up(
           resource_cursor + image_descriptor_size * cis_count,
