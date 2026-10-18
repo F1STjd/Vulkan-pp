@@ -168,23 +168,64 @@ score_physical_device(
   return (tier << 56) + device_local_bytes;
 }
 
+export class device_extensions
+{
+  using name_set = std::flat_set<std::string, std::less<>>;
+
+public:
+  [[nodiscard]]
+  static
+  auto
+  query(const vk::raii::PhysicalDevice& physical_device) -> device_extensions
+  {
+    device_extensions output {};
+    output.names_ =
+      physical_device.enumerateDeviceExtensionProperties()
+        .transform(
+          [](std::span<const vk::ExtensionProperties> available) -> name_set {
+            return name_set {
+              std::from_range,
+              available |
+                std::views::transform(
+                  [](const vk::ExtensionProperties& properties) -> std::string {
+                    return std::string {
+                      std::string_view {properties.extensionName},
+                    };
+                  }),
+            };
+          })
+        .value_or(name_set {});
+    return output;
+  }
+
+  [[nodiscard]]
+  auto
+  contains(std::string_view name) const -> bool
+  { return names_.contains(name); }
+
+  [[nodiscard]]
+  auto
+  contains_all(std::span<const char* const> names) const -> bool
+  {
+    return std::ranges::all_of(names, [ this ](std::string_view name) -> bool {
+      return contains(name);
+    });
+  }
+
+private:
+  name_set names_ {};
+};
+
 export [[nodiscard]]
 auto
-descriptor_heap_supported(const vk::raii::PhysicalDevice& physical_device)
-  -> bool
+descriptor_heap_supported(
+  const vk::raii::PhysicalDevice& physical_device,
+  const device_extensions&        extensions) -> bool
 {
-  const bool extension_present =
-    physical_device.enumerateDeviceExtensionProperties()
-      .transform([](std::span<const vk::ExtensionProperties> available) -> bool {
-        return std::ranges::any_of(
-          available, [](const vk::ExtensionProperties& properties) -> bool {
-            return std::strcmp(
-                     properties.extensionName,
-                     vk::EXTDescriptorHeapExtensionName) == 0;
-          });
-      })
-      .value_or(false);
-  if (!extension_present) { return false; }
+  if (!extensions.contains(vk::EXTDescriptorHeapExtensionName))
+  {
+    return false;
+  }
 
   const auto features = physical_device.getFeatures2<
     vk::PhysicalDeviceFeatures2,
@@ -223,37 +264,49 @@ public:
               ? std::optional {std::cref(instance.surface())}
               : std::nullopt;
 
+          // clang-format off
+          const auto available_extensions =
+            devices
+            | std::views::transform(&device_extensions::query)
+            | std::ranges::to<std::vector>();
+          // clang-format on
+
           for (
             auto profile_index :
             std::views::indices(requirements.profiles.size()))
           {
             const auto& profile = requirements.profiles[ profile_index ];
             auto        candidates =
-              devices |
-              std::views::filter(
-                [ & ](const vk::raii::PhysicalDevice& physical) -> bool {
-                  if (requirements.require_present)
+              std::views::zip(devices, available_extensions) |
+              std::views::filter([ & ](const auto& candidate) -> bool {
+                const auto& [ physical, physical_extensions ] = candidate;
+                if (requirements.require_present)
+                {
+                  if (!surface_ref.has_value()) { return false; }
+                  if (!find_graphics_present_qf(physical, surface_ref->get())
+                        .has_value())
                   {
-                    if (!surface_ref.has_value()) { return false; }
-                    if (!find_graphics_present_qf(physical, surface_ref->get())
-                          .has_value())
-                    {
-                      return false;
-                    }
+                    return false;
                   }
-                  return profile_is_viable(
-                    physical, profile, requirements, diagnostics);
-                });
+                }
+                return profile_is_viable(
+                  physical,
+                  physical_extensions,
+                  profile,
+                  requirements,
+                  diagnostics);
+              });
             auto chosen = std::ranges::max_element(
               candidates,
               std::less {},
-              [ & ](const vk::raii::PhysicalDevice& physical) -> std::int64_t {
-                return score_physical_device(physical, requirements.rank);
+              [ & ](const auto& candidate) -> std::int64_t {
+                return score_physical_device(
+                  std::get<0>(candidate), requirements.rank);
               });
             if (chosen == candidates.end()) { continue; }
 
             device_context output {};
-            output.physical_device_ = std::move(*chosen);
+            output.physical_device_ = std::move(std::get<0>(*chosen));
 
             const auto binary_props =
               output.physical_device_
@@ -657,25 +710,6 @@ private:
   [[nodiscard]]
   static
   auto
-  device_extensions_supported(
-    const vk::raii::PhysicalDevice& physical_device,
-    std::span<const char* const>    required) -> bool
-  {
-    return physical_device.enumerateDeviceExtensionProperties()
-      .transform([ & ](std::span<const vk::ExtensionProperties> available) {
-        return std::ranges::all_of(required, [ & ](const char* name) {
-          return std::ranges::any_of(
-            available, [ & ](const vk::ExtensionProperties& extension) {
-              return std::strcmp(extension.extensionName, name) == 0;
-            });
-        });
-      })
-      .value_or(false);
-  }
-
-  [[nodiscard]]
-  static
-  auto
   get_max_usable_msaa_count(const vk::raii::PhysicalDevice& physical_device)
     -> vk::SampleCountFlagBits
   {
@@ -736,26 +770,9 @@ private:
   [[nodiscard]]
   static
   auto
-  extension_present(
-    const vk::raii::PhysicalDevice& physical, std::string_view name) -> bool
-  {
-    return physical.enumerateDeviceExtensionProperties()
-      .transform(
-        [ & ](std::span<const vk::ExtensionProperties> available) -> bool {
-          return std::ranges::any_of(
-            available,
-            [ & ](const vk::ExtensionProperties& properties) -> bool {
-              return std::string_view {properties.extensionName} == name;
-            });
-        })
-      .value_or(false);
-  }
-
-  [[nodiscard]]
-  static
-  auto
   profile_is_viable(
     const vk::raii::PhysicalDevice&   physical,
+    const device_extensions&          extensions,
     const device_profile&             profile,
     const device_requirements&        requirements,
     std::optional<diagnostic_buffer&> diagnostics) -> bool
@@ -764,7 +781,7 @@ private:
     {
       return false;
     }
-    if (!device_extensions_supported(physical, requirements.extra_extensions))
+    if (!extensions.contains_all(requirements.extra_extensions))
     {
       return false;
     }
@@ -774,9 +791,7 @@ private:
     }
     if (profile.descriptor == descriptor_binding_request::heap)
     {
-      if (
-        !extension_present(physical, vk::EXTDescriptorHeapExtensionName) ||
-        !descriptor_heap_supported(physical))
+      if (!descriptor_heap_supported(physical, extensions))
       {
         if (diagnostics.has_value())
         {
@@ -815,7 +830,7 @@ private:
 
     if (profile.pipeline == pipeline_persistence_request::pipeline_binary)
     {
-      if (!extension_present(physical, vk::KHRPipelineBinaryExtensionName))
+      if (!extensions.contains(vk::KHRPipelineBinaryExtensionName))
       {
         if (diagnostics.has_value())
         {
