@@ -243,7 +243,7 @@ upload_texture_via_graphics_queue(
 [[nodiscard]]
 inline
 auto
-upload_texture_via_tranfer_queue(
+upload_texture_via_transfer_queue(
   const texture_create_info& create_info,
   vk::Buffer                 staging_buffer,
   vk::Image                  image_handle,
@@ -432,7 +432,7 @@ make_texture(const texture_create_info& create_info)
       create_info.mip_policy != texture_mip_policy::generate_gpu_blit;
     return (
       dual_queue
-        ? upload_texture_via_tranfer_queue(
+        ? upload_texture_via_transfer_queue(
             create_info, staging_handle, image_handle, src_offset)
         : upload_texture_via_graphics_queue(
             create_info, staging_handle, image_handle, src_offset))
