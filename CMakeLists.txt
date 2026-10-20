@@ -44,7 +44,7 @@ if(VKPP_WITH_GPU)
   add_library(vkpp_gpu STATIC)
   add_library(vkpp::gpu ALIAS vkpp_gpu)
   target_sources(vkpp_gpu
-    PUBLIC FILE_SET CXX MODULES
+    PUBLIC FILE_SET CXX_MODULES
       BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/vkpp
       FILES vkpp/gpu/gpu.cppm)
   target_compile_features(vkpp_gpu PUBLIC cxx_std_26)

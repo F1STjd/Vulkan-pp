@@ -62,7 +62,7 @@ public:
       },
       compute_shader {
         .words          = words,
-        .entry          = fiat::transform::entry,
+        .entry          = fiat::transform_entry,
         .specialization = specialization,
       },
       cache,
@@ -78,7 +78,6 @@ public:
   }
 
   [[nodiscard]]
-  static
   auto
   record(
     vk::raii::CommandBuffer&     command_buffer,
@@ -108,7 +107,7 @@ public:
       std::uint64_t {max_group_count_} * group_size_, count));
     for (
       const auto first :
-      std::views::indices(count) || std::views::stride(stride))
+      std::views::indices(count) | std::views::stride(stride))
     {
       const std::uint32_t elements = std::min(count - first, stride);
       push_compute<descriptor_table_backend::classic>(
@@ -120,7 +119,7 @@ public:
           .count  = count,
           .first  = first,
         });
-      dispatch(command_buffer, (elements + group_size - 1U) / group_size_);
+      dispatch(command_buffer, (elements + group_size_ - 1U) / group_size_);
     }
     return {};
   }
@@ -158,9 +157,10 @@ transform(
   command_pool&                pool,
   const device_address_buffer& input,
   const device_address_buffer& output,
-  std::uint32_t,
+  std::uint32_t                count,
   Operation,
-  std::optional<diagnostic_buffer&> diagnostics = {}) -> expected<void, error_t>
+  std::optional<diagnostic_buffer&> diagnostics = {})
+  -> std::expected<void, error_t>
 {
   auto kernel = transform_kernel<Element, Operation>::create(
     device, {nullptr}, 256U, diagnostics);
@@ -175,7 +175,7 @@ transform(
       const vk::MemoryBarrier2 written {
         .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
         .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eAllCOmmands,
+        .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
         .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
       };
       submit.command_buffer().pipelineBarrier2(
