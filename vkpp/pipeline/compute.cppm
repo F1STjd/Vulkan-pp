@@ -20,11 +20,46 @@ export struct compute_pipeline_runtime_args
   std::uint32_t                            push_constant_size {0U};
 };
 
+export struct specialization_constant
+{
+  std::uint32_t id {};
+  std::uint32_t value {};
+};
+
+static_assert(
+  sizeof(specialization_constant) == 2UZ * sizeof(std::uint32_t),
+  "vk::SecializationMapEntry offsets assume a packed {id, value} pair");
+
 export struct compute_shader
 {
-  std::span<const char> spirv {};
-  const char*           entry {"compute_main"};
+  std::span<const std::uint32_t>           words {};
+  const char*                              entry {"compute_main"};
+  std::span<const specialization_constant> specialization {};
 };
+
+[[nodiscard]]
+auto
+specialization_entries(std::span<const specialization_constant> constants)
+  -> std::vector<vk::SpecializationMapEntry>
+{
+  // clang-format off
+  return constants
+    | std::views::enumerate
+    | std::views::transform(
+      [](const auto& indexed) -> vk::SpecializationMapEntry {
+        const auto& [ index, constant ] = indexed;
+        return vk::SpecializationMapEntry {
+          .constantID = constant.id,
+          .offset     = static_cast<std::uint32_t>(
+            static_cast<std::size_t>(index) *
+              sizeof(specialization_constant) +
+            sizeof(std::uint32_t)),
+          .size = sizeof(std::uint32_t),
+        };
+      })
+    | std::ranges::to<std::vector>();
+  // clang-format on
+}
 
 export class compute_pipeline
 {
@@ -68,7 +103,7 @@ make_compute_pipeline(
   std::optional<diagnostic_buffer&>    diagnostics = {})
   -> std::expected<compute_pipeline, error_t>
 {
-  if (runtime_args.set_layouts.empty() || shader.spirv.empty())
+  if (shader.words.empty())
   {
     return std::unexpected {
       make_app_error(app_error_code::missing_required_argument),
@@ -77,16 +112,23 @@ make_compute_pipeline(
 
   if (
     auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
-      shader.spirv, shader.entry, vk::ShaderStageFlagBits::eCompute, diagnostics);
+      shader.words, shader.entry, vk::ShaderStageFlagBits::eCompute, diagnostics);
     !checked)
   {
     return std::unexpected {checked.error()};
   }
 
+  const auto specialization_map = specialization_entries(shader.specialization);
+  const vk::SpecializationInfo specialization_info {
+    .mapEntryCount = static_cast<std::uint32_t>(specialization_map.size()),
+    .pMapEntries   = specialization_map.data(),
+    .dataSize      = shader.specialization.size_bytes(),
+    .pData         = shader.specialization.data(),
+  };
+
   const vk::ShaderModuleCreateInfo module_info {
-    .codeSize = shader.spirv.size_bytes(),
-    .pCode    = std::start_lifetime_as_array<std::uint32_t>(
-      shader.spirv.data(), shader.spirv.size_bytes() / sizeof(std::uint32_t)),
+    .codeSize = shader.words.size_bytes(),
+    .pCode    = shader.words.data(),
   };
 
   return map_vk_error(device.createShaderModule(module_info), diagnostics)
@@ -114,11 +156,13 @@ make_compute_pipeline(
               -> std::expected<compute_pipeline, error_t> {
               const vk::ComputePipelineCreateInfo compute_pipeline_info {
                 .stage =
-                  {
-                    .stage  = vk::ShaderStageFlagBits::eCompute,
+                  {.stage   = vk::ShaderStageFlagBits::eCompute,
                     .module = *module,
                     .pName  = shader.entry,
-                  },
+                    .pSpecializationInfo =
+                      shader.specialization.empty()
+                        ? nullptr
+                        : &specialization_info},
                 .layout = *layout,
               };
 
@@ -155,7 +199,7 @@ make_compute_pipeline(
   std::optional<diagnostic_buffer&>                     diagnostics = {})
   -> std::expected<compute_pipeline, error_t>
 {
-  if (shader.spirv.empty())
+  if (shader.words.empty())
   {
     return std::unexpected {
       make_app_error(app_error_code::missing_required_argument),
@@ -164,16 +208,15 @@ make_compute_pipeline(
 
   if (
     auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
-      shader.spirv, shader.entry, vk::ShaderStageFlagBits::eCompute, diagnostics);
+      shader.words, shader.entry, vk::ShaderStageFlagBits::eCompute, diagnostics);
     !checked)
   {
     return std::unexpected {checked.error()};
   }
 
   const vk::ShaderModuleCreateInfo module_info {
-    .codeSize = shader.spirv.size_bytes(),
-    .pCode    = std::start_lifetime_as_array<std::uint32_t>(
-      shader.spirv.data(), shader.spirv.size_bytes() / sizeof(std::uint32_t)),
+    .codeSize = shader.words.size_bytes(),
+    .pCode    = shader.words.data(),
   };
 
   return map_vk_error(device.createShaderModule(module_info), diagnostics)

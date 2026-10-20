@@ -15,10 +15,10 @@ using namespace std::string_view_literals;
 
 export struct shader_stage_object_create_info
 {
-  vk::ShaderStageFlagBits    stage {vk::ShaderStageFlagBits::eVertex};
-  vk::ShaderStageFlags       next_stage {};
-  std::span<const std::byte> spirv {};
-  const char*                entry {"main"};
+  vk::ShaderStageFlagBits        stage {vk::ShaderStageFlagBits::eVertex};
+  vk::ShaderStageFlags           next_stage {};
+  std::span<const std::uint32_t> words {};
+  const char*                    entry {"main"};
   std::span<const vk::DescriptorSetLayout> set_layouts {};
   std::span<const vk::PushConstantRange>   push_constant_ranges {};
 };
@@ -43,7 +43,7 @@ public:
     std::optional<diagnostic_buffer&>      diagnostics = {})
     -> std::expected<shader_stage_object, error_t>
   {
-    if (create_info.spirv.empty())
+    if (create_info.words.empty())
     {
       return std::unexpected {
         make_app_error(app_error_code::missing_required_argument),
@@ -53,8 +53,8 @@ public:
       .stage     = create_info.stage,
       .nextStage = create_info.next_stage,
       .codeType  = vk::ShaderCodeTypeEXT::eSpirv,
-      .codeSize  = create_info.spirv.size_bytes(),
-      .pCode     = create_info.spirv.data(),
+      .codeSize  = create_info.words.size_bytes(),
+      .pCode     = create_info.words.data(),
       .pName     = create_info.entry,
       .setLayoutCount =
         static_cast<std::uint32_t>(create_info.set_layouts.size()),
@@ -81,7 +81,7 @@ public:
     std::optional<diagnostic_buffer&>      diagnostics = {})
     -> std::expected<shader_stage_object, error_t>
   {
-    if (create_info.spirv.empty())
+    if (create_info.words.empty())
     {
       return std::unexpected {
         make_app_error(app_error_code::missing_required_argument),
@@ -94,8 +94,8 @@ public:
       .stage                  = create_info.stage,
       .nextStage              = create_info.next_stage,
       .codeType               = vk::ShaderCodeTypeEXT::eSpirv,
-      .codeSize               = create_info.spirv.size_bytes(),
-      .pCode                  = create_info.spirv.data(),
+      .codeSize               = create_info.words.size_bytes(),
+      .pCode                  = create_info.words.data(),
       .pName                  = create_info.entry,
       .setLayoutCount         = 0U,
       .pSetLayouts            = nullptr,

@@ -49,7 +49,7 @@ export struct graphics_pipeline_library_runtime_args
   std::span<const vk::VertexInputBindingDescription>   vertex_bindings {};
   std::span<const vk::VertexInputAttributeDescription> vertex_attributes {};
   // pre_rasterization + fragment (shader)
-  std::span<const char>                                spirv {};
+  std::span<const std::uint32_t>                       words {};
   const char*                              vertex_entry {"vertex_main"};
   const char*                              fragment_entry {"fragment_main"};
   std::span<const vk::DescriptorSetLayout> set_layouts {};
@@ -336,7 +336,7 @@ auto make_graphics_pipeline_library(
         make_app_error(app_error_code::missing_required_argument),
       };
     }
-    if (runtime_args.spirv.empty())
+    if (runtime_args.words.empty())
     {
       return std::unexpected {
         make_app_error(app_error_code::missing_required_argument),
@@ -344,7 +344,7 @@ auto make_graphics_pipeline_library(
     }
     if (
       auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
-        runtime_args.spirv,
+        runtime_args.words,
         runtime_args.vertex_entry,
         vk::ShaderStageFlagBits::eVertex,
         diagnostics);
@@ -354,10 +354,8 @@ auto make_graphics_pipeline_library(
     }
 
     const vk::ShaderModuleCreateInfo module_info {
-      .codeSize = runtime_args.spirv.size_bytes(),
-      .pCode    = std::start_lifetime_as_array<std::uint32_t>(
-        runtime_args.spirv.data(),
-        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t)),
+      .codeSize = runtime_args.words.size_bytes(),
+      .pCode    = runtime_args.words.data(),
     };
     return map_vk_error(device.createShaderModule(module_info), diagnostics)
       .and_then(
@@ -417,7 +415,7 @@ auto make_graphics_pipeline_library(
         make_app_error(app_error_code::missing_required_argument),
       };
     }
-    if (runtime_args.spirv.empty())
+    if (runtime_args.words.empty())
     {
       return std::unexpected {
         make_app_error(app_error_code::missing_required_argument),
@@ -425,7 +423,7 @@ auto make_graphics_pipeline_library(
     }
     if (
       auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
-        runtime_args.spirv,
+        runtime_args.words,
         runtime_args.fragment_entry,
         vk::ShaderStageFlagBits::eFragment,
         diagnostics);
@@ -435,10 +433,8 @@ auto make_graphics_pipeline_library(
     }
 
     const vk::ShaderModuleCreateInfo module_info {
-      .codeSize = runtime_args.spirv.size_bytes(),
-      .pCode    = std::start_lifetime_as_array<std::uint32_t>(
-        runtime_args.spirv.data(),
-        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t)),
+      .codeSize = runtime_args.words.size_bytes(),
+      .pCode    = runtime_args.words.data(),
     };
     return map_vk_error(device.createShaderModule(module_info), diagnostics)
       .and_then(
@@ -585,7 +581,7 @@ auto make_graphics_pipeline_library(
   }
   else if constexpr (Kind == pre_rasterization)
   {
-    if (runtime_args.spirv.empty())
+    if (runtime_args.words.empty())
     {
       return std::unexpected {
         make_app_error(app_error_code::missing_required_argument),
@@ -593,7 +589,7 @@ auto make_graphics_pipeline_library(
     }
     if (
       auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
-        runtime_args.spirv,
+        runtime_args.words,
         runtime_args.vertex_entry,
         vk::ShaderStageFlagBits::eVertex,
         diagnostics);
@@ -603,10 +599,8 @@ auto make_graphics_pipeline_library(
     }
 
     const vk::ShaderModuleCreateInfo module_info {
-      .codeSize = runtime_args.spirv.size_bytes(),
-      .pCode    = std::start_lifetime_as_array<std::uint32_t>(
-        runtime_args.spirv.data(),
-        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t)),
+      .codeSize = runtime_args.words.size_bytes(),
+      .pCode    = runtime_args.words.data(),
     };
     return map_vk_error(device.createShaderModule(module_info), diagnostics)
       .and_then(
@@ -662,7 +656,7 @@ auto make_graphics_pipeline_library(
   }
   else if constexpr (Kind == fragment)
   {
-    if (runtime_args.spirv.empty())
+    if (runtime_args.words.empty())
     {
       return std::unexpected {
         make_app_error(app_error_code::missing_required_argument),
@@ -670,7 +664,7 @@ auto make_graphics_pipeline_library(
     }
     if (
       auto checked = check_spirv_bindings<Layout, DiagnosticsPolicy>(
-        runtime_args.spirv,
+        runtime_args.words,
         runtime_args.fragment_entry,
         vk::ShaderStageFlagBits::eFragment,
         diagnostics);
@@ -680,10 +674,8 @@ auto make_graphics_pipeline_library(
     }
 
     const vk::ShaderModuleCreateInfo module_info {
-      .codeSize = runtime_args.spirv.size_bytes(),
-      .pCode    = std::start_lifetime_as_array<std::uint32_t>(
-        runtime_args.spirv.data(),
-        runtime_args.spirv.size_bytes() / sizeof(std::uint32_t)),
+      .codeSize = runtime_args.words.size_bytes(),
+      .pCode    = runtime_args.words.data(),
     };
     return map_vk_error(device.createShaderModule(module_info), diagnostics)
       .and_then(

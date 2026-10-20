@@ -454,7 +454,7 @@ template<class Layout, diagnostics_policy DiagnosticsPolicy>
 [[nodiscard]]
 auto
 check_spirv_bindings(
-  std::span<const char>             spirv,
+  std::span<const std::uint32_t>    words,
   std::string_view                  entry,
   vk::ShaderStageFlagBits           stage,
   std::optional<diagnostic_buffer&> diagnostics) -> std::expected<void, error_t>
@@ -467,15 +467,6 @@ check_spirv_bindings(
   else
   {
     const auto error = make_app_error(app_error_code::shader_binding_mismatch);
-    if (spirv.size_bytes() % sizeof(std::uint32_t) != 0UZ)
-    {
-      return std::unexpected {error};
-    }
-    const std::size_t word_count = spirv.size_bytes() / sizeof(std::uint32_t);
-    const std::span<const std::uint32_t> words {
-      std::start_lifetime_as_array<std::uint32_t>(spirv.data(), word_count),
-      word_count,
-    };
     return validate_spirv_bindings<Layout>(words, entry, stage)
       .or_else(
         [ & ](const spirv_binding_issue& issue) -> std::expected<void, error_t> {

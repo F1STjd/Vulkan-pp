@@ -101,9 +101,9 @@ private:
 
 export struct graphics_pipeline_shaders
 {
-  std::span<const char> spirv {};
-  const char*           vertex_entry {"vertex_main"};
-  const char*           fragment_entry {"fragment_main"};
+  std::span<const std::uint32_t> words {};
+  const char*                    vertex_entry {"vertex_main"};
+  const char*                    fragment_entry {"fragment_main"};
 };
 
 template<graphics_pipeline_spec Spec, diagnostics_policy DiagnosticsPolicy>
@@ -125,9 +125,8 @@ make_graphics_pipeline_classic_impl(
   }
 
   const vk::ShaderModuleCreateInfo module_info {
-    .codeSize = shaders.spirv.size_bytes(),
-    .pCode    = std::start_lifetime_as_array<std::uint32_t>(
-      shaders.spirv.data(), shaders.spirv.size_bytes() / sizeof(std::uint32_t)),
+    .codeSize = shaders.words.size_bytes(),
+    .pCode    = shaders.words.data(),
   };
 
   if constexpr (DiagnosticsPolicy::enabled)
@@ -491,9 +490,8 @@ make_graphics_pipeline_heap_impl(
   }
 
   const vk::ShaderModuleCreateInfo module_info {
-    .codeSize = shaders.spirv.size_bytes(),
-    .pCode    = std::start_lifetime_as_array<std::uint32_t>(
-      shaders.spirv.data(), shaders.spirv.size_bytes() / sizeof(std::uint32_t)),
+    .codeSize = shaders.words.size_bytes(),
+    .pCode    = shaders.words.data(),
   };
 
   if constexpr (DiagnosticsPolicy::enabled)
