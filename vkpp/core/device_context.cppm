@@ -29,6 +29,7 @@ export struct feature_tag
   struct shader_object {};
   struct descriptor_heap {};
   struct pipeline_binary {};
+  struct maintenance4 {};
 };
 
 export template<typename Tag>
@@ -119,6 +120,12 @@ struct feature_traits<feature_tag::pipeline_binary>
   static constexpr std::array extensions {
     vk::KHRPipelineBinaryExtensionName,
   };
+};
+
+template<>
+struct feature_traits<feature_tag::maintenance4>
+{
+  static constexpr auto member = &device_feature_requests::maintenance4;
 };
 
 export [[nodiscard]]
@@ -538,6 +545,7 @@ private:
     auto& v13            = chain.get<vk::PhysicalDeviceVulkan13Features>();
     v13.dynamicRendering = vk::Bool32 {enabled.dynamic_rendering};
     v13.synchronization2 = vk::Bool32 {enabled.synchronization2};
+    v13.maintenance4     = vk::Bool32 {enabled.maintenance4};
 
     auto& eds = chain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
     eds.extendedDynamicState = vk::Bool32 {enabled.extended_dynamic_state};
@@ -600,6 +608,12 @@ private:
     if (
       features.synchronization2 == capability_requirement::required &&
       v13.synchronization2 != vk::True)
+    {
+      return false;
+    }
+    if (
+      features.maintenance4 == capability_requirement::required &&
+      v13.maintenance4 != vk::True)
     {
       return false;
     }
@@ -932,6 +946,10 @@ private:
       profile.features.synchronization2,
       v13.synchronization2 == vk::True,
       "synchronization2");
+    enabled.maintenance4 = apply(
+      profile.features.maintenance4,
+      v13.maintenance4 == vk::True,
+      "maintenance4");
     enabled.extended_dynamic_state = apply(
       profile.features.extended_dynamic_state,
       eds.extendedDynamicState == vk::True,

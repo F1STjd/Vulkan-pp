@@ -53,6 +53,7 @@ export struct device_feature_requests
   capability_requirement buffer_device_address {disabled};
   capability_requirement graphics_pipeline_library {disabled};
   capability_requirement shader_object {disabled};
+  capability_requirement maintenance4 {disabled};
 };
 
 export struct device_profile
@@ -95,6 +96,7 @@ export struct enabled_device_features
   bool shader_object {false};
   bool descriptor_heap {false};
   bool pipeline_binary {false};
+  bool maintenance4 {false};
 };
 
 export struct selected_device_capabilities
