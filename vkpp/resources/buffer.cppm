@@ -117,7 +117,8 @@ struct buffer_traits<buffer_kind::device_address>
     .usage =
       vk::BufferUsageFlagBits::eShaderDeviceAddress |
       vk::BufferUsageFlagBits::eStorageBuffer |
-      vk::BufferUsageFlagBits::eTransferDst,
+      vk::BufferUsageFlagBits::eTransferDst |
+      vk::BufferUsageFlagBits::eTransferSrc,
     .intent = memory_intent::gpu_only,
   };
 };
