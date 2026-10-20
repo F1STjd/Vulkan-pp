@@ -7,7 +7,9 @@ project(vkpp LANGUAGES CXX)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(ProjectWarnings)
 # include(ProjectReflection) # reflection is not used for now
-include(ProjectDiagnostics)
+if(PROJECT_IS_TOP_LEVEL)
+  include(ProjectDiagnostics)
+endif()
 
 find_package(Vulkan REQUIRED)
 find_package(fastgltf CONFIG REQUIRED)
