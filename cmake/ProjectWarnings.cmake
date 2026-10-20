@@ -1,5 +1,9 @@
 include_guard(GLOBAL)
 
+if(TARGET project_warnings)
+  return()
+endif()
+
 include(CheckCXXCompilerFlag)
 
 option(ENABLE_WEFFCPP "Enable -Weffc++ (known false positives)" OFF)
