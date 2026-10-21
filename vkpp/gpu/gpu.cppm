@@ -62,7 +62,7 @@ public:
       },
       compute_shader {
         .words          = words,
-        .entry          = fiat::transform_entry,
+        .entry          = fiat::transform_entry.data(),
         .specialization = specialization,
       },
       cache,
