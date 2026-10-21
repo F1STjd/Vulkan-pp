@@ -41,6 +41,7 @@ target_sources(vkpp
       resources/buffer_arena_upload.cppm # module vkpp.buffer.arena.upload
       resources/stage_pool.cppm # module vkpp.buffer.stage_pool
 
+      core/cstring_view.cppm       # module vkpp.cstring_view
       core/instance_context.cppm   # module vkpp.instance
       core/capabilities.cppm       # module vkpp.capabilities
       core/device_context.cppm     # module vkpp.device
