@@ -53,7 +53,7 @@ public:
               std::ranges::find_if(info.layers, [ & ](const char* required) {
                 return std::ranges::none_of(
                   available, [ & ](const vk::LayerProperties& property) {
-                    return std::strcmp(property.layerName, required) == 0;
+                    return std::string_view {property.layerName} == required;
                   });
               });
             if (missing_it != info.layers.end())
@@ -77,7 +77,7 @@ public:
               std::ranges::find_if(extensions, [ & ](const char* required) {
                 return std::ranges::none_of(
                   available, [ & ](const vk::ExtensionProperties& property) {
-                    return std::strcmp(property.extensionName, required) == 0;
+                    return std::string_view {property.extensionName} == required;
                   });
               });
             if (missing != extensions.end())
