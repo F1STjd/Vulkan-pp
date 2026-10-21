@@ -11,6 +11,7 @@ import vkpp.pipeline.binary;
 import vkpp.capabilities;
 import vkpp.descriptor.indexing;
 import vkpp.descriptor.spirv_binding_check;
+export import vkpp.cstring_view;
 
 namespace vkpp
 {
@@ -50,8 +51,8 @@ export struct graphics_pipeline_library_runtime_args
   std::span<const vk::VertexInputAttributeDescription> vertex_attributes {};
   // pre_rasterization + fragment (shader)
   std::span<const std::uint32_t>                       words {};
-  const char*                              vertex_entry {"vertex_main"};
-  const char*                              fragment_entry {"fragment_main"};
+  cstring_view                             vertex_entry {"vertex_main"};
+  cstring_view                             fragment_entry {"fragment_main"};
   std::span<const vk::DescriptorSetLayout> set_layouts {};
   std::uint32_t                            push_constant_size {0U};
   vk::ShaderStageFlags                     push_constant_stages {
@@ -364,7 +365,7 @@ auto make_graphics_pipeline_library(
           const vk::PipelineShaderStageCreateInfo stage {
             .stage  = vk::ShaderStageFlagBits::eVertex,
             .module = *module,
-            .pName  = runtime_args.vertex_entry,
+            .pName  = runtime_args.vertex_entry.c_str(),
           };
           const vk::PipelineViewportStateCreateInfo viewport_state {
             .viewportCount = 1U,
@@ -443,7 +444,7 @@ auto make_graphics_pipeline_library(
           const vk::PipelineShaderStageCreateInfo stage {
             .stage  = vk::ShaderStageFlagBits::eFragment,
             .module = *module,
-            .pName  = runtime_args.fragment_entry,
+            .pName  = runtime_args.fragment_entry.c_str(),
           };
           const vk::PipelineMultisampleStateCreateInfo multisample {
             .rasterizationSamples = runtime_args.samples,
@@ -611,7 +612,7 @@ auto make_graphics_pipeline_library(
             .pNext  = &mapping,
             .stage  = vk::ShaderStageFlagBits::eVertex,
             .module = *module,
-            .pName  = runtime_args.vertex_entry,
+            .pName  = runtime_args.vertex_entry.c_str(),
           };
           const vk::PipelineViewportStateCreateInfo viewport_state {
             .viewportCount = 1U,
@@ -686,7 +687,7 @@ auto make_graphics_pipeline_library(
             .pNext  = &mapping,
             .stage  = vk::ShaderStageFlagBits::eFragment,
             .module = *module,
-            .pName  = runtime_args.fragment_entry,
+            .pName  = runtime_args.fragment_entry.c_str(),
           };
           const vk::PipelineMultisampleStateCreateInfo multisample {
             .rasterizationSamples = runtime_args.samples,

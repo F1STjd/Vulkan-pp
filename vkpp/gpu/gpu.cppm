@@ -12,6 +12,7 @@ import vkpp.buffer;
 import vkpp.command;
 import vkpp.command.record;
 import vkpp.pipeline.compute;
+export import vkpp.cstring_view;
 
 namespace vkpp::gpu
 {
@@ -62,7 +63,7 @@ public:
       },
       compute_shader {
         .words          = words,
-        .entry          = fiat::transform_entry.data(),
+        .entry          = cstring_view {fiat::transform_entry},
         .specialization = specialization,
       },
       cache,

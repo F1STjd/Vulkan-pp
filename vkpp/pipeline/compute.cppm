@@ -8,6 +8,7 @@ import vkpp.diagnostics;
 import vkpp.capabilities;
 import vkpp.descriptor.indexing;
 import vkpp.descriptor.spirv_binding_check;
+export import vkpp.cstring_view;
 
 namespace vkpp
 {
@@ -28,12 +29,12 @@ export struct specialization_constant
 
 static_assert(
   sizeof(specialization_constant) == 2UZ * sizeof(std::uint32_t),
-  "vk::SecializationMapEntry offsets assume a packed {id, value} pair");
+  "vk::SpecializationMapEntry offsets assume a packed {id, value} pair");
 
 export struct compute_shader
 {
   std::span<const std::uint32_t>           words {};
-  const char*                              entry {"compute_main"};
+  cstring_view                             entry {"compute_main"};
   std::span<const specialization_constant> specialization {};
 };
 
@@ -158,7 +159,7 @@ make_compute_pipeline(
                 .stage =
                   {.stage   = vk::ShaderStageFlagBits::eCompute,
                     .module = *module,
-                    .pName  = shader.entry,
+                    .pName  = shader.entry.c_str(),
                     .pSpecializationInfo =
                       shader.specialization.empty()
                         ? nullptr
@@ -231,7 +232,7 @@ make_compute_pipeline(
               .pNext  = &mapping,
               .stage  = vk::ShaderStageFlagBits::eCompute,
               .module = *module,
-              .pName  = shader.entry,
+              .pName  = shader.entry.c_str(),
             },
           .layout = {},
         };

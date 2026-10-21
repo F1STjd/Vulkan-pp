@@ -7,6 +7,7 @@ import vkpp.error;
 import vkpp.diagnostics;
 import vkpp.capabilities;
 import vkpp.descriptor.indexing;
+export import vkpp.cstring_view;
 
 namespace vkpp
 {
@@ -102,8 +103,8 @@ private:
 export struct graphics_pipeline_shaders
 {
   std::span<const std::uint32_t> words {};
-  const char*                    vertex_entry {"vertex_main"};
-  const char*                    fragment_entry {"fragment_main"};
+  cstring_view                   vertex_entry {"vertex_main"};
+  cstring_view                   fragment_entry {"fragment_main"};
 };
 
 template<graphics_pipeline_spec Spec, diagnostics_policy DiagnosticsPolicy>
@@ -161,12 +162,12 @@ make_graphics_pipeline_classic_impl(
                   vk::PipelineShaderStageCreateInfo {
                     .stage  = vk::ShaderStageFlagBits::eVertex,
                     .module = *module,
-                    .pName  = shaders.vertex_entry,
+                    .pName  = shaders.vertex_entry.c_str(),
                   },
                   vk::PipelineShaderStageCreateInfo {
                     .stage  = vk::ShaderStageFlagBits::eFragment,
                     .module = *module,
-                    .pName  = shaders.fragment_entry,
+                    .pName  = shaders.fragment_entry.c_str(),
                   },
                 };
 
@@ -308,12 +309,12 @@ make_graphics_pipeline_classic_impl(
                   vk::PipelineShaderStageCreateInfo {
                     .stage  = vk::ShaderStageFlagBits::eVertex,
                     .module = *module,
-                    .pName  = shaders.vertex_entry,
+                    .pName  = shaders.vertex_entry.c_str(),
                   },
                   vk::PipelineShaderStageCreateInfo {
                     .stage  = vk::ShaderStageFlagBits::eFragment,
                     .module = *module,
-                    .pName  = shaders.fragment_entry,
+                    .pName  = shaders.fragment_entry.c_str(),
                   },
                 };
 
@@ -582,13 +583,13 @@ make_graphics_pipeline_heap_impl(
               .pNext  = &mapping,
               .stage  = vk::ShaderStageFlagBits::eVertex,
               .module = *module,
-              .pName  = shaders.vertex_entry,
+              .pName  = shaders.vertex_entry.c_str(),
             },
             vk::PipelineShaderStageCreateInfo {
               .pNext  = &mapping,
               .stage  = vk::ShaderStageFlagBits::eFragment,
               .module = *module,
-              .pName  = shaders.fragment_entry,
+              .pName  = shaders.fragment_entry.c_str(),
             },
           };
 
@@ -713,13 +714,13 @@ make_graphics_pipeline_heap_impl(
               .pNext  = &mapping,
               .stage  = vk::ShaderStageFlagBits::eVertex,
               .module = *module,
-              .pName  = shaders.vertex_entry,
+              .pName  = shaders.vertex_entry.c_str(),
             },
             vk::PipelineShaderStageCreateInfo {
               .pNext  = &mapping,
               .stage  = vk::ShaderStageFlagBits::eFragment,
               .module = *module,
-              .pName  = shaders.fragment_entry,
+              .pName  = shaders.fragment_entry.c_str(),
             },
           };
 

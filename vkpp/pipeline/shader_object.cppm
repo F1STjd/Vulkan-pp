@@ -7,6 +7,7 @@ import vkpp.error;
 import vkpp.diagnostics;
 import vkpp.capabilities;
 import vkpp.descriptor.indexing;
+export import vkpp.cstring_view;
 
 namespace vkpp
 {
@@ -18,7 +19,7 @@ export struct shader_stage_object_create_info
   vk::ShaderStageFlagBits        stage {vk::ShaderStageFlagBits::eVertex};
   vk::ShaderStageFlags           next_stage {};
   std::span<const std::uint32_t> words {};
-  const char*                    entry {"main"};
+  cstring_view                   entry {"main"};
   std::span<const vk::DescriptorSetLayout> set_layouts {};
   std::span<const vk::PushConstantRange>   push_constant_ranges {};
 };
@@ -55,7 +56,7 @@ public:
       .codeType  = vk::ShaderCodeTypeEXT::eSpirv,
       .codeSize  = create_info.words.size_bytes(),
       .pCode     = create_info.words.data(),
-      .pName     = create_info.entry,
+      .pName     = create_info.entry.c_str(),
       .setLayoutCount =
         static_cast<std::uint32_t>(create_info.set_layouts.size()),
       .pSetLayouts = create_info.set_layouts.data(),
@@ -96,7 +97,7 @@ public:
       .codeType               = vk::ShaderCodeTypeEXT::eSpirv,
       .codeSize               = create_info.words.size_bytes(),
       .pCode                  = create_info.words.data(),
-      .pName                  = create_info.entry,
+      .pName                  = create_info.entry.c_str(),
       .setLayoutCount         = 0U,
       .pSetLayouts            = nullptr,
       .pushConstantRangeCount = 0U,
