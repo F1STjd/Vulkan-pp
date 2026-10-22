@@ -454,10 +454,11 @@ template<class Layout, diagnostics_policy DiagnosticsPolicy>
 [[nodiscard]]
 auto
 check_spirv_bindings(
-  std::span<const std::uint32_t>    words,
-  std::string_view                  entry,
-  vk::ShaderStageFlagBits           stage,
-  std::optional<diagnostic_buffer&> diagnostics) -> std::expected<void, error_t>
+  std::span<const std::uint32_t>                     words,
+  std::string_view                                   entry,
+  vk::ShaderStageFlagBits                            stage,
+  [[maybe_unused]] std::optional<diagnostic_buffer&> diagnostics)
+  -> std::expected<void, error_t>
 {
   if constexpr (
     std::is_void_v<Layout> || !DiagnosticsPolicy::check_spirv_bindings)

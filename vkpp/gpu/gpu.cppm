@@ -186,7 +186,7 @@ public:
     -> std::expected<device_array<Element>, error_t>
   {
     if (
-      elements.epty() ||
+      elements.empty() ||
       elements.size() > std::numeric_limits<std::uint32_t>::max())
     {
       return std::unexpected {
@@ -217,12 +217,12 @@ public:
       return std::unexpected {
         make_app_error(app_error_code::invalid_data_size),
       };
-      return device_address_buffer::create<Element>(device_.allocator(), count)
-        .transform(
-          [ count ](device_address_buffer&& buffer) -> device_array<Element> {
-            return device_array<Element> {std::move(buffer), count};
-          });
     }
+    return device_address_buffer::create<Element>(device_.allocator(), count)
+      .transform(
+        [ count ](device_address_buffer&& buffer) -> device_array<Element> {
+          return device_array<Element> {std::move(buffer), count};
+        });
   }
 
   template<fiat::scalar Element>
@@ -235,7 +235,7 @@ public:
       {
         .device = device_,
         .pool   = pool_,
-        .source = array.buffer().buffer,
+        .source = array.buffer().buffer(),
         .size   = array.buffer().size(),
       })
       .and_then(
@@ -429,7 +429,6 @@ template<fiat::scalar Element, class Operation, class Next>
 auto
 operator |(
   const pipeline<Element, Operation>& current, fiat::transform_stage<Next>)
-  -> pipeline<Element, Operation>
 {
   return extend_pipeline(
     current,
