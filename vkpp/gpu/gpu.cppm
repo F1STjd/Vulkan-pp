@@ -391,6 +391,175 @@ private:
 
 export template<fiat::scalar Element, class Operation>
   requires fiat::traceable<Operation, Element>
+class pipeline
+{
+public:
+  explicit pipeline(const device_array<Element>& source) : source_ {source} {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<Element>&
+  { return source_; }
+
+private:
+  const device_array<Element>& source_;
+};
+
+export
+template<fiat::scalar Element, class Operation>
+  requires fiat::traceable<Operation, Element>
+[[nodiscard]]
+auto
+operator |(
+  const device_array<Element>& source, fiat::transform_stage<Operation>)
+  -> pipeline<Element, Operation>
+{ return pipeline<Element, Operation> {source}; }
+
+template<fiat::scalar Element, class Operation, class Fused>
+[[nodiscard]]
+auto
+extend_pipeline(
+  const pipeline<Element, Operation>& current, fiat::transform_stage<Fused>)
+  -> pipeline<Element, Fused>
+{ return pipeline<Element, Fused> {current.source()}; }
+
+export
+template<fiat::scalar Element, class Operation, class Next>
+[[nodiscard]]
+auto
+operator |(
+  const pipeline<Element, Operation>& current, fiat::transform_stage<Next>)
+  -> pipeline<Element, Operation>
+{
+  return extend_pipeline(
+    current,
+    fiat::fuse(
+      fiat::transform_stage<Operation> {}, fiat::transform_stage<Next> {}));
+}
+
+export
+template<fiat::scalar Element, class Operation>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&            command_buffer,
+  context&                            context,
+  const pipeline<Element, Operation>& computation,
+  device_array<Element>&              output) -> std::expected<void, error_t>
+{
+  const auto count = computation.source().size();
+  if (output.size() != count)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+
+  auto kernel = context.kernel<Element, Operation>();
+  if (!kernel) { return std::unexpected {kernel.error()}; }
+
+  auto input_view  = computation.source().addressed_view(context.device());
+  auto output_view = output.addressed_view(context.device());
+  if (!input_view) { return std::unexpected {input_view.error()}; }
+  if (!output_view) { return std::unexpected {output_view.error()}; }
+
+  const compute_pipeline& compute = kernel->get();
+  command_buffer.bindPipeline(
+    vk::PipelineBindPoint::eCompute, *compute.pipeline());
+
+  const std::uint32_t group_size = context.group_size();
+  const auto          stride     = static_cast<std::uint32_t>(std::min(
+    std::uint64_t {context.max_group_count()} * group_size,
+    std::uint64_t {count}));
+
+  for (
+    const auto first : std::views::indices(count) | std::views::stride(stride))
+  {
+    const auto elements = std::min(count - first, stride);
+    push_compute<descriptor_table_backend::classic>(
+      command_buffer,
+      compute,
+      fiat::transform_push {
+        .input  = input_view->device_address(),
+        .output = output_view->device_address(),
+        .count  = count,
+        .first  = first,
+      });
+    dispatch(command_buffer, (elements + group_size - 1U) / group_size);
+  }
+  return {};
+}
+
+export
+template<fiat::scalar Element, class Operation>
+[[nodiscard]]
+auto
+run(
+  context&                            context,
+  const pipeline<Element, Operation>& computation,
+  device_array<Element>&              output) -> std::expected<void, error_t>
+{
+  single_time_submit submit {
+    context.pool(),
+    context.device().device(),
+    context.device().graphics_queue(),
+  };
+  return submit.begin()
+    .and_then([ & ] -> std::expected<void, error_t> {
+      return record(submit.command_buffer(), context, computation, output);
+    })
+    .and_then([ & ] -> std::expected<void, error_t> {
+      const vk::MemoryBarrier2 written {
+        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+        .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
+      };
+      submit.command_buffer().pipelineBarrier2({
+        .memoryBarrierCount = 1U,
+        .pMemoryBarriers    = &written,
+      });
+      return submit.end_and_submit(upload::wait_idle);
+    });
+}
+
+export
+template<fiat::scalar Element, class Operation>
+[[nodiscard]]
+auto
+run(context& context, const pipeline<Element, Operation>& computation)
+  -> std::expected<device_array<Element>, error_t>
+{
+  return context.allocate<Element>(computation.source().size())
+    .and_then(
+      [ & ](device_array<Element>&& output)
+        -> std::expected<device_array<Element>, error_t> {
+        return run(context, computation, output)
+          .transform([ & ] -> device_array<Element> {
+            return std::move(output);
+          });
+      });
+}
+
+export struct execute_stage
+{
+  gpu::context& context;
+};
+
+export [[nodiscard]]
+inline
+auto
+execute(context& context) -> execute_stage
+{ return execute_stage {context}; }
+
+export
+template<fiat::scalar Element, class Operation>
+[[nodiscard]]
+auto
+operator |(const pipeline<Element, Operation>& computation, execute_stage stage)
+  -> std::expected<device_array<Element>, error_t>
+{ return run(stage.context, computation); }
+
+export template<fiat::scalar Element, class Operation>
+  requires fiat::traceable<Operation, Element>
 class transform_kernel
 {
 public:
