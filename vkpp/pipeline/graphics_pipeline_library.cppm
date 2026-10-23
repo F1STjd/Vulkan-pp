@@ -87,7 +87,7 @@ template<descriptor_table_backend Backend>
 auto
 create_graphics_pipeline_library_application_miss(
   const vk::raii::Device&           device,
-  vk::GraphicsPipelineCreateInfo&   graphics_create_info,
+  vk::GraphicsPipelineCreateInfo    graphics_create_info,
   const vk::PipelineBinaryKeyKHR&   pipeline_key,
   pipeline_persistence&             persistence,
   std::optional<diagnostic_buffer&> diagnostics)
@@ -151,8 +151,8 @@ template<descriptor_table_backend Backend>
 [[nodiscard]]
 auto
 create_graphics_pipeline_library_internal(
-  const vk::raii::Device&         device,
-  vk::GraphicsPipelineCreateInfo& graphics_create_info,
+  const vk::raii::Device&        device,
+  vk::GraphicsPipelineCreateInfo graphics_create_info,
   [[maybe_unused]] std::optional<const descriptor_heap_arena&> arena       = {},
   std::optional<diagnostic_buffer&>                            diagnostics = {})
   -> std::expected<graphics_pipeline_library, error_t>
@@ -195,9 +195,9 @@ template<descriptor_table_backend Backend>
 [[nodiscard]]
 auto
 create_graphics_pipeline_library_with_persistence(
-  const vk::raii::Device&         device,
-  vk::GraphicsPipelineCreateInfo& graphics_create_info,
-  pipeline_persistence&           persistence,
+  const vk::raii::Device&        device,
+  vk::GraphicsPipelineCreateInfo graphics_create_info,
+  pipeline_persistence&          persistence,
   [[maybe_unused]] std::optional<const descriptor_heap_arena&> arena       = {},
   std::optional<diagnostic_buffer&>                            diagnostics = {})
   -> std::expected<graphics_pipeline_library, error_t>
