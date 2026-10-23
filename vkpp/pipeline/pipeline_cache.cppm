@@ -9,6 +9,66 @@ import vkpp.diagnostics;
 namespace vkpp
 {
 
+inline constexpr std::uint64_t fnv1a_64_offset_basis {
+  0xCB'F2'9C'E4'84'22'23'25ULL
+};
+inline constexpr std::uint64_t fnv1a_64_prime {0x1'00'00'00'01'B3ULL};
+
+export [[nodiscard]]
+constexpr
+auto
+fnv1a_64(std::span<const std::byte> bytes) noexcept -> std::uint64_t
+{
+  return std::ranges::fold_left(
+    bytes,
+    fnv1a_64_offset_basis,
+    [](std::uint64_t hash, std::byte value) -> std::uint64_t {
+      return (hash ^ std::to_integer<std::uint64_t>(value)) * fnv1a_64_prime;
+    });
+}
+
+inline constexpr std::array pipeline_cache_file_magic {
+  'V',
+  'K',
+  'P',
+  'P',
+  'P',
+  'C',
+  'C',
+  '1',
+};
+
+inline constexpr auto pipeline_cache_file_header_size =
+  pipeline_cache_file_magic.size() + 2UZ * sizeof(std::uint64_t);
+
+[[nodiscard]]
+inline
+auto
+load_u64_le(std::span<const std::byte> bytes) -> std::uint64_t
+{
+  std::array<std::byte, sizeof(std::uint64_t)> raw {};
+  std::ranges::copy(bytes.first(raw.size()), raw.begin());
+  auto value = std::bit_cast<std::uint64_t>(raw);
+  if constexpr (std::endian::native == std::endian::big)
+  {
+    value = std::byteswap(value);
+  }
+  return value;
+}
+
+[[nodiscard]]
+inline
+auto
+store_u64_le(std::uint64_t value)
+  -> std::array<std::byte, sizeof(std::uint64_t)>
+{
+  if constexpr (std::endian::native == std::endian::big)
+  {
+    value = std::byteswap(value);
+  }
+  return std::bit_cast<std::array<std::byte, sizeof(std::uint64_t)>>(value);
+}
+
 export [[nodiscard]]
 auto
 unique_sibling_path(const std::filesystem::path& path, std::string_view suffix)
@@ -100,7 +160,28 @@ load_pipeline_cache_file(const std::filesystem::path& path)
   {
     return std::unexpected {make_app_error(app_error_code::file_read)};
   }
-  return bytes;
+
+  const std::span<const std::byte> file {bytes};
+  if (
+    file.size() < pipeline_cache_file_header_size ||
+    !std::ranges::equal(
+      file.first(pipeline_cache_file_magic.size()),
+      std::as_bytes(std::span {pipeline_cache_file_magic})))
+  {
+    return {};
+  }
+
+  const auto payload = file.subspan(pipeline_cache_file_header_size);
+  if (
+    load_u64_le(file.subspan(pipeline_cache_file_magic.size())) !=
+      payload.size() ||
+    load_u64_le(
+      file.subspan(pipeline_cache_file_magic.size() + sizeof(std::uint64_t))) !=
+      fnv1a_64(payload))
+  {
+    return {};
+  }
+  return std::vector<std::byte> {std::from_range, payload};
 }
 
 export [[nodiscard]]
@@ -116,7 +197,17 @@ save_pipeline_cache_file(
     {
       return std::unexpected {make_app_error(app_error_code::file_open)};
     }
-
+    const auto payload_size = store_u64_le(bytes.size());
+    const auto payload_hash = store_u64_le(fnv1a_64(bytes));
+    output.write(
+      pipeline_cache_file_magic.data(),
+      static_cast<std::streamsize>(bytes.size()));
+    output.write(
+      reinterpret_cast<const char*>(payload_size.data()),
+      std::ssize(payload_size));
+    output.write(
+      reinterpret_cast<const char*>(payload_hash.data()),
+      std::ssize(payload_hash));
     output.write(
       reinterpret_cast<const char*>(bytes.data()),
       static_cast<std::streamsize>(bytes.size()));

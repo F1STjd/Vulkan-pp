@@ -14,7 +14,7 @@ namespace vkpp
 
 using namespace std::string_view_literals;
 
-inline constexpr std::uint32_t pipeline_binary_store_schema_version {1U};
+inline constexpr std::uint32_t pipeline_binary_store_schema_version {2U};
 inline constexpr std::array    pipeline_binary_store_magic {
   'V',
   'K',
@@ -286,6 +286,13 @@ public:
       return discard("global key mismatch");
     }
 
+    std::uint64_t payload_size {};
+    std::uint64_t payload_hash {};
+    if (!read_le(input, payload_size) || !read_le(input, payload_hash))
+    {
+      return discard("payload header");
+    }
+
     const auto begin_pos = input.tellg();
     input.seekg(0, std::ios::end);
     const auto end_pos = input.tellg();
@@ -295,6 +302,15 @@ public:
     }
     input.seekg(begin_pos);
     auto remaining = static_cast<std::uint64_t>(end_pos - begin_pos);
+    if (remaining != payload_size) { return discard("payload size"); }
+
+    std::vector<std::byte> payload(remaining);
+    input.read(reinterpret_cast<char*>(payload.data()), std::ssize(payload));
+    if (!input || fnv1a_64(payload) != payload_hash)
+    {
+      return discard("payload hash");
+    }
+    input.seekg(begin_pos);
 
     auto need = [ & ](std::uint64_t byte_count) -> bool {
       if (byte_count > remaining) { return false; }
@@ -438,64 +454,75 @@ public:
       output.write(
         reinterpret_cast<const char*>(global_key_.key.data()),
         vk::MaxPipelineBinaryKeySizeKHR);
-      if (!write_le(output, static_cast<std::uint32_t>(entries_.size())))
+      std::ostringstream payload {std::ios::binary};
+      if (!write_le(payload, static_cast<std::uint32_t>(entries_.size())))
       {
         return std::unexpected {make_app_error(app_error_code::file_write)};
       }
 
       for (const auto& entry : entries_)
       {
-        if (!write_le(output, entry.pipeline_key.keySize))
+        if (!write_le(payload, entry.pipeline_key.keySize))
         {
           return std::unexpected {make_app_error(app_error_code::file_write)};
         }
-        output.write(
+        payload.write(
           reinterpret_cast<const char*>(entry.pipeline_key.key.data()),
           vk::MaxPipelineBinaryKeySizeKHR);
         if (!write_le(
-              output,
+              payload,
               static_cast<std::uint32_t>(entry.ordered_binary_keys.size())))
         {
           return std::unexpected {make_app_error(app_error_code::file_write)};
         }
         for (const auto& key : entry.ordered_binary_keys)
         {
-          if (!write_le(output, key.keySize))
+          if (!write_le(payload, key.keySize))
           {
             return std::unexpected {
               make_app_error(app_error_code::file_write),
             };
           }
-          output.write(
+          payload.write(
             reinterpret_cast<const char*>(key.key.data()),
             vk::MaxPipelineBinaryKeySizeKHR);
         }
       }
 
-      if (!write_le(output, static_cast<std::uint32_t>(blobs_.size())))
+      if (!write_le(payload, static_cast<std::uint32_t>(blobs_.size())))
       {
         return std::unexpected {make_app_error(app_error_code::file_write)};
       }
       for (const auto& blob : blobs_)
       {
-        if (!write_le(output, blob.key.keySize))
+        if (!write_le(payload, blob.key.keySize))
         {
           return std::unexpected {make_app_error(app_error_code::file_write)};
         }
         output.write(
           reinterpret_cast<const char*>(blob.key.key.data()),
           vk::MaxPipelineBinaryKeySizeKHR);
-        if (!write_le(output, blob.data.size()))
+        if (!write_le(payload, blob.data.size()))
         {
           return std::unexpected {make_app_error(app_error_code::file_write)};
         }
         if (!blob.data.empty())
         {
-          output.write(
+          payload.write(
             reinterpret_cast<const char*>(blob.data.data()),
             static_cast<std::streamsize>(blob.data.size()));
         }
       }
+
+      const std::string payload_bytes = std::move(payload).str();
+      const auto        payload_view = std::as_bytes(std::span {payload_bytes});
+      if (
+        !write_le(output, payload_view.size()) ||
+        !write_le(output, fnv1a_64(payload_view)))
+      {
+        return std::unexpected {make_app_error(app_error_code::file_write)};
+      }
+      output.write(payload_bytes.data(), std::ssize(payload_bytes));
       output.flush();
       if (!output)
       {
