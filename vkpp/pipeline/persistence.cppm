@@ -503,7 +503,7 @@ public:
         {
           return std::unexpected {make_app_error(app_error_code::file_write)};
         }
-        output.write(
+        payload.write(
           reinterpret_cast<const char*>(blob.key.key.data()),
           vk::MaxPipelineBinaryKeySizeKHR);
         if (!write_le(payload, blob.data.size()))
