@@ -32,7 +32,9 @@ public:
     }
   }
 
-  consteval cstring_view(const std::string& owner) noexcept : view_ {owner} {}
+  constexpr cstring_view(const std::string& owner) noexcept : view_ {owner} {}
+
+  cstring_view(std::string&&) = delete;
 
   [[nodiscard]]
   constexpr
