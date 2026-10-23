@@ -433,6 +433,10 @@ public:
   auto
   save(const std::filesystem::path& path) const -> std::expected<void, error_t>
   {
+    if (auto created = create_parent_directory(path); !created)
+    {
+      return created;
+    }
     const auto temporary_path = unique_sibling_path(path, ".tmp");
     {
       std::ofstream output {temporary_path, std::ios::binary | std::ios::trunc};

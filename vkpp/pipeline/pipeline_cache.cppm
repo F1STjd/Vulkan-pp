@@ -83,6 +83,22 @@ unique_sibling_path(const std::filesystem::path& path, std::string_view suffix)
 
 export [[nodiscard]]
 auto
+create_parent_directory(const std::filesystem::path& path)
+  -> std::expected<void, error_t>
+{
+  const auto directory = path.parent_path();
+  if (directory.empty()) { return {}; }
+  std::error_code error {};
+  std::filesystem::create_directories(directory, error);
+  if (error)
+  {
+    return std::unexpected {make_app_error(app_error_code::file_open)};
+  }
+  return {};
+}
+
+export [[nodiscard]]
+auto
 replace_file(
   const std::filesystem::path& temporary_path,
   const std::filesystem::path& path) -> std::expected<void, error_t>
@@ -190,6 +206,10 @@ save_pipeline_cache_file(
   const std::filesystem::path& path, std::span<const std::byte> bytes)
   -> std::expected<void, error_t>
 {
+  if (auto created = create_parent_directory(path); !created)
+  {
+    return created;
+  }
   const auto temporary_path = unique_sibling_path(path, ".tmp");
   {
     std::ofstream output {temporary_path, std::ios::binary | std::ios::trunc};
