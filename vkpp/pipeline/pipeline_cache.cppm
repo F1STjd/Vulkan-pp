@@ -9,7 +9,46 @@ import vkpp.diagnostics;
 namespace vkpp
 {
 
-using namespace std::string_view_literals;
+export [[nodiscard]]
+auto
+unique_sibling_path(const std::filesystem::path& path, std::string_view suffix)
+  -> std::filesystem::path
+{
+  auto       random = std::random_device {};
+  const auto value  = (std::uint64_t {random()} << 32U) | random();
+  auto       sibling {path};
+  sibling += std::format(".{:016x}{}", value, suffix);
+  return sibling;
+}
+
+export [[nodiscard]]
+auto
+replace_file(
+  const std::filesystem::path& temporary_path,
+  const std::filesystem::path& path) -> std::expected<void, error_t>
+{
+  const auto      backup_path = unique_sibling_path(path, ".bak");
+  std::error_code error {};
+  if (std::filesystem::exists(path, error))
+  {
+    std::filesystem::rename(path, backup_path, error);
+    if (error)
+    {
+      std::filesystem::remove(temporary_path, error);
+      return std::unexpected {make_app_error(app_error_code::file_write)};
+    }
+  }
+  std::filesystem::rename(temporary_path, path, error);
+  if (error)
+  {
+    std::error_code restore_error {};
+    std::filesystem::rename(backup_path, path, restore_error);
+    std::filesystem::remove(temporary_path, restore_error);
+    return std::unexpected {make_app_error(app_error_code::file_write)};
+  }
+  std::filesystem::remove(backup_path, error);
+  return {};
+}
 
 export [[nodiscard]]
 auto
@@ -70,20 +109,23 @@ save_pipeline_cache_file(
   const std::filesystem::path& path, std::span<const std::byte> bytes)
   -> std::expected<void, error_t>
 {
-  std::ofstream output {path, std::ios::binary | std::ios::trunc};
-  if (!output)
+  const auto temporary_path = unique_sibling_path(path, ".tmp");
   {
-    return std::unexpected {make_app_error(app_error_code::file_open)};
-  }
+    std::ofstream output {temporary_path, std::ios::binary | std::ios::trunc};
+    if (!output)
+    {
+      return std::unexpected {make_app_error(app_error_code::file_open)};
+    }
 
-  output.write(
-    reinterpret_cast<const char*>(bytes.data()),
-    static_cast<std::streamsize>(bytes.size()));
-  if (!output)
-  {
-    return std::unexpected {make_app_error(app_error_code::file_write)};
+    output.write(
+      reinterpret_cast<const char*>(bytes.data()),
+      static_cast<std::streamsize>(bytes.size()));
+    if (!output)
+    {
+      return std::unexpected {make_app_error(app_error_code::file_write)};
+    }
   }
-  return {};
+  return replace_file(temporary_path, path);
 }
 
 export class pipeline_cache

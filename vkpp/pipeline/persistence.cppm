@@ -417,10 +417,7 @@ public:
   auto
   save(const std::filesystem::path& path) const -> std::expected<void, error_t>
   {
-    auto temporary_path {path};
-    temporary_path += ".tmp";
-    auto backup_path {path};
-    backup_path += ".bak";
+    const auto temporary_path = unique_sibling_path(path, ".tmp");
 
     {
       std::ofstream output {temporary_path, std::ios::binary | std::ios::trunc};
@@ -506,30 +503,7 @@ public:
         return std::unexpected {make_app_error(app_error_code::file_write)};
       }
     }
-
-    std::error_code ec {};
-    std::filesystem::remove(backup_path, ec);
-    ec.clear();
-    if (std::filesystem::exists(path))
-    {
-      std::filesystem::rename(path, backup_path, ec);
-      if (ec)
-      {
-        return std::unexpected {make_app_error(app_error_code::file_write)};
-      }
-    }
-    std::filesystem::rename(temporary_path, path, ec);
-    if (ec)
-    {
-      if (std::filesystem::exists(backup_path))
-      {
-        std::error_code restore_ec {};
-        std::filesystem::rename(backup_path, path, restore_ec);
-      }
-      return std::unexpected {make_app_error(app_error_code::file_write)};
-    }
-    std::filesystem::remove(backup_path, ec);
-    return {};
+    return replace_file(temporary_path, path);
   }
 
 private:
