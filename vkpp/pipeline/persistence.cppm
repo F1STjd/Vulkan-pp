@@ -418,7 +418,6 @@ public:
   save(const std::filesystem::path& path) const -> std::expected<void, error_t>
   {
     const auto temporary_path = unique_sibling_path(path, ".tmp");
-
     {
       std::ofstream output {temporary_path, std::ios::binary | std::ios::trunc};
       if (!output)
