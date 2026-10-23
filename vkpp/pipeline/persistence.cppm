@@ -23,6 +23,7 @@ inline constexpr std::array    pipeline_binary_store_magic {
   'B',
   'I',
   'N',
+  '2',
 };
 
 template<class T>
@@ -254,8 +255,8 @@ public:
       return pipeline_binary_store {expected_global_key};
     };
 
-    std::array<char, 8UZ> magic {};
-    input.read(magic.data(), 8LL);
+    std::array<char, pipeline_binary_store_magic.size()> magic {};
+    input.read(magic.data(), std::ssize(magic));
     if (!input || !std::ranges::equal(magic, pipeline_binary_store_magic))
     {
       return discard("bad magic");
@@ -362,7 +363,14 @@ public:
     store.blobs_.resize(blob_count);
     for (auto& blob : store.blobs_)
     {
-      if (!need(4) || !read_le(input, blob.key.keySize))
+      if (
+        !need(4) ||
+        !read_le(input, blob.key.keySize) ||
+        blob.key.keySize > vk::MaxPipelineBinaryKeySizeKHR)
+      {
+        return discard("blob keySize");
+      }
+      if (!need(vk::MaxPipelineBinaryKeySizeKHR))
       {
         return discard("blob key bytes");
       }
@@ -420,7 +428,9 @@ public:
       {
         return std::unexpected {make_app_error(app_error_code::file_open)};
       }
-      output.write(pipeline_binary_store_magic.data(), 8);
+      output.write(
+        pipeline_binary_store_magic.data(),
+        std::ssize(pipeline_binary_store_magic));
       if (!write_le(output, pipeline_binary_store_schema_version))
       {
         return std::unexpected {make_app_error(app_error_code::file_write)};
