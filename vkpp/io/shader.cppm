@@ -31,7 +31,11 @@ load_shader_file(const std::filesystem::path& filename)
   input_file.seekg(0, std::ios::beg);
   input_file.read(
     reinterpret_cast<char*>(words.data()),
-    static_cast<std::streamsize>(byte_count));
+    static_cast<std::streamsize>(std::span {words}.size_bytes()));
+  if (!input_file)
+  {
+    return std::unexpected {make_app_error(app_error_code::file_read)};
+  }
   return words;
 }
 
