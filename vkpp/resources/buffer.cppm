@@ -412,8 +412,8 @@ public:
             make_app_error(app_error_code::invalid_data_size),
           };
         }
-        std::ranges::copy_n(
-          source.data(), destination.size(), destination.data());
+        std::ranges::copy(
+          source.first(destination.size()), destination.begin());
         return {};
       });
   }
