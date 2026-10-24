@@ -446,7 +446,7 @@ extend_pipeline(
   const pipeline<Element, Operation>& current,
   fiat::transform_stage<Fused>        fused)
 {
-  if constexpr (!fiat::traceable<Operation, Element>)
+  if constexpr (!fiat::traceable<Fused, Element>)
   {
     static_assert(false, transform_mismatch);
   }
@@ -469,7 +469,7 @@ operator |(
     current,
     fiat::fuse(
       fiat::transform_stage<Operation> {.arguments = current.arguments()},
-      fiat::transform_stage<Next> {}));
+      std::move(next)));
 }
 
 template<class... Arguments>
