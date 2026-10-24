@@ -22,8 +22,8 @@ export class pending_download
 public:
   pending_download() = default;
 
-  pending_download(readback_buffer&& staging, submission&& copy_sobmitted)
-  : staging_ {std::move(staging)}, submission_ {std::move(copy_sobmitted)}
+  pending_download(readback_buffer&& staging, submission&& copy_submitted)
+  : staging_ {std::move(staging)}, submission_ {std::move(copy_submitted)}
   {}
 
   [[nodiscard]]
