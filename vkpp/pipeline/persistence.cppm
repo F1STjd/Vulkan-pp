@@ -573,7 +573,7 @@ export class pipeline_persistence
 public:
   pipeline_persistence() = default;
 
-  pipeline_persistence(pipeline_cache&& cache)
+  explicit pipeline_persistence(pipeline_cache&& cache)
   : mode_ {pipeline_persistence_mode::pipeline_cache}, cache_ {std::move(cache)}
   {}
 

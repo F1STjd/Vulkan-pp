@@ -31,7 +31,7 @@ export class graphics_pipeline_library
 public:
   graphics_pipeline_library() = default;
 
-  graphics_pipeline_library(vk::raii::Pipeline&& pipeline)
+  explicit graphics_pipeline_library(vk::raii::Pipeline&& pipeline)
   : pipeline_ {std::move(pipeline)}
   {}
 
