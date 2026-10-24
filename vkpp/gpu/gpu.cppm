@@ -394,46 +394,101 @@ export template<fiat::scalar Element, class Operation>
 class pipeline
 {
 public:
-  explicit pipeline(const device_array<Element>& source) : source_ {source} {}
+  using argument_tuple = decltype(fiat::transform_stage<Operation>::arguments);
+
+  explicit pipeline(
+    const device_array<Element>& source, argument_tuple arguments)
+  : source_ {source}, arguments_ {std::move(arguments)}
+  {}
 
   [[nodiscard]]
   auto
   source() const noexcept -> const device_array<Element>&
   { return source_; }
 
+  [[nodiscard]]
+  auto
+  arguments() const noexcept -> const argument_tuple&
+  { return arguments_; }
+
 private:
   const device_array<Element>& source_;
+  argument_tuple               arguments_;
+};
+
+inline constexpr std::string_view transform_mismatch {
+  "this fiat::transform cannot run on this array: every runtime argument must "
+  "have the array's element type, and the lambda must take (value, "
+  "arguments...)",
 };
 
 export
 template<fiat::scalar Element, class Operation>
-  requires fiat::traceable<Operation, Element>
 [[nodiscard]]
 auto
 operator |(
-  const device_array<Element>& source, fiat::transform_stage<Operation>)
-  -> pipeline<Element, Operation>
-{ return pipeline<Element, Operation> {source}; }
+  const device_array<Element>& source, fiat::transform_stage<Operation> stage)
+{
+  if constexpr (!fiat::traceable<Operation, Element>)
+  {
+    static_assert(false, transform_mismatch);
+  }
+  else
+  {
+    return pipeline<Element, Operation> {source, std::move(stage.arguments)};
+  }
+}
 
 template<fiat::scalar Element, class Operation, class Fused>
 [[nodiscard]]
 auto
 extend_pipeline(
-  const pipeline<Element, Operation>& current, fiat::transform_stage<Fused>)
-  -> pipeline<Element, Fused>
-{ return pipeline<Element, Fused> {current.source()}; }
+  const pipeline<Element, Operation>& current,
+  fiat::transform_stage<Fused>        fused)
+{
+  if constexpr (!fiat::traceable<Operation, Element>)
+  {
+    static_assert(false, transform_mismatch);
+  }
+  else
+  {
+    return pipeline<Element, Fused> {
+      current.source(), std::move(fused.arguments)
+    };
+  }
+}
 
 export
 template<fiat::scalar Element, class Operation, class Next>
 [[nodiscard]]
 auto
 operator |(
-  const pipeline<Element, Operation>& current, fiat::transform_stage<Next>)
+  const pipeline<Element, Operation>& current, fiat::transform_stage<Next> next)
 {
   return extend_pipeline(
     current,
     fiat::fuse(
-      fiat::transform_stage<Operation> {}, fiat::transform_stage<Next> {}));
+      fiat::transform_stage<Operation> {.arguments = current.arguments()},
+      fiat::transform_stage<Next> {}));
+}
+
+template<class... Arguments>
+[[nodiscard]]
+constexpr
+auto
+pack_arguments(const std::tuple<Arguments...>& arguments)
+  -> std::array<std::uint32_t, fiat::argument_capacity>
+{
+  std::array<std::uint32_t, fiat::argument_capacity> words {};
+  std::apply(
+    [ & ](const Arguments&... argument) {
+      const std::array<std::uint32_t, sizeof...(Arguments)> packed {
+        std::bit_cast<std::uint32_t>(argument)...,
+      };
+      std::ranges::copy(packed, words.begin());
+    },
+    arguments);
+  return words;
 }
 
 export
@@ -469,6 +524,8 @@ record(
     std::uint64_t {context.max_group_count()} * group_size,
     std::uint64_t {count}));
 
+  const auto arguments = pack_arguments(computation.arguments());
+
   for (
     const auto first : std::views::indices(count) | std::views::stride(stride))
   {
@@ -477,10 +534,11 @@ record(
       command_buffer,
       compute,
       fiat::transform_push {
-        .input  = input_view->device_address(),
-        .output = output_view->device_address(),
-        .count  = count,
-        .first  = first,
+        .input     = input_view->device_address(),
+        .output    = output_view->device_address(),
+        .count     = count,
+        .first     = first,
+        .arguments = arguments,
       });
     dispatch(command_buffer, (elements + group_size - 1U) / group_size);
   }
