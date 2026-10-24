@@ -92,8 +92,7 @@ public:
   [[nodiscard]]
   static
   auto
-  create(const context_create_info& create_info)
-    -> std::expected<context, error_t>
+  create(context_create_info create_info) -> std::expected<context, error_t>
   {
     const auto extensions =
       create_info.enable_validation
@@ -118,7 +117,7 @@ public:
       })
       .and_then(
         [ & ](instance_context&& instance) -> std::expected<context, error_t> {
-          return assemble(std::move(instance), create_info);
+          return assemble(std::move(instance), std::move(create_info));
         });
   }
 
@@ -339,7 +338,7 @@ private:
   [[nodiscard]]
   static
   auto
-  assemble(instance_context&& instance, const context_create_info& create_info)
+  assemble(instance_context&& instance, context_create_info create_info)
     -> std::expected<context, error_t>
   {
     auto device = device_context::create(
@@ -374,7 +373,7 @@ private:
       create_info.diagnostics,
       clamped_group_size,
       limits.maxComputeWorkGroupCount[ 0 ],
-      create_info.pipeline_cache_path,
+      std::move(create_info.pipeline_cache_path),
     };
   }
 
