@@ -577,11 +577,11 @@ struct resource_layout
   auto
   dynamic_offset_index() -> std::uint32_t
   {
-    constexpr binding_assignment target {assignment_of<Tag>};
+    static constexpr binding_assignment target {assignment_of<Tag>};
     static_assert(target.dynamic, "resource_layout: tag is not dynamic");
     constexpr auto table = assignment_table();
     return static_cast<std::uint32_t>(std::ranges::count_if(
-      table, [ &target ](const binding_assignment& assignment) -> bool {
+      table, [](const binding_assignment& assignment) -> bool {
         return assignment.dynamic &&
                (assignment.set < target.set ||
                  (assignment.set == target.set &&
