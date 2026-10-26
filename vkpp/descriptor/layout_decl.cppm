@@ -21,8 +21,8 @@ consteval
 auto
 index_of_true(const std::array<bool, Count>& matches) -> std::size_t
 {
-  return std::ranges::distance(
-    matches.begin(), std::ranges::find(matches, true));
+  return static_cast<std::size_t>(
+    std::ranges::distance(matches.begin(), std::ranges::find(matches, true)));
 }
 
 } // namespace detail
