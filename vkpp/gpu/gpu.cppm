@@ -151,7 +151,7 @@ public:
     return make_compute_pipeline(
       device_.device(),
       {
-        .push_constant_size = sizeof(fiat::transform_push),
+        .push_constant_size = sizeof(fiat::detail::transform_push),
       },
       {
         .words          = words,
@@ -532,7 +532,7 @@ record(
     push_compute<descriptor_table_backend::classic>(
       command_buffer,
       compute,
-      fiat::transform_push {
+      fiat::detail::transform_push {
         .input     = input_view->device_address(),
         .output    = output_view->device_address(),
         .count     = count,
