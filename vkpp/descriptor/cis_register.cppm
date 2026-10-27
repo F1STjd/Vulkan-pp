@@ -109,4 +109,34 @@ register_combined_image_sampler(
       });
 }
 
+export
+template<class Tag, class Layout>
+[[nodiscard]]
+auto
+write_descriptor(
+  descriptor_heap_arena&          arena,
+  const descriptor_write_context& context,
+  const sampler_create_info&      sampler_info,
+  const texture<>&                image) -> std::expected<void, error_t>
+{
+  return arena.template write_cis<Layout, Tag>(
+    context.device,
+    to_vk(context.physical, sampler_info),
+    image.view_create_info());
+}
+
+export
+template<class Layout, class Tag>
+[[nodiscard]]
+auto
+register_combined_image_sampler(
+  classic_bindless_table&         table,
+  const descriptor_write_context& context,
+  const sampler_create_info&      sampler_info,
+  const texture<>& image) -> std::expected<std::uint32_t, error_t>
+{
+  return register_combined_image_sampler<Layout, Tag>(
+    table, context.device, context.physical, sampler_info, image);
+}
+
 } // namespace vkpp
