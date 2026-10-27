@@ -130,7 +130,7 @@ template<class Layout, class Tag>
 [[nodiscard]]
 auto
 register_combined_image_sampler(
-  classic_bindless_table&         table,
+  heap_bindless_table&            table,
   const descriptor_write_context& context,
   const sampler_create_info&      sampler_info,
   const texture<>& image) -> std::expected<std::uint32_t, error_t>
