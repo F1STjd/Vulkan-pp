@@ -280,6 +280,16 @@ public:
   max_group_count() const noexcept -> std::uint32_t
   { return max_group_count_; }
 
+  [[nodiscard]]
+  auto
+  reduce_scratch(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.reduce_scratch_); }
+
+  [[nodiscard]]
+  auto
+  reduce_readback(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.reduce_readback_); }
+
 private:
   static constexpr std::array validation_extensions {
     vk::EXTDebugUtilsExtensionName,
@@ -307,7 +317,9 @@ private:
     std::optional<diagnostic_buffer&> diagnostics,
     std::uint32_t                     group_size,
     std::uint32_t                     max_group_count,
-    std::filesystem::path             pipeline_cache_path)
+    std::filesystem::path             pipeline_cache_path,
+    device_address_buffer&&           reduce_scratch,
+    readback_buffer&&                 reduce_readback)
   : instance_ {std::move(instance)},
     device_ {std::move(device)},
     pool_ {std::move(pool)},
@@ -315,7 +327,9 @@ private:
     diagnostics_ {diagnostics},
     group_size_ {group_size},
     max_group_count_ {max_group_count},
-    pipeline_cache_path_ {std::move(pipeline_cache_path)}
+    pipeline_cache_path_ {std::move(pipeline_cache_path)},
+    reduce_scratch_ {std::move(reduce_scratch)},
+    reduce_readback_ {std::move(reduce_readback)}
   {}
 
   [[nodiscard]]
@@ -365,6 +379,20 @@ private:
       std::min(
         limits.maxComputeWorkGroupSize[ 0 ],
         limits.maxComputeWorkGroupInvocations));
+    const auto group_size = std::bit_floor(clamped_group_size);
+
+    const std::array<std::byte, fiat::detail::reduce_scratch_bytes> zeros {};
+    auto reduce_scratch = upload_device_local_buffer(
+      buffer_upload_create_info_for<buffer_kind::device_address> {
+        .device = *device,
+        .pool   = *pool,
+        .bytes  = std::as_bytes(std::span {zeros}),
+      });
+    if (!reduce_scratch) { return std::unexpected {reduce_scratch.error()}; }
+
+    auto reduce_readback =
+      readback_buffer::create(device->allocator(), sizeof(std::uint32_t));
+    if (!reduce_readback) { return std::unexpected {reduce_readback.error()}; }
 
     return context {
       std::move(instance),
@@ -372,9 +400,11 @@ private:
       std::move(*pool),
       std::move(*cache),
       create_info.diagnostics,
-      clamped_group_size,
+      group_size,
       limits.maxComputeWorkGroupCount[ 0 ],
       std::move(create_info.pipeline_cache_path),
+      std::move(*reduce_scratch),
+      std::move(*reduce_readback),
     };
   }
 
@@ -387,6 +417,8 @@ private:
   std::uint32_t                     group_size_ {};
   std::uint32_t                     max_group_count_ {};
   std::filesystem::path             pipeline_cache_path_ {};
+  device_address_buffer             reduce_scratch_;
+  readback_buffer                   reduce_readback_;
 };
 
 export template<fiat::scalar Element, class Operation>
