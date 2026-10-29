@@ -68,15 +68,36 @@ export struct context_create_info
   std::filesystem::path             pipeline_cache_path {};
 };
 
-template<fiat::scalar Element, class Operation>
-  requires fiat::traceable<Operation, Element>
-inline constexpr auto kernel_words =
-  fiat::compile<Element>(fiat::transform_stage<Operation> {});
+namespace detail
+{
+
+template<fiat::scalar Element, class Stage>
+struct kernel_traits;
 
 template<fiat::scalar Element, class Operation>
   requires fiat::traceable<Operation, Element>
-inline constexpr auto kernel_fingerprint =
-  fiat::fingerprint(kernel_words<Element, Operation>);
+struct kernel_traits<Element, fiat::transform_stage<Operation>>
+{
+  static constexpr auto words =
+    fiat::compile<Element>(fiat::transform_stage<Operation> {});
+  static constexpr std::string_view entry {fiat::transform_entry};
+  static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
+};
+
+template<fiat::scalar Element, class Map, class Combine, class Identity>
+  requires (
+    fiat::traceable<Map, Element> &&
+    fiat::combinable<context, Element> &&
+    std::same_as<Identity, Element>)
+struct kernel_traits<Element, fiat::reduce_stage<Map, Combine, Identity>>
+{
+  static constexpr auto words =
+    fiat::compile<Element>(fiat::reduce_stage<Map, Combine, Identity> {});
+  static constexpr std::string_view entry {fiat::reduce_entry};
+  static constexpr std::size_t push_size {sizeof(fiat::detail::reduce_push)};
+};
+
+} // namespace detail
 
 struct cached_kernel
 {
@@ -121,18 +142,15 @@ public:
         });
   }
 
-  template<fiat::scalar Element, class Operation>
-    requires fiat::traceable<Operation, Element>
+  template<fiat::scalar Element, class Stage>
   [[nodiscard]]
   auto
   kernel()
     -> std::expected<std::reference_wrapper<const compute_pipeline>, error_t>
   {
-    constexpr std::span<const std::uint32_t> words {
-      kernel_words<Element, Operation>,
-    };
-    constexpr std::uint64_t fingerprint =
-      kernel_fingerprint<Element, Operation>;
+    using traits = detail::kernel_traits<Element, Stage>;
+    constexpr std::span<const std::uint32_t> words {traits::words};
+    constexpr std::uint64_t fingerprint = fiat::fingerprint(traits::words);
 
     const auto found = std::ranges::find_if(
       kernels_, [ & ](const cached_kernel& cached) -> bool {
@@ -151,11 +169,11 @@ public:
     return make_compute_pipeline(
       device_.device(),
       {
-        .push_constant_size = sizeof(fiat::detail::transform_push),
+        .push_constant_size = static_cast<std::uint32_t>(traits::push_size),
       },
       {
         .words          = words,
-        .entry          = cstring_view {fiat::transform_entry},
+        .entry          = cstring_view {traits::entry},
         .specialization = specialization,
       },
       cache_.get(),
@@ -539,7 +557,7 @@ record(
     return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
   }
 
-  auto kernel = context.kernel<Element, Operation>();
+  auto kernel = context.kernel<Element, fiat::transform_stage<Operation>>();
   if (!kernel) { return std::unexpected {kernel.error()}; }
 
   auto input_view  = computation.source().addressed_view(context.device());
