@@ -87,7 +87,7 @@ struct kernel_traits<Element, fiat::transform_stage<Operation>>
 template<fiat::scalar Element, class Map, class Combine, class Identity>
   requires (
     fiat::traceable<Map, Element> &&
-    fiat::combinable<context, Element> &&
+    fiat::combinable<Combine, Element> &&
     std::same_as<Identity, Element>)
 struct kernel_traits<Element, fiat::reduce_stage<Map, Combine, Identity>>
 {
@@ -606,7 +606,7 @@ operator |(
   else
   {
     auto fused =
-      fiat::transform_stage<Operation> {.argumetns = current.arguments()} |
+      fiat::transform_stage<Operation> {.arguments = current.arguments()} |
       std::move(next);
     return reduce_pipeline<Element, Operation, Combine> {
       current.source(),
@@ -811,17 +811,17 @@ record(
 
   const auto groups = std::min(
     (count + group_size - 1U) / group_size, fiat::detail::reduce_group_limit);
-  const auto arguments = pack_arguments(computation.argumetns());
+  const auto arguments = pack_arguments(computation.arguments());
 
   push_compute<descriptor_table_backend::classic>(
     command_buffer,
     compute,
     fiat::detail::reduce_push {
       .input     = input_view->device_address(),
-      .scratch   = scratch_view->device_address,
+      .scratch   = scratch_view->device_address(),
       .count     = count,
       .identity  = std::bit_cast<std::uint32_t>(computation.identity()),
-      .argumetns = arguments,
+      .arguments = arguments,
     });
   dispatch(command_buffer, groups);
   return {};
