@@ -54,6 +54,7 @@ export struct device_feature_requests
   capability_requirement graphics_pipeline_library {disabled};
   capability_requirement shader_object {disabled};
   capability_requirement maintenance4 {disabled};
+  capability_requirement vulkan_memory_model {disabled};
 };
 
 export struct device_profile
@@ -97,6 +98,7 @@ export struct enabled_device_features
   bool descriptor_heap {false};
   bool pipeline_binary {false};
   bool maintenance4 {false};
+  bool vulkan_memory_model {false};
 };
 
 export struct selected_device_capabilities

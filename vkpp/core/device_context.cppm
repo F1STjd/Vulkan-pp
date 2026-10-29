@@ -30,6 +30,7 @@ export struct feature_tag
   struct descriptor_heap {};
   struct pipeline_binary {};
   struct maintenance4 {};
+  struct vulkan_memory_model {};
 };
 
 export template<typename Tag>
@@ -126,6 +127,12 @@ template<>
 struct feature_traits<feature_tag::maintenance4>
 {
   static constexpr auto member = &device_feature_requests::maintenance4;
+};
+
+template<>
+struct feature_traits<feature_tag::vulkan_memory_model>
+{
+  static constexpr auto member = &device_feature_requests::vulkan_memory_model;
 };
 
 export [[nodiscard]]
@@ -540,7 +547,9 @@ private:
       vk::Bool32 {enabled.descriptor_indexing};
     v12.descriptorBindingVariableDescriptorCount =
       vk::Bool32 {enabled.descriptor_indexing};
-    v12.bufferDeviceAddress = vk::Bool32 {device_address};
+    v12.bufferDeviceAddress          = vk::Bool32 {device_address};
+    v12.vulkanMemoryModel            = vk::Bool32 {enabled.vulkan_memory_model};
+    v12.vulkanMemoryModelDeviceScope = vk::Bool32 {enabled.vulkan_memory_model};
 
     auto& v13            = chain.get<vk::PhysicalDeviceVulkan13Features>();
     v13.dynamicRendering = vk::Bool32 {enabled.dynamic_rendering};
@@ -644,6 +653,13 @@ private:
     if (
       features.buffer_device_address == capability_requirement::required &&
       (v12.bufferDeviceAddress != vk::True || f2.shaderInt64 != vk::True))
+    {
+      return false;
+    }
+    if (
+      features.vulkan_memory_model == capability_requirement::required &&
+      (v12.vulkanMemoryModel != vk::True ||
+        v12.vulkanMemoryModelDeviceScope != vk::True))
     {
       return false;
     }
@@ -970,6 +986,11 @@ private:
       profile.features.buffer_device_address,
       v12.bufferDeviceAddress == vk::True,
       "buffer_device_address");
+    enabled.vulkan_memory_model = apply(
+      profile.features.vulkan_memory_model,
+      v12.vulkanMemoryModel == vk::True &&
+        v12.vulkanMemoryModelDeviceScope == vk::True,
+      "vulkan_memory_model");
     enabled.graphics_pipeline_library = apply(
       profile.features.graphics_pipeline_library,
       core.get<vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>()

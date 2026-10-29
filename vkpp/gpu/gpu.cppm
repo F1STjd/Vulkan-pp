@@ -294,6 +294,7 @@ private:
         .synchronization2      = capability_requirement::required,
         .buffer_device_address = capability_requirement::required,
         .maintenance4          = capability_requirement::required,
+        .vulkan_memory_model   = capability_requirement::required,
       },
     },
   };
