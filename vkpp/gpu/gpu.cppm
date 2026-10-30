@@ -59,6 +59,31 @@ private:
   std::uint32_t         count_ {};
 };
 
+export template<fiat::scalar Element>
+class device_scalar
+{
+public:
+  using element_type = Element;
+
+  device_scalar(device_address_buffer&& buffer, std::uint64_t address)
+  : buffer_ {std::move(buffer)}, address_ {address}
+  {}
+
+  [[nodiscard]]
+  auto
+  address() const noexcept -> std::uint64_t
+  { return address_; }
+
+  [[nodiscard]]
+  auto
+  buffer() const noexcept -> const device_address_buffer&
+  { return buffer_; }
+
+private:
+  device_address_buffer buffer_;
+  std::uint64_t         address_ {};
+};
+
 export struct context_create_info
 {
   cstring_view                      name {"vkpp-gpu"};
@@ -95,6 +120,16 @@ struct kernel_traits<Element, fiat::reduce_stage<Map, Combine, Identity>>
     fiat::compile<Element>(fiat::reduce_stage<Map, Combine, Identity> {});
   static constexpr std::string_view entry {fiat::reduce_entry};
   static constexpr std::size_t push_size {sizeof(fiat::detail::reduce_push)};
+};
+
+template<fiat::scalar Element, class Uniform, class Operation>
+  requires fiat::uniform_traceable<Operation, Element, Uniform>
+struct kernel_traits<Element, fiat::transform_with_stage<Uniform, Operation>>
+{
+  static constexpr auto words =
+    fiat::compile<Element>(fiat::transform_with_stage<Uniform, Operation> {});
+  static constexpr std::string_view entry {fiat::transform_entry};
+  static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
 };
 
 } // namespace detail
@@ -466,42 +501,6 @@ private:
   argument_tuple               arguments_;
 };
 
-export template<fiat::scalar Element, class Map, class Combine>
-  requires (fiat::traceable<Map, Element> && fiat::combinable<Combine, Element>)
-class reduce_pipeline
-{
-public:
-  using argument_tuple =
-    decltype(fiat::reduce_stage<Map, Combine, Element>::arguments);
-
-  explicit reduce_pipeline(
-    const device_array<Element>& source,
-    argument_tuple               arguments,
-    Element                      identity)
-  : source_ {source}, arguments_ {std::move(arguments)}, identity_ {identity}
-  {}
-
-  [[nodiscard]]
-  auto
-  source() const noexcept -> const device_array<Element>&
-  { return source_; }
-
-  [[nodiscard]]
-  auto
-  arguments() const noexcept -> const argument_tuple&
-  { return arguments_; }
-
-  [[nodiscard]]
-  auto
-  identity() const noexcept -> Element
-  { return identity_; }
-
-private:
-  const device_array<Element>& source_;
-  argument_tuple               arguments_;
-  Element                      identity_;
-};
-
 inline constexpr std::string_view transform_mismatch {
   "this fiat::transform cannot run on this array: every runtime argument must "
   "have the array's element type, and the lambda must take (value, "
@@ -557,6 +556,107 @@ operator |(
       fiat::transform_stage<Operation> {.arguments = current.arguments()},
       std::move(next)));
 }
+
+export template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
+  requires fiat::uniform_traceable<Operation, Element, Uniform>
+class transform_with_pipeline
+{
+public:
+  using argument_tuple =
+    decltype(fiat::transform_with_stage<Uniform, Operation>::arguments);
+
+  explicit transform_with_pipeline(
+    const device_array<Element>& source,
+    std::uint64_t                address,
+    argument_tuple               arguments)
+  : source_ {source}, address_ {address}, arguments_ {std::move(arguments)}
+  {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<Element>&
+  { return source_; }
+
+  [[nodiscard]]
+  auto
+  address() const noexcept -> std::uint64_t
+  { return address_; }
+
+  [[nodiscard]]
+  auto
+  arguments() const noexcept -> const argument_tuple&
+  { return arguments_; }
+
+private:
+  const device_array<Element>& source_ {};
+  std::uint64_t                address_ {};
+  argument_tuple               arguments_;
+};
+
+inline constexpr std::string_view transform_with_mismatch {
+  "this fiat::transform_with cannot run on this array: the uniform element "
+  "type must match the array element type, every further runtime argument must "
+  "have that element type, and the lambda must take (value, uniform, "
+  "arguments...)"
+};
+
+export
+template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
+[[nodiscard]]
+auto
+operator |(
+  const device_array<Element>&                   source,
+  fiat::transform_with_stage<Uniform, Operation> stage)
+{
+  if constexpr (!fiat::uniform_traceable<Operation, Element, Uniform>)
+  {
+    static_assert(false, transform_with_mismatch);
+  }
+  else
+  {
+    return transform_with_pipeline<Element, Uniform, Operation> {
+      source,
+      stage.address,
+      std::move(stage.arguments),
+    };
+  }
+}
+
+export template<fiat::scalar Element, class Map, class Combine>
+  requires (fiat::traceable<Map, Element> && fiat::combinable<Combine, Element>)
+class reduce_pipeline
+{
+public:
+  using argument_tuple =
+    decltype(fiat::reduce_stage<Map, Combine, Element>::arguments);
+
+  explicit reduce_pipeline(
+    const device_array<Element>& source,
+    argument_tuple               arguments,
+    Element                      identity)
+  : source_ {source}, arguments_ {std::move(arguments)}, identity_ {identity}
+  {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<Element>&
+  { return source_; }
+
+  [[nodiscard]]
+  auto
+  arguments() const noexcept -> const argument_tuple&
+  { return arguments_; }
+
+  [[nodiscard]]
+  auto
+  identity() const noexcept -> Element
+  { return identity_; }
+
+private:
+  const device_array<Element>& source_;
+  argument_tuple               arguments_;
+  Element                      identity_;
+};
 
 inline constexpr std::string_view reduce_mismatch {
   "this fiat::reduce cannot run on this array: the map and the combine must "
@@ -634,6 +734,33 @@ pack_arguments(const std::tuple<Arguments...>& arguments)
     arguments);
   return words;
 }
+
+namespace detail
+{
+
+template<class... Arguments>
+[[nodiscard]]
+constexpr
+auto
+pack_uniform_arguments(
+  std::uint64_t address, const std::tuple<Arguments...>& arguments)
+  -> std::array<std::uint32_t, fiat::argument_capacity>
+{
+  std::array<std::uint32_t, fiat::argument_capacity> words {};
+  words[ 0 ] = static_cast<std::uint32_t>(address);
+  words[ 1 ] = static_cast<std::uint32_t>(address >> 32U);
+  std::apply(
+    [ & ](const Arguments&... argument) {
+      const std::array<std::uint32_t, sizeof...(Arguments)> packed {
+        std::bit_cast<std::uint32_t>(argument)...,
+      };
+      std::ranges::copy(packed, words.begin() + 2);
+    },
+    arguments);
+  return words;
+}
+
+} // namespace detail
 
 export
 template<fiat::scalar Element, class Operation>
@@ -749,7 +876,7 @@ export [[nodiscard]]
 inline
 auto
 execute(context& context) -> execute_stage
-{ return execute_stage {context}; }
+{ return execute_stage {.context = context}; }
 
 export
 template<fiat::scalar Element, class Operation>
@@ -757,6 +884,204 @@ template<fiat::scalar Element, class Operation>
 auto
 operator |(const pipeline<Element, Operation>& computation, execute_stage stage)
   -> std::expected<device_array<Element>, error_t>
+{ return run(stage.context, computation); }
+
+export struct keep_stage
+{
+  gpu::context& context;
+};
+
+export [[nodiscard]]
+inline
+auto
+keep(context& context) -> keep_stage
+{ return keep_stage {.context = context}; }
+
+export
+template<fiat::scalar Element, class Map, class Combine>
+[[nodiscard]]
+auto
+operator |(
+  const reduce_pipeline<Element, Map, Combine>& computation, keep_stage stage)
+  -> std::expected<device_scalar<Element>, error_t>
+{
+  auto&              context = stage.context;
+  single_time_submit submit {
+    context.pool(),
+    context.device().device(),
+    context.device().graphics_queue(),
+  };
+
+  auto scalar_buffer =
+    device_address_buffer::create<Element>(context.device().allocator(), 1U);
+  if (!scalar_buffer) { return std::unexpected {scalar_buffer.error()}; }
+
+  auto scalar_view = scalar_buffer->template addressed_view<Element>(
+    context.device(), 0UZ, sizeof(Element));
+  if (!scalar_view) { return std::unexpected {scalar_view.error()}; }
+
+  const auto address = scalar_view->device_address();
+
+  return submit.begin()
+    .and_then([ & ] -> std::expected<void, error_t> {
+      return record(submit.command_buffer(), context, computation);
+    })
+    .and_then([ & ] -> std::expected<void, error_t> {
+      const vk::MemoryBarrier2 to_copy {
+        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+        .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
+        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+      };
+      submit.command_buffer().pipelineBarrier2({
+        .memoryBarrierCount = 1U,
+        .pMemoryBarriers    = &to_copy,
+      });
+      const vk::BufferCopy region {
+        .srcOffset = 4UZ,
+        .dstOffset = 0UZ,
+        .size      = sizeof(Element),
+      };
+      submit.command_buffer().copyBuffer(
+        context.reduce_scratch().buffer(), scalar_buffer->buffer(), region);
+      const vk::MemoryBarrier2 to_shader {
+        .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
+        .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+        .dstStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+        .dstAccessMask =
+          vk::AccessFlagBits2::eShaderStorageRead |
+          vk::AccessFlagBits2::eShaderStorageWrite,
+      };
+      submit.command_buffer().pipelineBarrier2({
+        .memoryBarrierCount = 1U,
+        .pMemoryBarriers    = &to_shader,
+      });
+      return submit.end_and_submit(upload::wait_idle);
+    })
+    .transform([ & ] -> device_scalar<Element> {
+      return device_scalar<Element> {
+        std::move(*scalar_buffer),
+        address,
+      };
+    });
+}
+
+export
+template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&                                    command_buffer,
+  context&                                                    context,
+  const transform_with_pipeline<Element, Uniform, Operation>& computation,
+  device_array<Element>& output) -> std::expected<void, error_t>
+{
+  const auto count = computation.source().size();
+  if (output.size() != count)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+
+  auto kernel =
+    context.kernel<Element, fiat::transform_with_stage<Uniform, Operation>>();
+  if (!kernel) { return std::unexpected {kernel.error()}; }
+
+  auto input_view  = computation.source().addressed_view(context.device());
+  auto output_view = output.addressed_view(context.device());
+  if (!input_view) { return std::unexpected {input_view.error()}; }
+  if (!output_view) { return std::unexpected {output_view.error()}; }
+
+  const auto& compute = kernel->get();
+  command_buffer.bindPipeline(
+    vk::PipelineBindPoint::eCompute, *compute.pipeline());
+
+  const auto group_size = context.group_size();
+  const auto stride     = static_cast<std::uint32_t>(std::min(
+    std::uint64_t {context.max_group_count()} * group_size,
+    std::uint64_t {count}));
+
+  const auto arguments = detail::pack_uniform_arguments(
+    computation.address(), computation.arguments());
+
+  for (
+    const auto first : std::views::indices(count) | std::views::stride(stride))
+  {
+    const auto elements = std::min(count - first, stride);
+    push_compute<descriptor_table_backend::classic>(
+      command_buffer,
+      compute,
+      fiat::detail::transform_push {
+        .input     = input_view->device_address(),
+        .output    = output_view->device_address(),
+        .count     = count,
+        .first     = first,
+        .arguments = arguments,
+      });
+    dispathc(command_buffer, (elements + group_size - 1U) / group_size);
+  }
+  return {};
+}
+
+export
+template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
+[[nodiscard]]
+auto
+run(
+  context&                                                    context,
+  const transform_with_pipeline<Element, Uniform, Operation>& computation,
+  device_array<Element>& output) -> std::expected<void, error_t>
+{
+  single_time_submit submit {
+    context.pool(),
+    context.device().device(),
+    context.device().graphics_queue(),
+  };
+  return submit.begin()
+    .and_then([ & ] -> std::expected<void, error_t> {
+      return record(submit.command_buffer(), context, computation, output);
+    })
+    .and_then([ & ] -> std::expected<void, error_t> {
+      const vk::MemoryBarrier2 written {
+        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+        .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
+      };
+      submit.command_buffer().pipelineBarrier2({
+        .memoryBarrierCount = 1U,
+        .pMemoryBarriers    = &written,
+      });
+      return submit.end_and_submit(upload::wait_idle);
+    });
+}
+
+export
+template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
+[[nodiscard]]
+auto
+run(
+  context&                                                    context,
+  const transform_with_pipeline<Element, Uniform, Operation>& computation)
+  -> std::expected<device_array<Element>, error_t>
+{
+  return context.allocate<Element>(computation.source().size())
+    .and_then(
+      [ & ](device_array<Element>&& output)
+        -> std::expected<device_array<Element>, error_t> {
+        return run(context, computation, output)
+          .transform([ & ] -> device_array<Element> {
+            return std::move(output);
+          });
+      });
+}
+
+export
+template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
+[[nodiscard]]
+auto
+operator |(
+  const transform_with_pipeline<Element, Uniform, Operation>& computation,
+  execute_stage stage) -> std::expected<device_array<Element>, error_t>
 { return run(stage.context, computation); }
 
 export
