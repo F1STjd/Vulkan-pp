@@ -1017,7 +1017,7 @@ record(
         .first     = first,
         .arguments = arguments,
       });
-    dispathc(command_buffer, (elements + group_size - 1U) / group_size);
+    dispatch(command_buffer, (elements + group_size - 1U) / group_size);
   }
   return {};
 }
