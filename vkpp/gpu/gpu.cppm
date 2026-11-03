@@ -1143,7 +1143,7 @@ template<
 auto
 operator |(
   const scalar_pipeline<Element, Map, Combine, fiat::chain<Current...>>& current,
-  fiat::transform_stage<fiat::chain<Next...>> next)
+  [[maybe_unused]] fiat::transform_stage<fiat::chain<Next...>> next)
 {
   auto fused = fiat::fuse(
     fiat::transform_stage<fiat::chain<Current...>> {
