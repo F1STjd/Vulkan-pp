@@ -1,3 +1,8 @@
+module;
+#if defined(__cpp_impl_reflection)
+  #include <meta>
+#endif
+
 export module vkpp.gpu;
 
 import std;
@@ -52,6 +57,43 @@ private:
   friend class context;
 
   device_array(device_address_buffer&& buffer, std::uint32_t count)
+  : buffer_ {std::move(buffer)}, count_ {count}
+  {}
+
+  device_address_buffer buffer_;
+  std::uint32_t         count_ {};
+};
+
+export template<fiat::soa_element Element>
+class soa_array
+{
+public:
+  [[nodiscard]]
+  auto
+  size() const noexcept -> std::uint32_t
+  { return count_; }
+
+  [[nodiscard]]
+  auto
+  buffer() const noexcept -> const device_address_buffer&
+  { return buffer_; }
+
+  [[nodiscard]]
+  auto
+  base_address(const device_context& device) const
+    -> std::expected<std::uint64_t, error_t>
+  {
+    return buffer_
+      .template addressed_view<std::uint32_t>(device, 0UZ, buffer_.size())
+      .transform([](const auto& view) -> std::uint64_t {
+        return view.device_address();
+      });
+  }
+
+private:
+  friend class context;
+
+  soa_array(device_address_buffer&& buffer, std::uint32_t count)
   : buffer_ {std::move(buffer)}, count_ {count}
   {}
 
@@ -131,6 +173,90 @@ struct kernel_traits<Element, fiat::transform_with_stage<Uniform, Operation>>
   static constexpr std::string_view entry {fiat::transform_entry};
   static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
 };
+
+template<fiat::soa_element Element, class Operation>
+struct kernel_traits<Element, fiat::foreach_stage<Operation>>
+{
+  static constexpr auto words =
+    fiat::compile<Element>(fiat::foreach_stage<Operation> {});
+  static constexpr std::string_view entry {fiat::foreach_entry};
+  static constexpr std::size_t push_size {sizeof(fiat::detail::foreach_push)};
+};
+
+#if defined(__cpp_impl_reflection)
+
+template<fiat::soa_element Element>
+void
+transpose_to_soa_bytes(
+  std::span<const Element> host, std::span<std::byte> staging)
+{
+  const auto  count = static_cast<std::uint32_t>(host.size());
+  std::size_t leaf_index {};
+  template for (
+    constexpr auto member : std::meta::nonstatic_data_members_of(
+      ^^Element, std::meta::access_context::current()))
+  {
+    using leaf_type = [:std::meta::type_of(member):];
+    static_assert(fiat::scalar<leaf_type>);
+    const auto byte_offset = static_cast<std::size_t>(
+      fiat::detail::region_offset<Element>(count, leaf_index));
+    for (auto element_index : std::views::indices(count))
+    {
+      const leaf_type value = host[ element_index ].[:member:];
+      std::memcpy(
+        staging.data() +
+          byte_offset +
+          static_cast<std::size_t>(element_index) * sizeof(leaf_type),
+        &value,
+        sizeof(leaf_type));
+    }
+    ++leaf_index;
+  }
+}
+
+template<fiat::soa_element Element>
+void
+transpose_from_soa_bytes(
+  std::span<const std::byte> staging, std::span<Element> host)
+{
+  const auto  count = static_cast<std::uint32_t>(host.size());
+  std::size_t leaf_index {};
+  template for (
+    constexpr auto member : std::meta::nonstatic_data_members_of(
+      ^^Element, std::meta::access_context::current()))
+  {
+    using leaf_type = [:std::meta::type_of(member):];
+    static_assert(fiat::scalar<leaf_type>);
+    const auto byte_offset = static_cast<std::size_t>(
+      fiat::detail::region_offset<Element>(count, leaf_index));
+    for (auto element_index : std::views::indices(count))
+    {
+      leaf_type value {};
+      std::memcpy(
+        &value,
+        staging.data() +
+          byte_offset +
+          static_cast<std::size_t>(element_index) * sizeof(leaf_type),
+        sizeof(leaf_type));
+      host[ element_index ].[:member:] = value;
+    }
+    ++leaf_index;
+  }
+}
+
+#else
+
+template<fiat::soa_element Element>
+void
+transpose_to_soa_bytes(std::span<const Element>, std::span<std::byte>)
+{}
+
+template<fiat::soa_element Element>
+void
+transpose_from_soa_bytes(std::span<const std::byte>, std::span<Element>)
+{}
+
+#endif
 
 } // namespace detail
 
@@ -259,6 +385,38 @@ public:
       });
   }
 
+  template<fiat::soa_element Element>
+  [[nodiscard]]
+  auto
+  upload_soa([[maybe_unused]] std::span<const Element> host)
+    -> std::expected<soa_array<Element>, error_t>
+  {
+#if !defined(__cpp_impl_reflection)
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+#else
+    if (host.empty() || host.size() > std::numeric_limits<std::uint32_t>::max())
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::invalid_data_size),
+      };
+    }
+    const auto             count      = static_cast<std::uint32_t>(host.size());
+    const auto             byte_count = fiat::detail::soa_bytes<Element>(count);
+    std::vector<std::byte> staging(static_cast<std::size_t>(byte_count));
+    transpose_to_soa_bytes<Element>(host, staging);
+    return upload_device_local_buffer(
+      buffer_upload_create_info_for<buffer_kind::device_address> {
+        .device = device_,
+        .pool   = pool_,
+        .bytes  = std::span {staging},
+      })
+      .transform(
+        [ count ](device_address_buffer&& buffer) -> soa_array<Element> {
+          return soa_array<Element> {std::move(buffer), count};
+        });
+#endif
+  }
+
   template<fiat::scalar Element>
   [[nodiscard]]
   auto
@@ -299,6 +457,38 @@ public:
               return std::move(elements);
             });
         });
+  }
+
+  template<fiat::soa_element Element>
+  [[nodiscard]]
+  auto
+  download_soa([[maybe_unused]] soa_array<Element>& array)
+    -> std::expected<std::vector<Element>, error_t>
+  {
+#if !defined(__cpp_impl_reflection)
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+#else
+    return download_device_local_buffer_and_join(
+      {
+        .device = device_,
+        .pool   = pool_,
+        .source = array.buffer().buffer(),
+        .size   = array.buffer().size(),
+      })
+      .and_then(
+        [ & ](readback_buffer&& readback)
+          -> std::expected<std::vector<Element>, error_t> {
+          std::vector<std::byte> staging(
+            static_cast<std::size_t>(
+              fiat::detail::soa_bytes<Element>(array.size())));
+          return readback.copy_mapped_into(std::span {staging})
+            .transform([ & ] -> std::vector<Element> {
+              std::vector<Element> host(array.size());
+              detail::transpose_from_soa_bytes<Element>(staging, host);
+              return host;
+            });
+        });
+#endif
   }
 
   [[nodiscard]]
@@ -622,6 +812,135 @@ operator |(
   }
 }
 
+export template<fiat::soa_element Element, class Operation>
+class foreach_pipeline
+{
+public:
+  using argument_tuple = decltype(fiat::foreach_stage<Operation>::arguments);
+
+  explicit foreach_pipeline(
+    soa_array<Element>& buffer, argument_tuple arguments)
+  : buffer_ {buffer}, arguments_ {std::move(arguments)}
+  {}
+
+  [[nodiscard]]
+  auto
+  buffer() const noexcept -> soa_array<Element>&
+  { return buffer_; }
+
+  [[nodiscard]]
+  auto
+  arguments() const noexcept -> const argument_tuple&
+  { return arguments_; }
+
+private:
+  soa_array<Element>& buffer_;
+  argument_tuple      arguments_;
+};
+
+inline constexpr std::string_view foreach_mismatch {
+  "this fiat::for_each cannot run on this soa_array: the callable must take "
+  "(traced_struct<Element>&, runtime scalar arguments...) and every runtime "
+  "argument must be float, std::int32_t, or std::uint32_t"
+};
+
+export
+template<fiat::scalar Element, class Operation>
+[[nodiscard]]
+auto
+operator |(soa_array<Element>& buffer, fiat::foreach_stage<Operation> stage)
+{
+  if constexpr (!fiat::foreach_traceable<Operation, Element>)
+  {
+    static_assert(false, foreach_mismatch);
+  }
+  else
+  {
+    return foreach_pipeline<Element, Operation> {
+      buffer, std::move(stage.arguments)
+    };
+  }
+}
+
+export
+template<fiat::scalar Element, class Operation>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&                    command_buffer,
+  context&                                    context,
+  const foreach_pipeline<Element, Operation>& computation)
+  -> std::expected<void, error_t>
+{
+  const auto count = computation.source().size();
+
+  auto kernel = context.kernel<Element, fiat::foreach_stage<Operation>>();
+  if (!kernel) { return std::unexpected {kernel.error()}; }
+
+  auto base = computation.buffer().base_address(context.device());
+  if (!base) { return std::unexpected {base.error()}; }
+
+  const compute_pipeline& compute = kernel->get();
+  command_buffer.bindPipeline(
+    vk::PipelineBindPoint::eCompute, *compute.pipeline());
+
+  const std::uint32_t group_size = context.group_size();
+  const auto          stride     = static_cast<std::uint32_t>(std::min(
+    std::uint64_t {context.max_group_count()} * group_size,
+    std::uint64_t {count}));
+
+  const auto arguments = pack_arguments(computation.arguments());
+
+  for (
+    const auto first : std::views::indices(count) | std::views::stride(stride))
+  {
+    const auto elements = std::min(count - first, stride);
+    push_compute<descriptor_table_backend::classic>(
+      command_buffer,
+      compute,
+      fiat::detail::transform_push {
+        .input     = *base,
+        .output    = 0U,
+        .count     = count,
+        .first     = static_cast<std::uint32_t>(first),
+        .arguments = arguments,
+      });
+    dispatch(command_buffer, (elements + group_size - 1U) / group_size);
+  }
+  return {};
+}
+
+export
+template<fiat::scalar Element, class Operation>
+[[nodiscard]]
+auto
+run(context& context, const foreach_pipeline<Element, Operation>& computation)
+  -> std::expected<void, error_t>
+{
+  single_time_submit submit {
+    context.pool(),
+    context.device().device(),
+    context.device().graphics_queue(),
+  };
+  return submit.begin()
+    .and_then([ & ] -> std::expected<void, error_t> {
+      return record(submit.command_buffer(), context, computation);
+    })
+    .and_then([ & ] -> std::expected<void, error_t> {
+      const vk::MemoryBarrier2 written {
+        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+        .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
+      };
+      submit.command_buffer().pipelineBarrier2({
+        .memoryBarrierCount = 1U,
+        .pMemoryBarriers    = &written,
+      });
+      return submit.end_and_submit(upload::wait_idle);
+    });
+}
+
 export template<fiat::scalar Element, class Map, class Combine>
   requires (fiat::traceable<Map, Element> && fiat::combinable<Combine, Element>)
 class reduce_pipeline
@@ -712,6 +1031,118 @@ operator |(
       current.source(),
       std::move(fused.arguments),
       fused.identity,
+    };
+  }
+}
+
+export template<fiat::scalar Element, class Map, class Combine, class Operation>
+  requires (
+    fiat::traceable<Map, Element> &&
+    fiat::combinable<Combine, Element> &&
+    fiat::traceable<Operation, Element>)
+class scalar_pipeline
+{
+public:
+  using reduce_argument_tuple =
+    decltype(fiat::reduce_stage<Map, Combine, Element>::arguments);
+  using map_argument_tuple =
+    decltype(fiat::transform_stage<Operation>::arguments);
+
+  explicit scalar_pipeline(
+    const device_array<Element>& source,
+    reduce_argument_tuple        reduce_arguments,
+    Element                      identity,
+    map_argument_tuple           map_arguments)
+  : source_ {source},
+    reduce_arguments_ {std::move(reduce_arguments)},
+    identity_ {identity},
+    map_arguments_ {std::move(map_arguments)}
+  {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<Element>&
+  { return source_; }
+
+  [[nodiscard]]
+  auto
+  reduce_arguments() const noexcept -> const reduce_argument_tuple&
+  { reduce_arguments_; }
+
+  [[nodiscard]]
+  auto
+  identity() const noexcept -> Element
+  { return identity_; }
+
+  [[nodiscard]]
+  auto
+  map_arguments() const noexcept -> const map_argument_tuple&
+  { return map_arguments_; }
+
+private:
+  const device_array<Element>& source_;
+  reduce_argument_tuple        reduce_arguments_;
+  Element                      identity_;
+  map_argument_tuple           map_arguments_;
+};
+
+export
+template<fiat::scalar Element, class Map, class Combine, class Next>
+[[nodiscard]]
+auto
+operator |(
+  const reduce_pipeline<Element, Map, Combine>& computation,
+  fiat::transform_stage<Next>                   stage)
+{
+  if constexpr (!fiat::traceable<Next, Element>)
+  {
+    static_assert(false, transform_mismatch);
+  }
+  else
+  {
+    return scalar_pipeline<Element, Map, Combine, Next> {
+      computation.source(),
+      computation.arguments(),
+      computation.identity(),
+      std::move(stage.arguments),
+    };
+  }
+}
+
+export
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  class... Current,
+  class... Next
+>
+[[nodiscard]]
+auto
+operator |(
+  const scalar_pipeline<Element, Map, Combine, fiat::chain<Current...>>& current,
+  fiat::transform_stage<fiat::chain<Next...>> next)
+{
+  auto fused = fiat::fuse(
+    fiat::transform_stage<fiat::chain<Current...>> {
+      .arguments = current.map_arguments(),
+    });
+  if constexpr (!fiat::traceable<fiat::chain<Current..., Next...>, Element>)
+  {
+    static_assert(false, transform_mismatch);
+  }
+  else
+  {
+    return scalar_pipeline<
+      Element,
+      Map,
+      Combine,
+      fiat::chain<Current..., Next...>
+    > {
+      current.source(),
+      current.reduce_arguments(),
+      current.identity(),
+      std::move(fused.arguments),
     };
   }
 }
@@ -967,6 +1398,46 @@ operator |(
 }
 
 export
+template<fiat::scalar Element, class Map, class Combine, class Operation>
+[[nodiscard]]
+auto
+operator |(
+  const scalar_pipeline<Element, Map, Combine, Operation>& computation,
+  keep_stage stage) -> std::expected<device_scalar<Element>, error_t>
+{
+  auto&              context = stage.context;
+  single_time_submit submit {
+    context.pool(),
+    context.device().device(),
+    context.device().graphics_queue(),
+  };
+
+  auto scalar_buffer =
+    device_address_buffer::create<Element>(context.device().allocator(), 1U);
+  if (!scalar_buffer) { return std::unexpected {scalar_buffer.error()}; }
+
+  auto scalar_view = scalar_buffer->template addressed_view<Element>(
+    context.device(), 0UZ, sizeof(Element));
+  if (!scalar_view) { return std::unexpected {scalar_view.error()}; }
+  const auto address = scalar_view->device_address();
+
+  return submit.begin()
+    .and_then([ & ] -> std::expected<void, error_t> {
+      return record(
+        submit.command_buffer(), context, computation, *scalar_buffer, address);
+    })
+    .and_then([ & ] -> std::expected<void, error_t> {
+      return submit.end_and_submit(upload::wait_idle);
+    })
+    .transform([ & ] -> device_scalar<Element> {
+      return device_scalar<Element> {
+        std::move(*scalar_buffer),
+        address,
+      };
+    });
+}
+
+export
 template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
 [[nodiscard]]
 auto
@@ -1153,6 +1624,88 @@ record(
 }
 
 export
+template<fiat::scalar Element, class Map, class Combine, class Operation>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&                                 command_buffer,
+  context&                                                 context,
+  const scalar_pipeline<Element, Map, Combine, Operation>& computation,
+  device_address_buffer&                                   scalar_buffer,
+  std::uint64_t address) -> std::expected<void, error_t>
+{
+  const auto count      = computation.source().size();
+  const auto group_size = context.group_size();
+  if (
+    count == 0U ||
+    count > 0xFF'FF'FFU - fiat::detail::reduce_group_limit * group_size)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+
+  const reduce_pipeline<Element, Map, Combine> reduce_part {
+    computation.source(),
+    computation.reduce_arguments(),
+    computation.identity(),
+  };
+  if (auto error = record(command_buffer, context, reduce_part); !error)
+  {
+    return error;
+  }
+
+  const vk::MemoryBarrier2 to_copy {
+    .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+    .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+    .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
+    .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+  };
+  command_buffer.pipelineBarrier2({
+    .memoryBarrierCount = 1U,
+    .pMemoryBarriers    = &to_copy,
+  });
+  const vk::BufferCopy region {
+    .srcOffset = 4UZ,
+    .dstOffset = 0UZ,
+    .size      = sizeof(Element),
+  };
+  command_buffer.copyBuffer(
+    context.reduce_scratch().buffer(), scalar_buffer.buffer(), region);
+
+  const vk::MemoryBarrier2 to_shader {
+    .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
+    .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+    .dstStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+    .dstAccessMask =
+      vk::AccessFlagBits2::eShaderStorageRead |
+      vk::AccessFlagBits2::eShaderStorageWrite,
+  };
+  command_buffer.pipelineBarrier2({
+    .memoryBarrierCount = 1U,
+    .pMemoryBarriers    = &to_shader,
+  });
+
+  auto kernel = context.kernel<Element, fiat::transform_stage<Operation>>();
+  if (!kernel) { return std::unexpected {kernel.error()}; }
+
+  const compute_pipeline& compute = kernel->get();
+  command_buffer.bindPipeline(
+    vk::PipelineBindPoint::eCompute, *compute.pipeline());
+
+  push_compute<descriptor_table_backend::classic>(
+    command_buffer,
+    compute,
+    fiat::detail::reduce_push {
+      .input     = address,
+      .scratch   = address,
+      .count     = 1U,
+      .identity  = 0U,
+      .arguments = pack_arguments(computation.map_arguments()),
+    });
+  dispatch(command_buffer, 1U);
+  return {};
+}
+
+export
 template<fiat::scalar Element, class Map, class Combine>
 [[nodiscard]]
 auto
@@ -1215,6 +1768,89 @@ auto
 operator |(
   const reduce_pipeline<Element, Map, Combine>& computation,
   execute_stage stage) -> std::expected<Element, error_t>
+{ return run(stage.context, computation); }
+
+export
+template<fiat::scalar Element, class Map, class Combine, class Operation>
+[[nodiscard]]
+auto
+run(
+  context&                                                 context,
+  const scalar_pipeline<Element, Map, Combine, Operation>& computation)
+  -> std::expected<Element, error_t>
+{
+  single_time_submit submit {
+    context.pool(),
+    context.device().device(),
+    context.device().graphics_queue(),
+  };
+
+  auto scalar_buffer =
+    device_address_buffer::create<Element>(context.device().allocator(), 1U);
+  if (!scalar_buffer) { return std::unexpected {scalar_buffer.error()}; }
+
+  auto scalar_view = scalar_buffer->template addressed_view<Element>(
+    context.device(), 0UZ, sizeof(Element));
+  if (!scalar_view) { return std::unexpected {scalar_view.error()}; }
+  const auto address = scalar_view->device_address();
+
+  return submit.begin()
+    .and_then([ & ] -> std::expected<void, error_t> {
+      return record(
+        submit.command_buffer(), context, computation, *scalar_buffer, address);
+    })
+    .and_then([ & ] -> std::expected<void, error_t> {
+      const vk::MemoryBarrier2 to_copy {
+        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+        .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
+        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+      };
+      submit.command_buffer().pipelineBarrier2({
+        .memoryBarrierCount = 1U,
+        .pMemoryBarriers    = &to_copy,
+      });
+      const vk::BufferCopy region {
+        .srcOffset = 0UZ,
+        .dstOffset = 0UZ,
+        .size      = sizeof(Element),
+      };
+      submit.command_buffer().copyBuffer(
+        scalar_buffer->buffer(), context.reduce_readback().buffer(), region);
+      const vk::MemoryBarrier2 to_host {
+        .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
+        .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+        .dstStageMask  = vk::PipelineStageFlagBits2::eHost,
+        .dstAccessMask = vk::AccessFlagBits2::eHostRead,
+      };
+      submit.command_buffer().pipelineBarrier2({
+        .memoryBarrierCount = 1U,
+        .pMemoryBarriers    = &to_host,
+      });
+      return submit.end_and_submit(upload::wait_idle);
+    })
+    .and_then([ & ] -> std::expected<Element, error_t> {
+      Element value {};
+      return context.reduce_readback()
+        .copy_mapped_into(std::span {&value, 1UZ})
+        .transform([ & ] -> Element { return value; });
+    });
+}
+
+template<fiat::scalar Element, class Map, class Combine, class Operation>
+[[nodiscard]]
+auto
+operator |(
+  const scalar_pipeline<Element, Map, Combine, Operation>& computation,
+  execute_stage stage) -> std::expected<Element, error_t>
+{ return run(stage.context, computation); }
+
+template<fiat::scalar Element, class Operation>
+[[nodiscard]]
+auto
+operator |(
+  const foreach_pipeline<Element, Operation>& computation, execute_stage stage)
+  -> std::expected<void, error_t>
 { return run(stage.context, computation); }
 
 } // namespace vkpp::gpu
