@@ -138,7 +138,7 @@ export struct context_create_info
 namespace detail
 {
 
-template<fiat::scalar Element, class Stage>
+template<class Element, class Stage>
 struct kernel_traits;
 
 template<fiat::scalar Element, class Operation>
@@ -190,11 +190,12 @@ void
 transpose_to_soa_bytes(
   std::span<const Element> host, std::span<std::byte> staging)
 {
-  const auto  count = static_cast<std::uint32_t>(host.size());
-  std::size_t leaf_index {};
-  template for (
-    constexpr auto member : std::meta::nonstatic_data_members_of(
-      ^^Element, std::meta::access_context::current()))
+  const auto            count = static_cast<std::uint32_t>(host.size());
+  std::size_t           leaf_index {};
+  static constexpr auto members = std::define_static_array(
+    std::meta::nonstatic_data_members_of(
+      ^^Element, std::meta::access_context::unchecked()));
+  template for (constexpr auto member : members)
   {
     using leaf_type = [:std::meta::type_of(member):];
     static_assert(fiat::scalar<leaf_type>);
@@ -219,11 +220,12 @@ void
 transpose_from_soa_bytes(
   std::span<const std::byte> staging, std::span<Element> host)
 {
-  const auto  count = static_cast<std::uint32_t>(host.size());
-  std::size_t leaf_index {};
-  template for (
-    constexpr auto member : std::meta::nonstatic_data_members_of(
-      ^^Element, std::meta::access_context::current()))
+  const auto            count = static_cast<std::uint32_t>(host.size());
+  std::size_t           leaf_index {};
+  static constexpr auto members = std::define_static_array(
+    std::meta::nonstatic_data_members_of(
+      ^^Element, std::meta::access_context::current()));
+  template for (constexpr auto member : members)
   {
     using leaf_type = [:std::meta::type_of(member):];
     static_assert(fiat::scalar<leaf_type>);
@@ -303,7 +305,8 @@ public:
         });
   }
 
-  template<fiat::scalar Element, class Stage>
+  template<class Element, class Stage>
+    requires fiat::scalar<Element> || fiat::soa_element<Element>
   [[nodiscard]]
   auto
   kernel()
@@ -403,7 +406,7 @@ public:
     const auto             count      = static_cast<std::uint32_t>(host.size());
     const auto             byte_count = fiat::detail::soa_bytes<Element>(count);
     std::vector<std::byte> staging(static_cast<std::size_t>(byte_count));
-    transpose_to_soa_bytes<Element>(host, staging);
+    detail::transpose_to_soa_bytes<Element>(host, staging);
     return upload_device_local_buffer(
       buffer_upload_create_info_for<buffer_kind::device_address> {
         .device = device_,
@@ -812,6 +815,25 @@ operator |(
   }
 }
 
+template<class... Arguments>
+[[nodiscard]]
+constexpr
+auto
+pack_arguments(const std::tuple<Arguments...>& arguments)
+  -> std::array<std::uint32_t, fiat::argument_capacity>
+{
+  std::array<std::uint32_t, fiat::argument_capacity> words {};
+  std::apply(
+    [ & ](const Arguments&... argument) {
+      const std::array<std::uint32_t, sizeof...(Arguments)> packed {
+        std::bit_cast<std::uint32_t>(argument)...,
+      };
+      std::ranges::copy(packed, words.begin());
+    },
+    arguments);
+  return words;
+}
+
 export template<fiat::soa_element Element, class Operation>
 class foreach_pipeline
 {
@@ -845,7 +867,7 @@ inline constexpr std::string_view foreach_mismatch {
 };
 
 export
-template<fiat::scalar Element, class Operation>
+template<fiat::soa_element Element, class Operation>
 [[nodiscard]]
 auto
 operator |(soa_array<Element>& buffer, fiat::foreach_stage<Operation> stage)
@@ -863,7 +885,7 @@ operator |(soa_array<Element>& buffer, fiat::foreach_stage<Operation> stage)
 }
 
 export
-template<fiat::scalar Element, class Operation>
+template<fiat::soa_element Element, class Operation>
 [[nodiscard]]
 auto
 record(
@@ -872,7 +894,7 @@ record(
   const foreach_pipeline<Element, Operation>& computation)
   -> std::expected<void, error_t>
 {
-  const auto count = computation.source().size();
+  const auto count = computation.buffer().size();
 
   auto kernel = context.kernel<Element, fiat::foreach_stage<Operation>>();
   if (!kernel) { return std::unexpected {kernel.error()}; }
@@ -898,9 +920,9 @@ record(
     push_compute<descriptor_table_backend::classic>(
       command_buffer,
       compute,
-      fiat::detail::transform_push {
-        .input     = *base,
-        .output    = 0U,
+      fiat::detail::foreach_push {
+        .base      = *base,
+        .unused    = 0U,
         .count     = count,
         .first     = static_cast<std::uint32_t>(first),
         .arguments = arguments,
@@ -911,7 +933,7 @@ record(
 }
 
 export
-template<fiat::scalar Element, class Operation>
+template<fiat::soa_element Element, class Operation>
 [[nodiscard]]
 auto
 run(context& context, const foreach_pipeline<Element, Operation>& computation)
@@ -1145,25 +1167,6 @@ operator |(
       std::move(fused.arguments),
     };
   }
-}
-
-template<class... Arguments>
-[[nodiscard]]
-constexpr
-auto
-pack_arguments(const std::tuple<Arguments...>& arguments)
-  -> std::array<std::uint32_t, fiat::argument_capacity>
-{
-  std::array<std::uint32_t, fiat::argument_capacity> words {};
-  std::apply(
-    [ & ](const Arguments&... argument) {
-      const std::array<std::uint32_t, sizeof...(Arguments)> packed {
-        std::bit_cast<std::uint32_t>(argument)...,
-      };
-      std::ranges::copy(packed, words.begin());
-    },
-    arguments);
-  return words;
 }
 
 namespace detail
@@ -1837,6 +1840,7 @@ run(
     });
 }
 
+export
 template<fiat::scalar Element, class Map, class Combine, class Operation>
 [[nodiscard]]
 auto
@@ -1845,7 +1849,8 @@ operator |(
   execute_stage stage) -> std::expected<Element, error_t>
 { return run(stage.context, computation); }
 
-template<fiat::scalar Element, class Operation>
+export
+template<fiat::soa_element Element, class Operation>
 [[nodiscard]]
 auto
 operator |(
