@@ -1089,7 +1089,7 @@ public:
   [[nodiscard]]
   auto
   reduce_arguments() const noexcept -> const reduce_argument_tuple&
-  { reduce_arguments_; }
+  { return reduce_arguments_; }
 
   [[nodiscard]]
   auto
