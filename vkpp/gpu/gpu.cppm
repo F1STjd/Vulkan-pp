@@ -1143,12 +1143,13 @@ template<
 auto
 operator |(
   const scalar_pipeline<Element, Map, Combine, fiat::chain<Current...>>& current,
-  [[maybe_unused]] fiat::transform_stage<fiat::chain<Next...>> next)
+  fiat::transform_stage<fiat::chain<Next...>> next)
 {
   auto fused = fiat::fuse(
     fiat::transform_stage<fiat::chain<Current...>> {
       .arguments = current.map_arguments(),
-    });
+    },
+    std::move(next));
   if constexpr (!fiat::traceable<fiat::chain<Current..., Next...>, Element>)
   {
     static_assert(false, transform_mismatch);
@@ -1697,11 +1698,11 @@ record(
   push_compute<descriptor_table_backend::classic>(
     command_buffer,
     compute,
-    fiat::detail::reduce_push {
+    fiat::detail::transform_push {
       .input     = address,
-      .scratch   = address,
+      .output    = address,
       .count     = 1U,
-      .identity  = 0U,
+      .first     = 0U,
       .arguments = pack_arguments(computation.map_arguments()),
     });
   dispatch(command_buffer, 1U);
