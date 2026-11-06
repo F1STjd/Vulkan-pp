@@ -722,6 +722,29 @@ record_barrier_impl(
   });
 }
 
+template<std::invocable<vk::raii::CommandBuffer&> Record>
+  requires std::same_as<
+    std::invoke_result_t<Record&, vk::raii::CommandBuffer&>,
+    std::expected<void, error_t>
+  >
+[[nodiscard]]
+auto
+submit_impl(context& context, Record&& record) -> std::expected<void, error_t>
+{
+  single_time_submit submit {
+    context.pool(),
+    context.device().device(),
+    context.device().graphics_queue(),
+  };
+  return submit.begin()
+    .and_then([ & ] -> std::expected<void, error_t> {
+      return std::invoke(record, submit.command_buffer());
+    })
+    .and_then([ & ] -> std::expected<void, error_t> {
+      return submit.end_and_submit(upload::wait_idle);
+    });
+}
+
 } // namespace detail
 
 export template<fiat::scalar Element, class Operation>
@@ -996,19 +1019,17 @@ auto
 run(context& context, const foreach_pipeline<Element, Operation>& computation)
   -> std::expected<void, error_t>
 {
-  single_time_submit submit {
-    context.pool(),
-    context.device().device(),
-    context.device().graphics_queue(),
-  };
-  return submit.begin()
-    .and_then([ & ] -> std::expected<void, error_t> {
-      return record(submit.command_buffer(), context, computation);
-    })
-    .and_then([ & ] -> std::expected<void, error_t> {
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (auto error = record(command_buffer, context, computation); !error)
+      {
+        return error;
+      }
       detail::record_barrier_impl(
-        submit.command_buffer(), detail::compute_write_to_any_read);
-      return submit.end_and_submit(upload::wait_idle);
+        command_buffer, detail::compute_write_to_any_read);
+      return {};
     });
 }
 
@@ -1309,19 +1330,17 @@ run(
   const pipeline<Element, Operation>& computation,
   device_array<Element>&              output) -> std::expected<void, error_t>
 {
-  single_time_submit submit {
-    context.pool(),
-    context.device().device(),
-    context.device().graphics_queue(),
-  };
-  return submit.begin()
-    .and_then([ & ] -> std::expected<void, error_t> {
-      return record(submit.command_buffer(), context, computation, output);
-    })
-    .and_then([ & ] -> std::expected<void, error_t> {
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (auto error = record(command_buffer, context, computation); !error)
+      {
+        return error;
+      }
       detail::record_barrier_impl(
-        submit.command_buffer(), detail::compute_write_to_any_read);
-      return submit.end_and_submit(upload::wait_idle);
+        command_buffer, detail::compute_write_to_any_read);
+      return {};
     });
 }
 
@@ -1381,12 +1400,7 @@ operator |(
   const reduce_pipeline<Element, Map, Combine>& computation, keep_stage stage)
   -> std::expected<device_scalar<Element>, error_t>
 {
-  auto&              context = stage.context;
-  single_time_submit submit {
-    context.pool(),
-    context.device().device(),
-    context.device().graphics_queue(),
-  };
+  auto& context = stage.context;
 
   auto scalar_buffer =
     device_address_buffer::create<Element>(context.device().allocator(), 1U);
@@ -1398,29 +1412,29 @@ operator |(
 
   const auto address = scalar_view->device_address();
 
-  return submit.begin()
-    .and_then([ & ] -> std::expected<void, error_t> {
-      return record(submit.command_buffer(), context, computation);
-    })
-    .and_then([ & ] -> std::expected<void, error_t> {
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (auto error = record(command_buffer, context, computation); !error)
+      {
+        return error;
+      }
       detail::record_barrier_impl(
-        submit.command_buffer(), detail::compute_write_to_copy_read);
+        command_buffer, detail::compute_write_to_copy_read);
       const vk::BufferCopy region {
         .srcOffset = 4UZ,
         .dstOffset = 0UZ,
         .size      = sizeof(Element),
       };
-      submit.command_buffer().copyBuffer(
+      command_buffer.copyBuffer(
         context.reduce_scratch().buffer(), scalar_buffer->buffer(), region);
       detail::record_barrier_impl(
-        submit.command_buffer(), detail::copy_write_to_compute);
-      return submit.end_and_submit(upload::wait_idle);
+        command_buffer, detail::copy_write_to_compute);
+      return {};
     })
     .transform([ & ] -> device_scalar<Element> {
-      return device_scalar<Element> {
-        std::move(*scalar_buffer),
-        address,
-      };
+      return device_scalar<Element> {std::move(*scalar_buffer), address};
     });
 }
 
@@ -1432,12 +1446,7 @@ operator |(
   const scalar_pipeline<Element, Map, Combine, Operation>& computation,
   keep_stage stage) -> std::expected<device_scalar<Element>, error_t>
 {
-  auto&              context = stage.context;
-  single_time_submit submit {
-    context.pool(),
-    context.device().device(),
-    context.device().graphics_queue(),
-  };
+  auto& context = stage.context;
 
   auto scalar_buffer =
     device_address_buffer::create<Element>(context.device().allocator(), 1U);
@@ -1448,19 +1457,15 @@ operator |(
   if (!scalar_view) { return std::unexpected {scalar_view.error()}; }
   const auto address = scalar_view->device_address();
 
-  return submit.begin()
-    .and_then([ & ] -> std::expected<void, error_t> {
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
       return record(
-        submit.command_buffer(), context, computation, *scalar_buffer, address);
-    })
-    .and_then([ & ] -> std::expected<void, error_t> {
-      return submit.end_and_submit(upload::wait_idle);
+        command_buffer, context, computation, *scalar_buffer, address);
     })
     .transform([ & ] -> device_scalar<Element> {
-      return device_scalar<Element> {
-        std::move(*scalar_buffer),
-        address,
-      };
+      return device_scalar<Element> {std::move(*scalar_buffer), address};
     });
 }
 
@@ -1529,19 +1534,17 @@ run(
   const transform_with_pipeline<Element, Uniform, Operation>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  single_time_submit submit {
-    context.pool(),
-    context.device().device(),
-    context.device().graphics_queue(),
-  };
-  return submit.begin()
-    .and_then([ & ] -> std::expected<void, error_t> {
-      return record(submit.command_buffer(), context, computation, output);
-    })
-    .and_then([ & ] -> std::expected<void, error_t> {
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (auto error = record(command_buffer, context, computation); !error)
+      {
+        return error;
+      }
       detail::record_barrier_impl(
-        submit.command_buffer(), detail::compute_write_to_any_read);
-      return submit.end_and_submit(upload::wait_idle);
+        command_buffer, detail::compute_write_to_any_read);
+      return {};
     });
 }
 
@@ -1699,30 +1702,28 @@ auto
 run(context& context, const reduce_pipeline<Element, Map, Combine>& computation)
   -> std::expected<Element, error_t>
 {
-  single_time_submit submit {
-    context.pool(),
-    context.device().device(),
-    context.device().graphics_queue(),
-  };
-  return submit.begin()
-    .and_then([ & ] -> std::expected<void, error_t> {
-      return record(submit.command_buffer(), context, computation);
-    })
-    .and_then([ & ] -> std::expected<void, error_t> {
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (auto error = record(command_buffer, context, computation); !error)
+      {
+        return error;
+      }
       detail::record_barrier_impl(
-        submit.command_buffer(), detail::compute_write_to_copy_read);
+        command_buffer, detail::compute_write_to_copy_read);
       const vk::BufferCopy region {
         .srcOffset = 4UZ,
         .dstOffset = 0UZ,
         .size      = sizeof(Element),
       };
-      submit.command_buffer().copyBuffer(
+      command_buffer.copyBuffer(
         context.reduce_scratch().buffer(),
         context.reduce_readback().buffer(),
         region);
       detail::record_barrier_impl(
-        submit.command_buffer(), detail::copy_write_to_host_read);
-      return submit.end_and_submit(upload::wait_idle);
+        command_buffer, detail::copy_write_to_host_read);
+      return {};
     })
     .and_then([ & ] -> std::expected<Element, error_t> {
       Element value {};
@@ -1750,12 +1751,6 @@ run(
   const scalar_pipeline<Element, Map, Combine, Operation>& computation)
   -> std::expected<Element, error_t>
 {
-  single_time_submit submit {
-    context.pool(),
-    context.device().device(),
-    context.device().graphics_queue(),
-  };
-
   auto scalar_buffer =
     device_address_buffer::create<Element>(context.device().allocator(), 1U);
   if (!scalar_buffer) { return std::unexpected {scalar_buffer.error()}; }
@@ -1765,24 +1760,29 @@ run(
   if (!scalar_view) { return std::unexpected {scalar_view.error()}; }
   const auto address = scalar_view->device_address();
 
-  return submit.begin()
-    .and_then([ & ] -> std::expected<void, error_t> {
-      return record(
-        submit.command_buffer(), context, computation, *scalar_buffer, address);
-    })
-    .and_then([ & ] -> std::expected<void, error_t> {
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (
+        auto error =
+          record(command_buffer, context, computation, *scalar_buffer, address);
+        !error)
+      {
+        return error;
+      }
       detail::record_barrier_impl(
-        submit.command_buffer(), detail::compute_write_to_copy_read);
+        command_buffer, detail::compute_write_to_copy_read);
       const vk::BufferCopy region {
         .srcOffset = 0UZ,
         .dstOffset = 0UZ,
         .size      = sizeof(Element),
       };
-      submit.command_buffer().copyBuffer(
+      command_buffer.copyBuffer(
         scalar_buffer->buffer(), context.reduce_readback().buffer(), region);
       detail::record_barrier_impl(
-        submit.command_buffer(), detail::copy_write_to_host_read);
-      return submit.end_and_submit(upload::wait_idle);
+        command_buffer, detail::copy_write_to_host_read);
+      return {};
     })
     .and_then([ & ] -> std::expected<Element, error_t> {
       Element value {};
