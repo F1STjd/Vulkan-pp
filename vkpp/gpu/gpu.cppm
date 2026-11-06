@@ -1425,7 +1425,9 @@ run(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      if (auto error = record(command_buffer, context, computation); !error)
+      if (
+        auto error = record(command_buffer, context, computation, output);
+        !error)
       {
         return error;
       }
@@ -1552,7 +1554,9 @@ run(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      if (auto error = record(command_buffer, context, computation); !error)
+      if (
+        auto error = record(command_buffer, context, computation, output);
+        !error)
       {
         return error;
       }
