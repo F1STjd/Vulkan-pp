@@ -953,12 +953,12 @@ check_reduce_count_impl(std::uint32_t count, std::uint32_t group_size)
 
 export template<fiat::scalar Element, class Operation>
   requires fiat::traceable<Operation, Element>
-class pipeline
+class transform_pipeline
 {
 public:
   using argument_tuple = decltype(fiat::transform_stage<Operation>::arguments);
 
-  explicit pipeline(
+  explicit transform_pipeline(
     const device_array<Element>& source, argument_tuple arguments)
   : source_ {source}, arguments_ {std::move(arguments)}
   {}
@@ -991,7 +991,9 @@ operator |(
   }
   else
   {
-    return pipeline<Element, Operation> {source, std::move(stage.arguments)};
+    return transform_pipeline<Element, Operation> {
+      source, std::move(stage.arguments)
+    };
   }
 }
 
@@ -1001,9 +1003,9 @@ namespace detail
 template<fiat::scalar Element, class Operation, class Fused>
 [[nodiscard]]
 auto
-extend_pipeline_impl(
-  const pipeline<Element, Operation>& current,
-  fiat::transform_stage<Fused>        fused)
+extend_transform_pipeline_impl(
+  const transform_pipeline<Element, Operation>& current,
+  fiat::transform_stage<Fused>                  fused)
 {
   if constexpr (!fiat::traceable<Fused, Element>)
   {
@@ -1011,7 +1013,7 @@ extend_pipeline_impl(
   }
   else
   {
-    return pipeline<Element, Fused> {
+    return transform_pipeline<Element, Fused> {
       current.source(), std::move(fused.arguments)
     };
   }
@@ -1024,9 +1026,10 @@ template<fiat::scalar Element, class Operation, class Next>
 [[nodiscard]]
 auto
 operator |(
-  const pipeline<Element, Operation>& current, fiat::transform_stage<Next> next)
+  const transform_pipeline<Element, Operation>& current,
+  fiat::transform_stage<Next>                   next)
 {
-  return detail::extend_pipeline_impl(
+  return detail::extend_transform_pipeline_impl(
     current,
     fiat::fuse(
       fiat::transform_stage<Operation> {.arguments = current.arguments()},
@@ -1256,7 +1259,7 @@ template<fiat::scalar Element, class Operation, class Combine, class Identity>
 [[nodiscard]]
 auto
 operator |(
-  const pipeline<Element, Operation>&                  current,
+  const transform_pipeline<Element, Operation>&        current,
   fiat::reduce_stage<fiat::chain<>, Combine, Identity> next)
 {
   if constexpr (
@@ -1397,10 +1400,10 @@ template<fiat::scalar Element, class Operation>
 [[nodiscard]]
 auto
 record(
-  vk::raii::CommandBuffer&            command_buffer,
-  context&                            context,
-  const pipeline<Element, Operation>& computation,
-  device_array<Element>&              output) -> std::expected<void, error_t>
+  vk::raii::CommandBuffer&                      command_buffer,
+  context&                                      context,
+  const transform_pipeline<Element, Operation>& computation,
+  device_array<Element>& output) -> std::expected<void, error_t>
 {
   return detail::record_transform_impl<
     Element,
@@ -1417,9 +1420,9 @@ template<fiat::scalar Element, class Operation>
 [[nodiscard]]
 auto
 run(
-  context&                            context,
-  const pipeline<Element, Operation>& computation,
-  device_array<Element>&              output) -> std::expected<void, error_t>
+  context&                                      context,
+  const transform_pipeline<Element, Operation>& computation,
+  device_array<Element>& output) -> std::expected<void, error_t>
 {
   return detail::submit_impl(
     context,
@@ -1441,7 +1444,7 @@ export
 template<fiat::scalar Element, class Operation>
 [[nodiscard]]
 auto
-run(context& context, const pipeline<Element, Operation>& computation)
+run(context& context, const transform_pipeline<Element, Operation>& computation)
   -> std::expected<device_array<Element>, error_t>
 { return detail::run_into_new_array_impl<Element>(context, computation); }
 
