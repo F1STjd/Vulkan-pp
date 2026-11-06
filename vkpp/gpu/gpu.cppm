@@ -802,6 +802,72 @@ pack_uniform_arguments_impl(
   return words;
 }
 
+template<std::invocable<std::uint32_t> MakePush>
+void
+record_chunks_impl(
+  vk::raii::CommandBuffer& command_buffer,
+  const context&           context,
+  const compute_pipeline&  compute,
+  std::uint32_t            count,
+  MakePush&&               make_push)
+{
+  command_buffer.bindPipeline(
+    vk::PipelineBindPoint::eCompute, *compute.pipeline());
+  const std::uint32_t group_size = context.group_size();
+  const auto          stride     = static_cast<std::uint32_t>(std::min(
+    std::uint64_t {context.max_group_count()} * group_size,
+    std::uint64_t {count}));
+  for (
+    const auto first : std::views::indices(count) | std::views::stride(stride))
+  {
+    const auto first_element = static_cast<std::uint32_t>(first);
+    const auto elements      = std::min(count - first_element, stride);
+    push_compute<descriptor_table_backend::classic>(
+      command_buffer, compute, make_push(first_element));
+    dispatch(command_buffer, (elements + group_size - 1U) / group_size);
+  }
+}
+
+template<fiat::scalar Element, class Stage>
+[[nodiscard]]
+auto
+record_transform_impl(
+  vk::raii::CommandBuffer&                                  command_buffer,
+  context&                                                  context,
+  const device_array<Element>&                              source,
+  device_array<Element>&                                    output,
+  const std::array<std::uint32_t, fiat::argument_capacity>& arguments)
+  -> std::expected<void, error_t>
+{
+  const auto count = source.size();
+  if (output.size() != count)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+
+  auto kernel = context.kernel<Element, Stage>();
+  if (!kernel) { return std::unexpected {kernel.error()}; }
+
+  auto input_view  = source.addressed_view(context.device());
+  auto output_view = source.addressed_view(context.device());
+  if (!input_view) { return std::unexpected {input_view.error()}; }
+  if (!output_view) { return std::unexpected {output_view.error()}; }
+
+  const auto input_address  = input_view->device_address();
+  const auto output_address = output_view->device_address();
+  record_chunks_impl(
+    command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
+      return fiat::detail::transform_push {
+        .input     = input_address,
+        .output    = output_address,
+        .count     = count,
+        .first     = first,
+        .arguments = arguments,
+      };
+    });
+  return {};
+}
+
 } // namespace detail
 
 export template<fiat::scalar Element, class Operation>
@@ -1006,34 +1072,19 @@ record(
   auto base = computation.buffer().base_address(context.device());
   if (!base) { return std::unexpected {base.error()}; }
 
-  const compute_pipeline& compute = kernel->get();
-  command_buffer.bindPipeline(
-    vk::PipelineBindPoint::eCompute, *compute.pipeline());
-
-  const std::uint32_t group_size = context.group_size();
-  const auto          stride     = static_cast<std::uint32_t>(std::min(
-    std::uint64_t {context.max_group_count()} * group_size,
-    std::uint64_t {count}));
-
   const auto arguments =
     detail::pack_arguments_impl<0UZ>(computation.arguments());
 
-  for (
-    const auto first : std::views::indices(count) | std::views::stride(stride))
-  {
-    const auto elements = std::min(count - first, stride);
-    push_compute<descriptor_table_backend::classic>(
-      command_buffer,
-      compute,
-      fiat::detail::foreach_push {
+  detail::record_chunks_impl(
+    command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
+      return fiat::detail::foreach_push {
         .base      = *base,
         .unused    = 0U,
         .count     = count,
-        .first     = static_cast<std::uint32_t>(first),
+        .first     = first,
         .arguments = arguments,
-      });
-    dispatch(command_buffer, (elements + group_size - 1U) / group_size);
-  }
+      };
+    });
   return {};
 }
 
@@ -1270,49 +1321,14 @@ record(
   const pipeline<Element, Operation>& computation,
   device_array<Element>&              output) -> std::expected<void, error_t>
 {
-  const auto count = computation.source().size();
-  if (output.size() != count)
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-
-  auto kernel = context.kernel<Element, fiat::transform_stage<Operation>>();
-  if (!kernel) { return std::unexpected {kernel.error()}; }
-
-  auto input_view  = computation.source().addressed_view(context.device());
-  auto output_view = output.addressed_view(context.device());
-  if (!input_view) { return std::unexpected {input_view.error()}; }
-  if (!output_view) { return std::unexpected {output_view.error()}; }
-
-  const compute_pipeline& compute = kernel->get();
-  command_buffer.bindPipeline(
-    vk::PipelineBindPoint::eCompute, *compute.pipeline());
-
-  const std::uint32_t group_size = context.group_size();
-  const auto          stride     = static_cast<std::uint32_t>(std::min(
-    std::uint64_t {context.max_group_count()} * group_size,
-    std::uint64_t {count}));
-
-  const auto arguments =
-    detail::pack_arguments_impl<0UZ>(computation.arguments());
-
-  for (
-    const auto first : std::views::indices(count) | std::views::stride(stride))
-  {
-    const auto elements = std::min(count - first, stride);
-    push_compute<descriptor_table_backend::classic>(
-      command_buffer,
-      compute,
-      fiat::detail::transform_push {
-        .input     = input_view->device_address(),
-        .output    = output_view->device_address(),
-        .count     = count,
-        .first     = first,
-        .arguments = arguments,
-      });
-    dispatch(command_buffer, (elements + group_size - 1U) / group_size);
-  }
-  return {};
+  return detail::record_transform_impl<
+    Element,
+    fiat::transform_stage<Operation>
+  >(command_buffer,
+    context,
+    computation.source(),
+    output,
+    detail::pack_arguments_impl<0UZ>(computation.arguments()));
 }
 
 export
@@ -1473,50 +1489,15 @@ record(
   const transform_with_pipeline<Element, Uniform, Operation>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  const auto count = computation.source().size();
-  if (output.size() != count)
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-
-  auto kernel =
-    context.kernel<Element, fiat::transform_with_stage<Uniform, Operation>>();
-  if (!kernel) { return std::unexpected {kernel.error()}; }
-
-  auto input_view  = computation.source().addressed_view(context.device());
-  auto output_view = output.addressed_view(context.device());
-  if (!input_view) { return std::unexpected {input_view.error()}; }
-  if (!output_view) { return std::unexpected {output_view.error()}; }
-
-  const auto& compute = kernel->get();
-  command_buffer.bindPipeline(
-    vk::PipelineBindPoint::eCompute, *compute.pipeline());
-
-  const auto group_size = context.group_size();
-  const auto stride     = static_cast<std::uint32_t>(std::min(
-    std::uint64_t {context.max_group_count()} * group_size,
-    std::uint64_t {count}));
-
-  const auto arguments = detail::pack_uniform_arguments_impl(
-    computation.address(), computation.arguments());
-
-  for (
-    const auto first : std::views::indices(count) | std::views::stride(stride))
-  {
-    const auto elements = std::min(count - first, stride);
-    push_compute<descriptor_table_backend::classic>(
-      command_buffer,
-      compute,
-      fiat::detail::transform_push {
-        .input     = input_view->device_address(),
-        .output    = output_view->device_address(),
-        .count     = count,
-        .first     = first,
-        .arguments = arguments,
-      });
-    dispatch(command_buffer, (elements + group_size - 1U) / group_size);
-  }
-  return {};
+  return detail::record_transform_impl<
+    Element,
+    fiat::transform_with_stage<Uniform, Operation>
+  >(command_buffer,
+    context,
+    computation.source(),
+    output,
+    detail::pack_uniform_arguments_impl(
+      computation.address(), computation.arguments()));
 }
 
 export
