@@ -39,7 +39,7 @@ if(VKPP_WITH_GPU)
   FetchContent_Declare(
     fiat
     GIT_REPOSITORY git@github.com:F1STjd/fiat.git
-    GIT_TAG        5a8bd7b2fbc62f55047e274fe949235b35308c34)
+    GIT_TAG        fb2095b89a0414316c5adfa4cee459a0ff6e4cff)
   set(FIAT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(fiat)
 
