@@ -151,15 +151,25 @@ struct kernel_traits<Element, fiat::transform_stage<Operation>>
   static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
 };
 
-template<fiat::scalar Element, class Map, class Combine, class Identity>
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  class Identity,
+  class Epilogue
+>
   requires (
     fiat::traceable<Map, Element> &&
     fiat::combinable<Combine, Element> &&
-    std::same_as<Identity, Element>)
-struct kernel_traits<Element, fiat::reduce_stage<Map, Combine, Identity>>
+    std::same_as<Identity, Element> &&
+    fiat::traceable<Epilogue, Element>)
+struct kernel_traits<
+  Element,
+  fiat::reduce_stage<Map, Combine, Identity, Epilogue>
+>
 {
-  static constexpr auto words =
-    fiat::compile<Element>(fiat::reduce_stage<Map, Combine, Identity> {});
+  static constexpr auto words = fiat::compile<Element>(
+    fiat::reduce_stage<Map, Combine, Identity, Epilogue> {});
   static constexpr std::string_view entry {fiat::reduce_entry};
   static constexpr std::size_t push_size {sizeof(fiat::detail::reduce_push)};
 };
@@ -788,6 +798,32 @@ pack_arguments_impl(const std::tuple<Arguments...>& arguments)
   return words;
 }
 
+template<class MapArguments, class EpilogueArguments>
+[[nodiscard]]
+constexpr
+auto
+pack_reduce_arguments_impl(
+  const MapArguments&      map_arguments,
+  const EpilogueArguments& epilogue_arguments)
+  -> std::array<std::uint32_t, fiat::argument_capacity>
+{
+  static_assert(
+    std::tuple_size_v<MapArguments> + std::tuple_size_v<EpilogueArguments> <=
+      fiat::argument_capacity,
+    "reduce map and epilogue arguments together take at most 26 slots");
+  auto words = pack_arguments_impl<0UZ>(map_arguments);
+  std::apply(
+    [ & ]<class... Arguments>(const Arguments&... argument) {
+      std::array<std::uint32_t, sizeof...(Arguments)> packed {
+        std::bit_cast<std::uint32_t>(argument)...,
+      };
+      std::ranges::copy(
+        packed, words.begin() + std::tuple_size_v<MapArguments>);
+    },
+    epilogue_arguments);
+  return words;
+}
+
 template<class... Arguments>
 [[nodiscard]]
 constexpr
@@ -867,8 +903,6 @@ record_transform_impl(
     });
   return {};
 }
-
-inline constexpr vk::DeviceSize reduce_result_offset {4U};
 
 template<fiat::scalar Element, class Computation>
 [[nodiscard]]
@@ -1193,19 +1227,37 @@ run(context& context, const foreach_pipeline<Element, Operation>& computation)
     });
 }
 
-export template<fiat::scalar Element, class Map, class Combine>
-  requires (fiat::traceable<Map, Element> && fiat::combinable<Combine, Element>)
+export template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  class Epilogue = fiat::identity
+>
+  requires (
+    fiat::traceable<Map, Element> &&
+    fiat::combinable<Combine, Element> &&
+    fiat::traceable<Epilogue, Element>)
 class reduce_pipeline
 {
 public:
   using argument_tuple =
-    decltype(fiat::reduce_stage<Map, Combine, Element>::arguments);
+    decltype(fiat::reduce_stage<Map, Combine, Element, Epilogue>::arguments);
+  using epilogue_argument_tuple = decltype(fiat::reduce_stage<
+    Map,
+    Combine,
+    Element,
+    Epilogue
+  >::epilogue_arguments);
 
   explicit reduce_pipeline(
     const device_array<Element>& source,
     argument_tuple               arguments,
-    Element                      identity)
-  : source_ {source}, arguments_ {std::move(arguments)}, identity_ {identity}
+    Element                      identity,
+    epilogue_argument_tuple      epilogue_arguments = {})
+  : source_ {source},
+    arguments_ {std::move(arguments)},
+    identity_ {identity},
+    epilogue_arguments_ {std::move(epilogue_arguments)}
   {}
 
   [[nodiscard]]
@@ -1223,10 +1275,16 @@ public:
   identity() const noexcept -> Element
   { return identity_; }
 
+  [[nodiscard]]
+  auto
+  epilogue_arguments() const noexcept -> const epilogue_argument_tuple&
+  { return epilogue_arguments_; }
+
 private:
   const device_array<Element>& source_;
   argument_tuple               arguments_;
   Element                      identity_;
+  epilogue_argument_tuple      epilogue_arguments_;
 };
 
 export
@@ -1250,6 +1308,7 @@ operator |(
       source,
       std::move(stage.arguments),
       stage.identity,
+      {},
     };
   }
 }
@@ -1278,68 +1337,18 @@ operator |(
       current.source(),
       std::move(fused.arguments),
       fused.identity,
+      {},
     };
   }
 }
-
-export template<fiat::scalar Element, class Map, class Combine, class Operation>
-  requires (
-    fiat::traceable<Map, Element> &&
-    fiat::combinable<Combine, Element> &&
-    fiat::traceable<Operation, Element>)
-class scalar_pipeline
-{
-public:
-  using reduce_argument_tuple =
-    decltype(fiat::reduce_stage<Map, Combine, Element>::arguments);
-  using map_argument_tuple =
-    decltype(fiat::transform_stage<Operation>::arguments);
-
-  explicit scalar_pipeline(
-    const device_array<Element>& source,
-    reduce_argument_tuple        reduce_arguments,
-    Element                      identity,
-    map_argument_tuple           map_arguments)
-  : source_ {source},
-    reduce_arguments_ {std::move(reduce_arguments)},
-    identity_ {identity},
-    map_arguments_ {std::move(map_arguments)}
-  {}
-
-  [[nodiscard]]
-  auto
-  source() const noexcept -> const device_array<Element>&
-  { return source_; }
-
-  [[nodiscard]]
-  auto
-  reduce_arguments() const noexcept -> const reduce_argument_tuple&
-  { return reduce_arguments_; }
-
-  [[nodiscard]]
-  auto
-  identity() const noexcept -> Element
-  { return identity_; }
-
-  [[nodiscard]]
-  auto
-  map_arguments() const noexcept -> const map_argument_tuple&
-  { return map_arguments_; }
-
-private:
-  const device_array<Element>& source_;
-  reduce_argument_tuple        reduce_arguments_;
-  Element                      identity_;
-  map_argument_tuple           map_arguments_;
-};
 
 export
 template<fiat::scalar Element, class Map, class Combine, class Next>
 [[nodiscard]]
 auto
 operator |(
-  const reduce_pipeline<Element, Map, Combine>& computation,
-  fiat::transform_stage<Next>                   stage)
+  const reduce_pipeline<Element, Map, Combine, fiat::identity>& computation,
+  fiat::transform_stage<Next>                                   stage)
 {
   if constexpr (!fiat::traceable<Next, Element>)
   {
@@ -1347,7 +1356,19 @@ operator |(
   }
   else
   {
-    return scalar_pipeline<Element, Map, Combine, Next> {
+    static_assert(
+      std::tuple_size_v<
+          typename reduce_pipeline<Element, Map, Combine, Next>::argument_tuple
+      > +
+          std::tuple_size_v<typename reduce_pipeline<
+            Element,
+            Map,
+            Combine,
+            Next
+          >::epilogue_argument_tuple> <=
+        fiat::argument_capacity,
+      "reduce map and epilogue arguments together tahe at most 26 slots");
+    return reduce_pipeline<Element, Map, Combine, Next> {
       computation.source(),
       computation.arguments(),
       computation.identity(),
@@ -1367,12 +1388,12 @@ template<
 [[nodiscard]]
 auto
 operator |(
-  const scalar_pipeline<Element, Map, Combine, fiat::chain<Current...>>& current,
+  const reduce_pipeline<Element, Map, Combine, fiat::chain<Current...>>& current,
   fiat::transform_stage<fiat::chain<Next...>> next)
 {
   auto fused = fiat::fuse(
     fiat::transform_stage<fiat::chain<Current...>> {
-      .arguments = current.map_arguments(),
+      .arguments = current.epilogue_arguments(),
     },
     std::move(next));
   if constexpr (!fiat::traceable<fiat::chain<Current..., Next...>, Element>)
@@ -1381,14 +1402,29 @@ operator |(
   }
   else
   {
-    return scalar_pipeline<
+    static_assert(
+      std::tuple_size_v<typename reduce_pipeline<
+            Element,
+            Map,
+            Combine,
+            fiat::chain<Current..., Next...>
+          >::argument_tuple> +
+          std::tuple_size_v<typename reduce_pipeline<
+            Element,
+            Map,
+            Combine,
+            fiat::chain<Current..., Next...>
+          >::epilogue_argument_tuple> <=
+        fiat::argument_capacity,
+      "reduce map and epilogue arguments together take at most 26 slots");
+    return reduce_pipeline<
       Element,
       Map,
       Combine,
       fiat::chain<Current..., Next...>
     > {
       current.source(),
-      current.reduce_arguments(),
+      current.arguments(),
       current.identity(),
       std::move(fused.arguments),
     };
@@ -1471,42 +1507,16 @@ keep(context& context) -> keep_stage
 { return keep_stage {.context = context}; }
 
 export
-template<fiat::scalar Element, class Map, class Combine>
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  class Epilogue = fiat::identity
+>
 [[nodiscard]]
 auto
 operator |(
-  const reduce_pipeline<Element, Map, Combine>& computation, keep_stage stage)
-  -> std::expected<device_scalar<Element>, error_t>
-{
-  auto& context = stage.context;
-  auto  slot    = detail::allocate_scalar_impl<Element>(context);
-  if (!slot) { return std::unexpected {slot.error()}; }
-
-  return detail::submit_impl(
-    context,
-    [ & ](
-      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      if (auto error = record(command_buffer, context, computation); !error)
-      {
-        return error;
-      }
-      detail::record_result_copy_impl<Element>(
-        command_buffer,
-        context.reduce_scratch().buffer(),
-        detail::reduce_result_offset,
-        slot->buffer().buffer(),
-        detail::copy_write_to_compute);
-      return {};
-    })
-    .transform([ & ] -> device_scalar<Element> { return std::move(*slot); });
-}
-
-export
-template<fiat::scalar Element, class Map, class Combine, class Operation>
-[[nodiscard]]
-auto
-operator |(
-  const scalar_pipeline<Element, Map, Combine, Operation>& computation,
+  const reduce_pipeline<Element, Map, Combine, Epilogue>& computation,
   keep_stage stage) -> std::expected<device_scalar<Element>, error_t>
 {
   auto& context = stage.context;
@@ -1517,8 +1527,20 @@ operator |(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      return record(
-        command_buffer, context, computation, slot->buffer(), slot->address());
+      if (
+        auto error = record(
+          command_buffer, context, computation, slot->buffer(), slot->address());
+        !error)
+      {
+        return error;
+      }
+      detail::record_result_copy_impl<Element>(
+        command_buffer,
+        context.reduce_scratch().buffer(),
+        fiat::reduce_result_offset,
+        slot->buffer().buffer(),
+        detail::copy_write_to_compute);
+      return {};
     })
     .transform([ & ] -> device_scalar<Element> { return std::move(*slot); });
 }
@@ -1580,13 +1602,18 @@ run(
 { return detail::run_into_new_array_impl<Element>(context, computation); }
 
 export
-template<fiat::scalar Element, class Map, class Combine>
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  class Epilogue = fiat::identity
+>
 [[nodiscard]]
 auto
 record(
-  vk::raii::CommandBuffer&                      command_buffer,
-  context&                                      context,
-  const reduce_pipeline<Element, Map, Combine>& computation)
+  vk::raii::CommandBuffer&                                command_buffer,
+  context&                                                context,
+  const reduce_pipeline<Element, Map, Combine, Epilogue>& computation)
   -> std::expected<void, error_t>
 {
   const auto count      = computation.source().size();
@@ -1597,7 +1624,8 @@ record(
   }
 
   auto kernel =
-    context.kernel<Element, fiat::reduce_stage<Map, Combine, Element>>();
+    context
+      .kernel<Element, fiat::reduce_stage<Map, Combine, Element, Epilogue>>();
   if (!kernel) { return std::unexpected {kernel.error()}; }
 
   auto input_view = computation.source().addressed_view(context.device());
@@ -1616,8 +1644,8 @@ record(
 
   const auto groups = std::min(
     (count + group_size - 1U) / group_size, fiat::detail::reduce_group_limit);
-  const auto arguments =
-    detail::pack_arguments_impl<0UZ>(computation.arguments());
+  const auto arguments = detail::pack_reduce_arguments_impl(
+    computation.arguments(), computation.epilogue_arguments());
 
   push_compute<descriptor_table_backend::classic>(
     command_buffer,
@@ -1634,59 +1662,17 @@ record(
 }
 
 export
-template<fiat::scalar Element, class Map, class Combine, class Operation>
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  class Epilogue = fiat::identity
+>
 [[nodiscard]]
 auto
-record(
-  vk::raii::CommandBuffer&                                 command_buffer,
-  context&                                                 context,
-  const scalar_pipeline<Element, Map, Combine, Operation>& computation,
-  const device_address_buffer&                             scalar_buffer,
-  std::uint64_t address) -> std::expected<void, error_t>
-{
-  const reduce_pipeline<Element, Map, Combine> reduce_part {
-    computation.source(),
-    computation.reduce_arguments(),
-    computation.identity(),
-  };
-  if (auto error = record(command_buffer, context, reduce_part); !error)
-  {
-    return error;
-  }
-
-  detail::record_result_copy_impl<Element>(
-    command_buffer,
-    context.reduce_scratch().buffer(),
-    detail::reduce_result_offset,
-    scalar_buffer.buffer(),
-    detail::copy_write_to_compute);
-
-  auto kernel = context.kernel<Element, fiat::transform_stage<Operation>>();
-  if (!kernel) { return std::unexpected {kernel.error()}; }
-
-  const compute_pipeline& compute = kernel->get();
-  command_buffer.bindPipeline(
-    vk::PipelineBindPoint::eCompute, *compute.pipeline());
-
-  push_compute<descriptor_table_backend::classic>(
-    command_buffer,
-    compute,
-    fiat::detail::transform_push {
-      .input  = address,
-      .output = address,
-      .count  = 1U,
-      .first  = 0U,
-      .arguments = detail::pack_arguments_impl<0UZ>(computation.map_arguments()),
-    });
-  dispatch(command_buffer, 1U);
-  return {};
-}
-
-export
-template<fiat::scalar Element, class Map, class Combine>
-[[nodiscard]]
-auto
-run(context& context, const reduce_pipeline<Element, Map, Combine>& computation)
+run(
+  context&                                                context,
+  const reduce_pipeline<Element, Map, Combine, Epilogue>& computation)
   -> std::expected<Element, error_t>
 {
   return detail::submit_impl(
@@ -1700,43 +1686,7 @@ run(context& context, const reduce_pipeline<Element, Map, Combine>& computation)
       detail::record_result_copy_impl<Element>(
         command_buffer,
         context.reduce_scratch().buffer(),
-        detail::reduce_result_offset,
-        context.reduce_readback().buffer(),
-        detail::copy_write_to_host_read);
-      return {};
-    })
-    .and_then([ & ] -> std::expected<Element, error_t> {
-      return detail::read_scalar_impl<Element>(context);
-    });
-}
-
-export
-template<fiat::scalar Element, class Map, class Combine, class Operation>
-[[nodiscard]]
-auto
-run(
-  context&                                                 context,
-  const scalar_pipeline<Element, Map, Combine, Operation>& computation)
-  -> std::expected<Element, error_t>
-{
-  auto slot = detail::allocate_scalar_impl<Element>(context);
-  if (!slot) { return std::unexpected {slot.error()}; }
-
-  return detail::submit_impl(
-    context,
-    [ & ](
-      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      if (
-        auto error = record(
-          command_buffer, context, computation, slot->buffer(), slot->address());
-        !error)
-      {
-        return error;
-      }
-      detail::record_result_copy_impl<Element>(
-        command_buffer,
-        slot->buffer().buffer(),
-        0UZ,
+        fiat::reduce_result_offset,
         context.reduce_readback().buffer(),
         detail::copy_write_to_host_read);
       return {};
