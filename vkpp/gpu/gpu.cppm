@@ -849,7 +849,7 @@ record_transform_impl(
   if (!kernel) { return std::unexpected {kernel.error()}; }
 
   auto input_view  = source.addressed_view(context.device());
-  auto output_view = source.addressed_view(context.device());
+  auto output_view = output.addressed_view(context.device());
   if (!input_view) { return std::unexpected {input_view.error()}; }
   if (!output_view) { return std::unexpected {output_view.error()}; }
 
