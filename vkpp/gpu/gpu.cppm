@@ -1367,7 +1367,7 @@ operator |(
             Next
           >::epilogue_argument_tuple> <=
         fiat::argument_capacity,
-      "reduce map and epilogue arguments together tahe at most 26 slots");
+      "reduce map and epilogue arguments together take at most 26 slots");
     return reduce_pipeline<Element, Map, Combine, Next> {
       computation.source(),
       computation.arguments(),
