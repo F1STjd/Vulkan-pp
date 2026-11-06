@@ -667,6 +667,63 @@ private:
   readback_buffer                   reduce_readback_;
 };
 
+namespace detail
+{
+
+inline constexpr vk::MemoryBarrier2 compute_write_to_any_read {
+  .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+  .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+  .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
+  .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
+};
+
+inline constexpr vk::MemoryBarrier2 compute_reuse {
+  .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+  .srcAccessMask =
+    vk::AccessFlagBits2::eShaderStorageRead |
+    vk::AccessFlagBits2::eShaderStorageWrite,
+  .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+  .dstAccessMask =
+    vk::AccessFlagBits2::eShaderStorageRead |
+    vk::AccessFlagBits2::eShaderStorageWrite,
+};
+
+inline constexpr vk::MemoryBarrier2 compute_write_to_copy_read {
+  .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+  .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+  .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
+  .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+};
+
+inline constexpr vk::MemoryBarrier2 copy_write_to_compute {
+  .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
+  .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+  .dstStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+  .dstAccessMask =
+    vk::AccessFlagBits2::eShaderStorageRead |
+    vk::AccessFlagBits2::eShaderStorageWrite,
+};
+
+inline constexpr vk::MemoryBarrier2 copy_write_to_host_read {
+  .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
+  .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+  .dstStageMask  = vk::PipelineStageFlagBits2::eHost,
+  .dstAccessMask = vk::AccessFlagBits2::eHostRead,
+};
+
+inline
+void
+record_barrier_impl(
+  vk::raii::CommandBuffer& command_buffer, const vk::MemoryBarrier2& barrier)
+{
+  command_buffer.pipelineBarrier2({
+    .memoryBarrierCount = 1U,
+    .pMemoryBarriers    = &barrier,
+  });
+}
+
+} // namespace detail
+
 export template<fiat::scalar Element, class Operation>
   requires fiat::traceable<Operation, Element>
 class pipeline
@@ -949,16 +1006,8 @@ run(context& context, const foreach_pipeline<Element, Operation>& computation)
       return record(submit.command_buffer(), context, computation);
     })
     .and_then([ & ] -> std::expected<void, error_t> {
-      const vk::MemoryBarrier2 written {
-        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
-        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
-      };
-      submit.command_buffer().pipelineBarrier2({
-        .memoryBarrierCount = 1U,
-        .pMemoryBarriers    = &written,
-      });
+      detail::record_barrier_impl(
+        submit.command_buffer(), detail::compute_write_to_any_read);
       return submit.end_and_submit(upload::wait_idle);
     });
 }
@@ -1270,16 +1319,8 @@ run(
       return record(submit.command_buffer(), context, computation, output);
     })
     .and_then([ & ] -> std::expected<void, error_t> {
-      const vk::MemoryBarrier2 written {
-        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
-        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
-      };
-      submit.command_buffer().pipelineBarrier2({
-        .memoryBarrierCount = 1U,
-        .pMemoryBarriers    = &written,
-      });
+      detail::record_barrier_impl(
+        submit.command_buffer(), detail::compute_write_to_any_read);
       return submit.end_and_submit(upload::wait_idle);
     });
 }
@@ -1362,16 +1403,8 @@ operator |(
       return record(submit.command_buffer(), context, computation);
     })
     .and_then([ & ] -> std::expected<void, error_t> {
-      const vk::MemoryBarrier2 to_copy {
-        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
-        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
-      };
-      submit.command_buffer().pipelineBarrier2({
-        .memoryBarrierCount = 1U,
-        .pMemoryBarriers    = &to_copy,
-      });
+      detail::record_barrier_impl(
+        submit.command_buffer(), detail::compute_write_to_copy_read);
       const vk::BufferCopy region {
         .srcOffset = 4UZ,
         .dstOffset = 0UZ,
@@ -1379,18 +1412,8 @@ operator |(
       };
       submit.command_buffer().copyBuffer(
         context.reduce_scratch().buffer(), scalar_buffer->buffer(), region);
-      const vk::MemoryBarrier2 to_shader {
-        .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
-        .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-        .dstAccessMask =
-          vk::AccessFlagBits2::eShaderStorageRead |
-          vk::AccessFlagBits2::eShaderStorageWrite,
-      };
-      submit.command_buffer().pipelineBarrier2({
-        .memoryBarrierCount = 1U,
-        .pMemoryBarriers    = &to_shader,
-      });
+      detail::record_barrier_impl(
+        submit.command_buffer(), detail::copy_write_to_compute);
       return submit.end_and_submit(upload::wait_idle);
     })
     .transform([ & ] -> device_scalar<Element> {
@@ -1516,16 +1539,8 @@ run(
       return record(submit.command_buffer(), context, computation, output);
     })
     .and_then([ & ] -> std::expected<void, error_t> {
-      const vk::MemoryBarrier2 written {
-        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
-        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
-      };
-      submit.command_buffer().pipelineBarrier2({
-        .memoryBarrierCount = 1U,
-        .pMemoryBarriers    = &written,
-      });
+      detail::record_barrier_impl(
+        submit.command_buffer(), detail::compute_write_to_any_read);
       return submit.end_and_submit(upload::wait_idle);
     });
 }
@@ -1590,20 +1605,7 @@ record(
       context.device(), 0UZ, fiat::detail::reduce_scratch_bytes);
   if (!scratch_view) { return std::unexpected {scratch_view.error()}; }
 
-  const vk::MemoryBarrier2 reuse {
-    .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-    .srcAccessMask =
-      vk::AccessFlagBits2::eShaderStorageRead |
-      vk::AccessFlagBits2::eShaderStorageWrite,
-    .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-    .dstAccessMask =
-      vk::AccessFlagBits2::eShaderStorageRead |
-      vk::AccessFlagBits2::eShaderStorageWrite,
-  };
-  command_buffer.pipelineBarrier2({
-    .memoryBarrierCount = 1U,
-    .pMemoryBarriers    = &reuse,
-  });
+  detail::record_barrier_impl(command_buffer, detail::compute_reuse);
 
   const compute_pipeline& compute = kernel->get();
   command_buffer.bindPipeline(
@@ -1657,16 +1659,8 @@ record(
     return error;
   }
 
-  const vk::MemoryBarrier2 to_copy {
-    .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-    .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-    .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
-    .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
-  };
-  command_buffer.pipelineBarrier2({
-    .memoryBarrierCount = 1U,
-    .pMemoryBarriers    = &to_copy,
-  });
+  detail::record_barrier_impl(
+    command_buffer, detail::compute_write_to_copy_read);
   const vk::BufferCopy region {
     .srcOffset = 4UZ,
     .dstOffset = 0UZ,
@@ -1675,18 +1669,7 @@ record(
   command_buffer.copyBuffer(
     context.reduce_scratch().buffer(), scalar_buffer.buffer(), region);
 
-  const vk::MemoryBarrier2 to_shader {
-    .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
-    .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-    .dstStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-    .dstAccessMask =
-      vk::AccessFlagBits2::eShaderStorageRead |
-      vk::AccessFlagBits2::eShaderStorageWrite,
-  };
-  command_buffer.pipelineBarrier2({
-    .memoryBarrierCount = 1U,
-    .pMemoryBarriers    = &to_shader,
-  });
+  detail::record_barrier_impl(command_buffer, detail::copy_write_to_compute);
 
   auto kernel = context.kernel<Element, fiat::transform_stage<Operation>>();
   if (!kernel) { return std::unexpected {kernel.error()}; }
@@ -1726,16 +1709,8 @@ run(context& context, const reduce_pipeline<Element, Map, Combine>& computation)
       return record(submit.command_buffer(), context, computation);
     })
     .and_then([ & ] -> std::expected<void, error_t> {
-      const vk::MemoryBarrier2 to_copy {
-        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
-        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
-      };
-      submit.command_buffer().pipelineBarrier2({
-        .memoryBarrierCount = 1U,
-        .pMemoryBarriers    = &to_copy,
-      });
+      detail::record_barrier_impl(
+        submit.command_buffer(), detail::compute_write_to_copy_read);
       const vk::BufferCopy region {
         .srcOffset = 4UZ,
         .dstOffset = 0UZ,
@@ -1745,16 +1720,8 @@ run(context& context, const reduce_pipeline<Element, Map, Combine>& computation)
         context.reduce_scratch().buffer(),
         context.reduce_readback().buffer(),
         region);
-      const vk::MemoryBarrier2 to_host {
-        .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
-        .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eHost,
-        .dstAccessMask = vk::AccessFlagBits2::eHostRead,
-      };
-      submit.command_buffer().pipelineBarrier2({
-        .memoryBarrierCount = 1U,
-        .pMemoryBarriers    = &to_host,
-      });
+      detail::record_barrier_impl(
+        submit.command_buffer(), detail::copy_write_to_host_read);
       return submit.end_and_submit(upload::wait_idle);
     })
     .and_then([ & ] -> std::expected<Element, error_t> {
@@ -1804,16 +1771,8 @@ run(
         submit.command_buffer(), context, computation, *scalar_buffer, address);
     })
     .and_then([ & ] -> std::expected<void, error_t> {
-      const vk::MemoryBarrier2 to_copy {
-        .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-        .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
-        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
-      };
-      submit.command_buffer().pipelineBarrier2({
-        .memoryBarrierCount = 1U,
-        .pMemoryBarriers    = &to_copy,
-      });
+      detail::record_barrier_impl(
+        submit.command_buffer(), detail::compute_write_to_copy_read);
       const vk::BufferCopy region {
         .srcOffset = 0UZ,
         .dstOffset = 0UZ,
@@ -1821,16 +1780,8 @@ run(
       };
       submit.command_buffer().copyBuffer(
         scalar_buffer->buffer(), context.reduce_readback().buffer(), region);
-      const vk::MemoryBarrier2 to_host {
-        .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
-        .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-        .dstStageMask  = vk::PipelineStageFlagBits2::eHost,
-        .dstAccessMask = vk::AccessFlagBits2::eHostRead,
-      };
-      submit.command_buffer().pipelineBarrier2({
-        .memoryBarrierCount = 1U,
-        .pMemoryBarriers    = &to_host,
-      });
+      detail::record_barrier_impl(
+        submit.command_buffer(), detail::copy_write_to_host_read);
       return submit.end_and_submit(upload::wait_idle);
     })
     .and_then([ & ] -> std::expected<Element, error_t> {
