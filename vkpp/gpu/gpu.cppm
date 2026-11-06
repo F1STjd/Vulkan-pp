@@ -745,6 +745,63 @@ submit_impl(context& context, Record&& record) -> std::expected<void, error_t>
     });
 }
 
+inline constexpr std::string_view transform_mismatch {
+  "this fiat::transform cannot run on this array: every runtime argument must "
+  "have the array's element type, and the lambda must take (value, "
+  "arguments...)",
+};
+
+inline constexpr std::string_view transform_with_mismatch {
+  "this fiat::transform_with cannot run on this array: the uniform element "
+  "type must match the array element type, every further runtime argument must "
+  "have that element type, and the lambda must take (value, uniform, "
+  "arguments...)"
+};
+
+inline constexpr std::string_view foreach_mismatch {
+  "this fiat::for_each cannot run on this soa_array: the callable must take "
+  "(traced_struct<Element>&, runtime scalar arguments...) and every runtime "
+  "argument must be float, std::int32_t, or std::uint32_t"
+};
+
+inline constexpr std::string_view reduce_mismatch {
+  "this fiat::reduce cannot run on this array: the map and the combine must "
+  "trace on the array's element type, and the identity must have that type"
+};
+
+template<std::size_t first_slot, class... Arguments>
+[[nodiscard]]
+constexpr
+auto
+pack_arguments_impl(const std::tuple<Arguments...>& arguments)
+  -> std::array<std::uint32_t, fiat::argument_capacity>
+{
+  std::array<std::uint32_t, fiat::argument_capacity> words {};
+  std::apply(
+    [ & ](const Arguments&... argument) {
+      std::array<std::uint32_t, sizeof...(Arguments)> packed {
+        std::bit_cast<std::uint32_t>(argument)...,
+      };
+      std::ranges::copy(packed, words.begin() + first_slot);
+    },
+    arguments);
+  return words;
+}
+
+template<class... Arguments>
+[[nodiscard]]
+constexpr
+auto
+pack_uniform_arguments_impl(
+  std::uint64_t address, const std::tuple<Arguments...>& arguments)
+  -> std::array<std::uint32_t, fiat::argument_capacity>
+{
+  auto words = pack_arguments_impl<2UZ>(arguments);
+  words[ 0 ] = static_cast<std::uint32_t>(address);
+  words[ 1 ] = static_cast<std::uint32_t>(address >> 32U);
+  return words;
+}
+
 } // namespace detail
 
 export template<fiat::scalar Element, class Operation>
@@ -774,12 +831,6 @@ private:
   argument_tuple               arguments_;
 };
 
-inline constexpr std::string_view transform_mismatch {
-  "this fiat::transform cannot run on this array: every runtime argument must "
-  "have the array's element type, and the lambda must take (value, "
-  "arguments...)",
-};
-
 export
 template<fiat::scalar Element, class Operation>
 [[nodiscard]]
@@ -789,7 +840,7 @@ operator |(
 {
   if constexpr (!fiat::traceable<Operation, Element>)
   {
-    static_assert(false, transform_mismatch);
+    static_assert(false, detail::transform_mismatch);
   }
   else
   {
@@ -797,10 +848,13 @@ operator |(
   }
 }
 
+namespace detail
+{
+
 template<fiat::scalar Element, class Operation, class Fused>
 [[nodiscard]]
 auto
-extend_pipeline(
+extend_pipeline_impl(
   const pipeline<Element, Operation>& current,
   fiat::transform_stage<Fused>        fused)
 {
@@ -816,6 +870,8 @@ extend_pipeline(
   }
 }
 
+} // namespace detail
+
 export
 template<fiat::scalar Element, class Operation, class Next>
 [[nodiscard]]
@@ -823,7 +879,7 @@ auto
 operator |(
   const pipeline<Element, Operation>& current, fiat::transform_stage<Next> next)
 {
-  return extend_pipeline(
+  return detail::extend_pipeline_impl(
     current,
     fiat::fuse(
       fiat::transform_stage<Operation> {.arguments = current.arguments()},
@@ -866,13 +922,6 @@ private:
   argument_tuple               arguments_;
 };
 
-inline constexpr std::string_view transform_with_mismatch {
-  "this fiat::transform_with cannot run on this array: the uniform element "
-  "type must match the array element type, every further runtime argument must "
-  "have that element type, and the lambda must take (value, uniform, "
-  "arguments...)"
-};
-
 export
 template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
 [[nodiscard]]
@@ -883,7 +932,7 @@ operator |(
 {
   if constexpr (!fiat::uniform_traceable<Operation, Element, Uniform>)
   {
-    static_assert(false, transform_with_mismatch);
+    static_assert(false, detail::transform_with_mismatch);
   }
   else
   {
@@ -893,25 +942,6 @@ operator |(
       std::move(stage.arguments),
     };
   }
-}
-
-template<class... Arguments>
-[[nodiscard]]
-constexpr
-auto
-pack_arguments(const std::tuple<Arguments...>& arguments)
-  -> std::array<std::uint32_t, fiat::argument_capacity>
-{
-  std::array<std::uint32_t, fiat::argument_capacity> words {};
-  std::apply(
-    [ & ](const Arguments&... argument) {
-      const std::array<std::uint32_t, sizeof...(Arguments)> packed {
-        std::bit_cast<std::uint32_t>(argument)...,
-      };
-      std::ranges::copy(packed, words.begin());
-    },
-    arguments);
-  return words;
 }
 
 export template<fiat::soa_element Element, class Operation>
@@ -940,12 +970,6 @@ private:
   argument_tuple      arguments_;
 };
 
-inline constexpr std::string_view foreach_mismatch {
-  "this fiat::for_each cannot run on this soa_array: the callable must take "
-  "(traced_struct<Element>&, runtime scalar arguments...) and every runtime "
-  "argument must be float, std::int32_t, or std::uint32_t"
-};
-
 export
 template<fiat::soa_element Element, class Operation>
 [[nodiscard]]
@@ -954,7 +978,7 @@ operator |(soa_array<Element>& buffer, fiat::foreach_stage<Operation> stage)
 {
   if constexpr (!fiat::foreach_traceable<Operation, Element>)
   {
-    static_assert(false, foreach_mismatch);
+    static_assert(false, detail::foreach_mismatch);
   }
   else
   {
@@ -991,7 +1015,8 @@ record(
     std::uint64_t {context.max_group_count()} * group_size,
     std::uint64_t {count}));
 
-  const auto arguments = pack_arguments(computation.arguments());
+  const auto arguments =
+    detail::pack_arguments_impl<0UZ>(computation.arguments());
 
   for (
     const auto first : std::views::indices(count) | std::views::stride(stride))
@@ -1069,11 +1094,6 @@ private:
   Element                      identity_;
 };
 
-inline constexpr std::string_view reduce_mismatch {
-  "this fiat::reduce cannot run on this array: the map and the combine must "
-  "trace on the array's element type, and the identity must have that type"
-};
-
 export
 template<fiat::scalar Element, class Map, class Combine, class Identity>
 [[nodiscard]]
@@ -1087,7 +1107,7 @@ operator |(
     !fiat::combinable<Combine, Element> ||
     !std::same_as<Identity, Element>)
   {
-    static_assert(false, reduce_mismatch);
+    static_assert(false, detail::reduce_mismatch);
   }
   else
   {
@@ -1112,7 +1132,7 @@ operator |(
     !fiat::combinable<Combine, Element> ||
     !std::same_as<Identity, Element>)
   {
-    static_assert(false, reduce_mismatch);
+    static_assert(false, detail::reduce_mismatch);
   }
   else
   {
@@ -1188,7 +1208,7 @@ operator |(
 {
   if constexpr (!fiat::traceable<Next, Element>)
   {
-    static_assert(false, transform_mismatch);
+    static_assert(false, detail::transform_mismatch);
   }
   else
   {
@@ -1222,7 +1242,7 @@ operator |(
     std::move(next));
   if constexpr (!fiat::traceable<fiat::chain<Current..., Next...>, Element>)
   {
-    static_assert(false, transform_mismatch);
+    static_assert(false, detail::transform_mismatch);
   }
   else
   {
@@ -1239,33 +1259,6 @@ operator |(
     };
   }
 }
-
-namespace detail
-{
-
-template<class... Arguments>
-[[nodiscard]]
-constexpr
-auto
-pack_uniform_arguments(
-  std::uint64_t address, const std::tuple<Arguments...>& arguments)
-  -> std::array<std::uint32_t, fiat::argument_capacity>
-{
-  std::array<std::uint32_t, fiat::argument_capacity> words {};
-  words[ 0 ] = static_cast<std::uint32_t>(address);
-  words[ 1 ] = static_cast<std::uint32_t>(address >> 32U);
-  std::apply(
-    [ & ](const Arguments&... argument) {
-      const std::array<std::uint32_t, sizeof...(Arguments)> packed {
-        std::bit_cast<std::uint32_t>(argument)...,
-      };
-      std::ranges::copy(packed, words.begin() + 2);
-    },
-    arguments);
-  return words;
-}
-
-} // namespace detail
 
 export
 template<fiat::scalar Element, class Operation>
@@ -1300,7 +1293,8 @@ record(
     std::uint64_t {context.max_group_count()} * group_size,
     std::uint64_t {count}));
 
-  const auto arguments = pack_arguments(computation.arguments());
+  const auto arguments =
+    detail::pack_arguments_impl<0UZ>(computation.arguments());
 
   for (
     const auto first : std::views::indices(count) | std::views::stride(stride))
@@ -1503,7 +1497,7 @@ record(
     std::uint64_t {context.max_group_count()} * group_size,
     std::uint64_t {count}));
 
-  const auto arguments = detail::pack_uniform_arguments(
+  const auto arguments = detail::pack_uniform_arguments_impl(
     computation.address(), computation.arguments());
 
   for (
@@ -1616,7 +1610,8 @@ record(
 
   const auto groups = std::min(
     (count + group_size - 1U) / group_size, fiat::detail::reduce_group_limit);
-  const auto arguments = pack_arguments(computation.arguments());
+  const auto arguments =
+    detail::pack_arguments_impl<0UZ>(computation.arguments());
 
   push_compute<descriptor_table_backend::classic>(
     command_buffer,
@@ -1685,11 +1680,11 @@ record(
     command_buffer,
     compute,
     fiat::detail::transform_push {
-      .input     = address,
-      .output    = address,
-      .count     = 1U,
-      .first     = 0U,
-      .arguments = pack_arguments(computation.map_arguments()),
+      .input  = address,
+      .output = address,
+      .count  = 1U,
+      .first  = 0U,
+      .arguments = detail::pack_arguments_impl<0UZ>(computation.map_arguments()),
     });
   dispatch(command_buffer, 1U);
   return {};
