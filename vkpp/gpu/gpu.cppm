@@ -868,6 +868,87 @@ record_transform_impl(
   return {};
 }
 
+inline constexpr vk::DeviceSize reduce_result_offset {4U};
+
+template<fiat::scalar Element, class Computation>
+[[nodiscard]]
+auto
+run_into_new_array_impl(context& context, const Computation& computation)
+  -> std::expected<device_array<Element>, error_t>
+{
+  return context.allocate<Element>(computation.source().size())
+    .and_then(
+      [ & ](device_array<Element>&& output)
+        -> std::expected<device_array<Element>, error_t> {
+        return run(context, computation, output)
+          .transform([ & ] -> device_array<Element> {
+            return std::move(output);
+          });
+      });
+}
+
+template<fiat::scalar Element>
+[[nodiscard]]
+auto
+allocate_scalar_impl(context& context)
+  -> std::expected<device_scalar<Element>, error_t>
+{
+  auto buffer =
+    device_address_buffer::create<Element>(context.device().allocator(), 1U);
+  if (!buffer) { return std::unexpected {buffer.error()}; }
+
+  auto view = buffer->template addressed_view<Element>(
+    context.device(), 0UZ, sizeof(Element));
+  if (!view) { return std::unexpected {view.error()}; }
+
+  const auto address = view->device_address();
+  return device_scalar<Element> {std::move(*buffer), address};
+}
+
+template<fiat::scalar Element>
+void
+record_result_copy_impl(
+  vk::raii::CommandBuffer&  command_buffer,
+  vk::Buffer                source,
+  vk::DeviceSize            source_offset,
+  vk::Buffer                destination,
+  const vk::MemoryBarrier2& after)
+{
+  record_barrier_impl(command_buffer, compute_write_to_copy_read);
+  const vk::BufferCopy region {
+    .srcOffset = source_offset,
+    .dstOffset = 0UZ,
+    .size      = sizeof(Element),
+  };
+  command_buffer.copyBuffer(source, destination, region);
+  record_barrier_impl(command_buffer, after);
+}
+
+template<fiat::scalar Element>
+[[nodiscard]]
+auto
+read_scalar_impl(context& context) -> std::expected<Element, error_t>
+{
+  Element value {};
+  return context.reduce_readback()
+    .copy_mapped_into(std::span {&value, 1UZ})
+    .transform([ & ] -> Element { return value; });
+}
+
+[[nodiscard]]
+auto
+check_reduce_count_impl(std::uint32_t count, std::uint32_t group_size)
+  -> std::expected<void, error_t>
+{
+  if (
+    count == 0U ||
+    count > 0xFF'FF'FFU - fiat::detail::reduce_group_limit * group_size)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+  return {};
+}
+
 } // namespace detail
 
 export template<fiat::scalar Element, class Operation>
@@ -1360,17 +1441,7 @@ template<fiat::scalar Element, class Operation>
 auto
 run(context& context, const pipeline<Element, Operation>& computation)
   -> std::expected<device_array<Element>, error_t>
-{
-  return context.allocate<Element>(computation.source().size())
-    .and_then(
-      [ & ](device_array<Element>&& output)
-        -> std::expected<device_array<Element>, error_t> {
-        return run(context, computation, output)
-          .transform([ & ] -> device_array<Element> {
-            return std::move(output);
-          });
-      });
-}
+{ return detail::run_into_new_array_impl<Element>(context, computation); }
 
 export struct execute_stage
 {
@@ -1411,16 +1482,8 @@ operator |(
   -> std::expected<device_scalar<Element>, error_t>
 {
   auto& context = stage.context;
-
-  auto scalar_buffer =
-    device_address_buffer::create<Element>(context.device().allocator(), 1U);
-  if (!scalar_buffer) { return std::unexpected {scalar_buffer.error()}; }
-
-  auto scalar_view = scalar_buffer->template addressed_view<Element>(
-    context.device(), 0UZ, sizeof(Element));
-  if (!scalar_view) { return std::unexpected {scalar_view.error()}; }
-
-  const auto address = scalar_view->device_address();
+  auto  slot    = detail::allocate_scalar_impl<Element>(context);
+  if (!slot) { return std::unexpected {slot.error()}; }
 
   return detail::submit_impl(
     context,
@@ -1430,22 +1493,15 @@ operator |(
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_copy_read);
-      const vk::BufferCopy region {
-        .srcOffset = 4UZ,
-        .dstOffset = 0UZ,
-        .size      = sizeof(Element),
-      };
-      command_buffer.copyBuffer(
-        context.reduce_scratch().buffer(), scalar_buffer->buffer(), region);
-      detail::record_barrier_impl(
-        command_buffer, detail::copy_write_to_compute);
+      detail::record_result_copy_impl<Element>(
+        command_buffer,
+        context.reduce_scratch().buffer(),
+        detail::reduce_result_offset,
+        slot->buffer().buffer(),
+        detail::copy_write_to_compute);
       return {};
     })
-    .transform([ & ] -> device_scalar<Element> {
-      return device_scalar<Element> {std::move(*scalar_buffer), address};
-    });
+    .transform([ & ] -> device_scalar<Element> { return std::move(*slot); });
 }
 
 export
@@ -1457,26 +1513,17 @@ operator |(
   keep_stage stage) -> std::expected<device_scalar<Element>, error_t>
 {
   auto& context = stage.context;
-
-  auto scalar_buffer =
-    device_address_buffer::create<Element>(context.device().allocator(), 1U);
-  if (!scalar_buffer) { return std::unexpected {scalar_buffer.error()}; }
-
-  auto scalar_view = scalar_buffer->template addressed_view<Element>(
-    context.device(), 0UZ, sizeof(Element));
-  if (!scalar_view) { return std::unexpected {scalar_view.error()}; }
-  const auto address = scalar_view->device_address();
+  auto  slot    = detail::allocate_scalar_impl<Element>(context);
+  if (!slot) { return std::unexpected {slot.error()}; }
 
   return detail::submit_impl(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
       return record(
-        command_buffer, context, computation, *scalar_buffer, address);
+        command_buffer, context, computation, slot->buffer(), slot->address());
     })
-    .transform([ & ] -> device_scalar<Element> {
-      return device_scalar<Element> {std::move(*scalar_buffer), address};
-    });
+    .transform([ & ] -> device_scalar<Element> { return std::move(*slot); });
 }
 
 export
@@ -1531,17 +1578,7 @@ run(
   context&                                                    context,
   const transform_with_pipeline<Element, Uniform, Operation>& computation)
   -> std::expected<device_array<Element>, error_t>
-{
-  return context.allocate<Element>(computation.source().size())
-    .and_then(
-      [ & ](device_array<Element>&& output)
-        -> std::expected<device_array<Element>, error_t> {
-        return run(context, computation, output)
-          .transform([ & ] -> device_array<Element> {
-            return std::move(output);
-          });
-      });
-}
+{ return detail::run_into_new_array_impl<Element>(context, computation); }
 
 export
 template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
@@ -1564,11 +1601,9 @@ record(
 {
   const auto count      = computation.source().size();
   const auto group_size = context.group_size();
-  if (
-    count == 0U ||
-    count > 0xFF'FF'FFU - fiat::detail::reduce_group_limit * group_size)
+  if (auto error = detail::check_reduce_count_impl(count, group_size); !error)
   {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+    return error;
   }
 
   auto kernel =
@@ -1616,18 +1651,9 @@ record(
   vk::raii::CommandBuffer&                                 command_buffer,
   context&                                                 context,
   const scalar_pipeline<Element, Map, Combine, Operation>& computation,
-  device_address_buffer&                                   scalar_buffer,
+  const device_address_buffer&                             scalar_buffer,
   std::uint64_t address) -> std::expected<void, error_t>
 {
-  const auto count      = computation.source().size();
-  const auto group_size = context.group_size();
-  if (
-    count == 0U ||
-    count > 0xFF'FF'FFU - fiat::detail::reduce_group_limit * group_size)
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-
   const reduce_pipeline<Element, Map, Combine> reduce_part {
     computation.source(),
     computation.reduce_arguments(),
@@ -1638,17 +1664,12 @@ record(
     return error;
   }
 
-  detail::record_barrier_impl(
-    command_buffer, detail::compute_write_to_copy_read);
-  const vk::BufferCopy region {
-    .srcOffset = 4UZ,
-    .dstOffset = 0UZ,
-    .size      = sizeof(Element),
-  };
-  command_buffer.copyBuffer(
-    context.reduce_scratch().buffer(), scalar_buffer.buffer(), region);
-
-  detail::record_barrier_impl(command_buffer, detail::copy_write_to_compute);
+  detail::record_result_copy_impl<Element>(
+    command_buffer,
+    context.reduce_scratch().buffer(),
+    detail::reduce_result_offset,
+    scalar_buffer.buffer(),
+    detail::copy_write_to_compute);
 
   auto kernel = context.kernel<Element, fiat::transform_stage<Operation>>();
   if (!kernel) { return std::unexpected {kernel.error()}; }
@@ -1686,26 +1707,16 @@ run(context& context, const reduce_pipeline<Element, Map, Combine>& computation)
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_copy_read);
-      const vk::BufferCopy region {
-        .srcOffset = 4UZ,
-        .dstOffset = 0UZ,
-        .size      = sizeof(Element),
-      };
-      command_buffer.copyBuffer(
+      detail::record_result_copy_impl<Element>(
+        command_buffer,
         context.reduce_scratch().buffer(),
+        detail::reduce_result_offset,
         context.reduce_readback().buffer(),
-        region);
-      detail::record_barrier_impl(
-        command_buffer, detail::copy_write_to_host_read);
+        detail::copy_write_to_host_read);
       return {};
     })
     .and_then([ & ] -> std::expected<Element, error_t> {
-      Element value {};
-      return context.reduce_readback()
-        .copy_mapped_into(std::span {&value, 1UZ})
-        .transform([ & ] -> Element { return value; });
+      return detail::read_scalar_impl<Element>(context);
     });
 }
 
@@ -1727,44 +1738,30 @@ run(
   const scalar_pipeline<Element, Map, Combine, Operation>& computation)
   -> std::expected<Element, error_t>
 {
-  auto scalar_buffer =
-    device_address_buffer::create<Element>(context.device().allocator(), 1U);
-  if (!scalar_buffer) { return std::unexpected {scalar_buffer.error()}; }
-
-  auto scalar_view = scalar_buffer->template addressed_view<Element>(
-    context.device(), 0UZ, sizeof(Element));
-  if (!scalar_view) { return std::unexpected {scalar_view.error()}; }
-  const auto address = scalar_view->device_address();
+  auto slot = detail::allocate_scalar_impl<Element>(context);
+  if (!slot) { return std::unexpected {slot.error()}; }
 
   return detail::submit_impl(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
       if (
-        auto error =
-          record(command_buffer, context, computation, *scalar_buffer, address);
+        auto error = record(
+          command_buffer, context, computation, slot->buffer(), slot->address());
         !error)
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_copy_read);
-      const vk::BufferCopy region {
-        .srcOffset = 0UZ,
-        .dstOffset = 0UZ,
-        .size      = sizeof(Element),
-      };
-      command_buffer.copyBuffer(
-        scalar_buffer->buffer(), context.reduce_readback().buffer(), region);
-      detail::record_barrier_impl(
-        command_buffer, detail::copy_write_to_host_read);
+      detail::record_result_copy_impl<Element>(
+        command_buffer,
+        slot->buffer().buffer(),
+        0UZ,
+        context.reduce_readback().buffer(),
+        detail::copy_write_to_host_read);
       return {};
     })
     .and_then([ & ] -> std::expected<Element, error_t> {
-      Element value {};
-      return context.reduce_readback()
-        .copy_mapped_into(std::span {&value, 1UZ})
-        .transform([ & ] -> Element { return value; });
+      return detail::read_scalar_impl<Element>(context);
     });
 }
 
