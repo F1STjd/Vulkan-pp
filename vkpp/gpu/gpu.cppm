@@ -1454,14 +1454,6 @@ auto
 execute(context& context) -> execute_stage
 { return execute_stage {.context = context}; }
 
-export
-template<fiat::scalar Element, class Operation>
-[[nodiscard]]
-auto
-operator |(const pipeline<Element, Operation>& computation, execute_stage stage)
-  -> std::expected<device_array<Element>, error_t>
-{ return run(stage.context, computation); }
-
 export struct keep_stage
 {
   gpu::context& context;
@@ -1579,15 +1571,6 @@ run(
   const transform_with_pipeline<Element, Uniform, Operation>& computation)
   -> std::expected<device_array<Element>, error_t>
 { return detail::run_into_new_array_impl<Element>(context, computation); }
-
-export
-template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
-[[nodiscard]]
-auto
-operator |(
-  const transform_with_pipeline<Element, Uniform, Operation>& computation,
-  execute_stage stage) -> std::expected<device_array<Element>, error_t>
-{ return run(stage.context, computation); }
 
 export
 template<fiat::scalar Element, class Map, class Combine>
@@ -1721,15 +1704,6 @@ run(context& context, const reduce_pipeline<Element, Map, Combine>& computation)
 }
 
 export
-template<fiat::scalar Element, class Map, class Combine>
-[[nodiscard]]
-auto
-operator |(
-  const reduce_pipeline<Element, Map, Combine>& computation,
-  execute_stage stage) -> std::expected<Element, error_t>
-{ return run(stage.context, computation); }
-
-export
 template<fiat::scalar Element, class Map, class Combine, class Operation>
 [[nodiscard]]
 auto
@@ -1765,22 +1739,22 @@ run(
     });
 }
 
-export
-template<fiat::scalar Element, class Map, class Combine, class Operation>
-[[nodiscard]]
-auto
-operator |(
-  const scalar_pipeline<Element, Map, Combine, Operation>& computation,
-  execute_stage stage) -> std::expected<Element, error_t>
-{ return run(stage.context, computation); }
+namespace detail
+{
+
+template<class Computation>
+concept runnable = requires(context& context, const Computation& computation) {
+  run(context, computation);
+};
+
+} // namespace detail
 
 export
-template<fiat::soa_element Element, class Operation>
+template<detail::runnable Computation>
 [[nodiscard]]
 auto
-operator |(
-  const foreach_pipeline<Element, Operation>& computation, execute_stage stage)
-  -> std::expected<void, error_t>
+operator |(const Computation& computation, execute_stage stage)
+  -> decltype(auto)
 { return run(stage.context, computation); }
 
 } // namespace vkpp::gpu
