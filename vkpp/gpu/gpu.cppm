@@ -1819,6 +1819,361 @@ run(
     });
 }
 
+export template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  fiat::scan_mode Mode,
+  class Epilogue = fiat::identity
+>
+  requires (
+    fiat::traceable<Map, Element> &&
+    fiat::combinable<Combine, Element> &&
+    fiat::traceable<Epilogue, Element>)
+class scan_pipeline
+{
+public:
+  using argument_tuple =
+    decltype(fiat::scan_stage<Map, Combine, Element, Mode, Epilogue>::arguments);
+  using epilogue_argument_tuple = decltype(fiat::scan_stage<
+    Map,
+    Combine,
+    Element,
+    Mode,
+    Epilogue
+  >::epilogue_arguments);
+
+  explicit scan_pipeline(
+    const device_array<Element>& source,
+    argument_tuple               arguments,
+    Element                      identity,
+    epilogue_argument_tuple      epilogue_arguments = {})
+  : source_ {source},
+    arguments_ {std::move(arguments)},
+    identity_ {identity},
+    epilogue_arguments_ {std::move(epilogue_arguments)}
+  {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<Element>&
+  { return source_; }
+
+  [[nodiscard]]
+  auto
+  arguments() const noexcept -> const argument_tuple&
+  { return arguments_; }
+
+  [[nodiscard]]
+  auto
+  identity() const noexcept -> Element
+  { return identity_; }
+
+  [[nodiscard]]
+  auto
+  epilogue_arguments() const noexcept -> const epilogue_argument_tuple&
+  { return epilogue_arguments_; }
+
+private:
+  const device_array<Element>& source_;
+  argument_tuple               arguments_;
+  Element                      identity_;
+  epilogue_argument_tuple      epilogue_arguments_;
+};
+
+export
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  class Identity,
+  fiat::scan_mode Mode
+>
+[[nodiscard]]
+auto
+operator |(
+  const device_array<Element>&                   source,
+  fiat::scan_stage<Map, Combine, Identity, Mode> stage)
+{
+  if constexpr (
+    !fiat::traceable<Map, Element> &&
+    !fiat::combinable<Combine, Element> &&
+    !fiat::traceable<Identity, Element>)
+  {
+    static_assert(false, detail::scan_mismatch);
+  }
+  else
+  {
+    return scan_pipeline<Element, Map, Combine, Mode> {
+      source,
+      std::move(stage.arguments),
+      stage.identity,
+      {},
+    };
+  }
+}
+
+export
+template<
+  fiat::scalar Element,
+  class Operation,
+  class Combine,
+  class Identity,
+  fiat::scan_mode Mode
+>
+[[nodiscard]]
+auto
+operator |(
+  const transform_pipeline<Element, Operation>&            current,
+  fiat::scan_stage<fiat::chain<>, Combine, Identity, Mode> next)
+{
+  if constexpr (
+    !fiat::traceable<Operation, Element> &&
+    !fiat::combinable<Combine, Element> &&
+    !fiat::traceable<Identity, Element>)
+  {
+    static_assert(false, detail::scan_mismatch);
+  }
+  else
+  {
+    auto fused =
+      fiat::transform_stage<Operation> {.arguments = current.arguments()} |
+      std::move(next);
+    return scan_pipeline<Element, Operation, Combine, Mode> {
+      current.source(),
+      std::move(fused.arguments),
+      fused.identity,
+      {},
+    };
+  }
+}
+
+export
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  fiat::scan_mode Mode,
+  class Next
+>
+[[nodiscard]]
+auto
+operator |(
+  const scan_pipeline<Element, Map, Combine, Mode, fiat::identity>& computation,
+  fiat::transform_stage<Next>                                       stage)
+{
+  if constexpr (!fiat::traceable<Next, Element>)
+  {
+    static_assert(false, detail::transform_mismatch);
+  }
+  else
+  {
+    static_assert(
+      std::tuple_size_v<
+          typename scan_pipeline<Element, Map, Combine, Mode, Next>::argument_tuple
+      > +
+          std::tuple_size_v<typename scan_pipeline<
+            Element,
+            Map,
+            Combine,
+            Mode,
+            Next
+          >::epilogue_argument_tuple> <=
+        fiat::scan_argument_capacity,
+      "scan map and epilogue arguments together take at most 24 slots");
+    return scan_pipeline<Element, Map, Combine, Mode, Next> {
+      computation.source(),
+      computation.arguments(),
+      computation.identity,
+      std::move(stage.arguments),
+    };
+  }
+}
+
+export
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  fiat::scan_mode Mode,
+  class... Current,
+  class... Next
+>
+[[nodiscard]]
+auto
+operator |(
+  const scan_pipeline<Element, Map, Combine, Mode, fiat::chain<Current...>>&
+                                              current,
+  fiat::transform_stage<fiat::chain<Next...>> next)
+{
+  auto fused = fiat::fuse(
+    fiat::transform_stage<fiat::chain<Current...>> {
+      .arguments = current.epilogue_arguments(),
+    },
+    std::move(next));
+  if constexpr (!fiat::traceable<fiat::chain<Current..., Next...>, Element>)
+  {
+    static_assert(false, detail::transform_mismatch);
+  }
+  else
+  {
+    static_assert(
+      std::tuple_size_v<typename scan_pipeline<
+            Element,
+            Map,
+            Combine,
+            Mode,
+            fiat::chain<Current..., Next...>
+          >::argument_tuple> +
+          std::tuple_size_v<typename scan_pipeline<
+            Element,
+            Map,
+            Combine,
+            Mode,
+            fiat::chain<Current..., Next...>
+          >::epilogue_argument_tuple> <=
+        fiat::scan_argument_capacity,
+      "scan map and epilogue arguments together take at most 24 slots");
+    return scan_pipeline<
+      Element,
+      Map,
+      Combine,
+      Mode,
+      fiat::chain<Current..., Next...>
+    > {
+      current.source(),
+      current.arguments(),
+      current.identity(),
+      std::move(fused.arguments),
+    };
+  }
+}
+
+export
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  fiat::scan_mode Mode,
+  class Epilogue
+>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&                                    command_buffer,
+  context&                                                    context,
+  const scan_pipeline<Element, Map, Combine, Mode, Epilogue>& computation,
+  device_array<Element>& output) -> std::expected<void, error_t>
+{
+  const auto count      = computation.source().size();
+  const auto group_size = context.group_size();
+  if (auto error = detail::check_count_impl(count, group_size); !error)
+  {
+    return error;
+  }
+  if (output.size() != count)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+
+  using scan_kernel = fiat::scan_stage<Map, Combine, Element, Mode, Epilogue>;
+  auto upsweep =
+    context.kernel<Element, scan_kernel, detail::scan_upsweep_index>();
+  if (!upsweep) { return std::unexpected {upsweep.error()}; }
+  auto downsweep =
+    context.kernel<Element, scan_kernel, detail::scan_downsweep_index>();
+  if (!downsweep) { return std::unexpected {downsweep.error()}; }
+
+  auto input_view  = computation.source().addressed_view(context.device());
+  auto output_view = output.addressed_view(context.device());
+  if (!input_view) { return std::unexpected {input_view.error()}; }
+  if (!output_view) { return std::unexpected {output_view.error()}; }
+
+  auto scratch_view =
+    context.reduce_scratch().template addressed_view<std::byte>(
+      context.device(), 0UZ, fiat::detail::reduce_scratch_bytes);
+  if (!scratch_view) { return std::unexpected {scratch_view.error()}; }
+
+  const detail::scan_partition partition =
+    detail::scan_partition_impl(count, group_size);
+  const fiat::detail::scan_push scan_constants {
+    .input     = input_view->device_address(),
+    .scratch   = scratch_view->device_address(),
+    .count     = count,
+    .identity  = std::bit_cast<std::uint32_t>(computation.identity()),
+    .arguments = detail::pack_scan_arguments_impl(
+      computation.arguments(), computation.epilogue_arguments()),
+    .output = output_view->device_address(),
+  };
+
+  detail::record_barrier_impl(command_buffer, detail::compute_reuse);
+
+  const auto& upsweep_compute = upsweep->get();
+  command_buffer.bindPipeline(
+    vk::PipelineBindPoint::eCompute, *upsweep_compute.pipeline());
+  push_compute<descriptor_table_backend::classic>(
+    command_buffer, upsweep_compute, scan_constants);
+  dispatch(command_buffer, partition.groups);
+
+  detail::record_barrier_impl(
+    command_buffer, detail::compute_write_to_any_read);
+
+  const auto& downsweep_compute = downsweep->get();
+  command_buffer.bindPipeline(
+    vk::PipelineBindPoint::eCompute, *downsweep_compute.pipeline());
+  push_compute<descriptor_table_backend::classic>(
+    command_buffer, downsweep_compute, scan_constants);
+  dispatch(command_buffer, partition.groups);
+  return {};
+}
+
+export
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  fiat::scan_mode Mode,
+  class Epilogue
+>
+[[nodiscard]]
+auto
+run(
+  context&                                                    context,
+  const scan_pipeline<Element, Map, Combine, Mode, Epilogue>& computation,
+  device_array<Element>& output) -> std::expected<void, error_t>
+{
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (
+        auto error = record(command_buffer, context, computation, output);
+        !error)
+      {
+        return error;
+      }
+      detail::record_barrier_impl(
+        command_buffer, detail::compute_write_to_any_read);
+      return {};
+    });
+}
+
+export
+template<
+  fiat::scalar Element,
+  class Map,
+  class Combine,
+  fiat::scan_mode Mode,
+  class Epilogue
+>
+[[nodiscard]]
+auto
+run(
+  context&                                                    context,
+  const scan_pipeline<Element, Map, Combine, Mode, Epilogue>& computation)
+  -> std::expected<device_array<Element>, error_t>
+{ return detail::run_into_new_array_impl<Element>(context, computation); }
+
 namespace detail
 {
 
