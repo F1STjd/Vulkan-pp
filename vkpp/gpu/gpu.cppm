@@ -147,7 +147,7 @@ struct kernel_traits<Element, fiat::transform_stage<Operation>>
 {
   static constexpr auto words =
     fiat::compile<Element>(fiat::transform_stage<Operation> {});
-  static constexpr std::string_view entry {fiat::transform_entry};
+  static constexpr std::array  entries {fiat::transform_entry};
   static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
 };
 
@@ -170,7 +170,7 @@ struct kernel_traits<
 {
   static constexpr auto words = fiat::compile<Element>(
     fiat::reduce_stage<Map, Combine, Identity, Epilogue> {});
-  static constexpr std::string_view entry {fiat::reduce_entry};
+  static constexpr std::array  entries {fiat::reduce_entry};
   static constexpr std::size_t push_size {sizeof(fiat::detail::reduce_push)};
 };
 
@@ -180,7 +180,7 @@ struct kernel_traits<Element, fiat::transform_with_stage<Uniform, Operation>>
 {
   static constexpr auto words =
     fiat::compile<Element>(fiat::transform_with_stage<Uniform, Operation> {});
-  static constexpr std::string_view entry {fiat::transform_entry};
+  static constexpr std::array  entries {fiat::transform_entry};
   static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
 };
 
@@ -189,7 +189,7 @@ struct kernel_traits<Element, fiat::foreach_stage<Operation>>
 {
   static constexpr auto words =
     fiat::compile<Element>(fiat::foreach_stage<Operation> {});
-  static constexpr std::string_view entry {fiat::foreach_entry};
+  static constexpr std::array  entries {fiat::foreach_entry};
   static constexpr std::size_t push_size {sizeof(fiat::detail::foreach_push)};
 };
 
@@ -275,6 +275,7 @@ transpose_from_soa_bytes(std::span<const std::byte>, std::span<Element>)
 struct cached_kernel
 {
   std::uint64_t                  fingerprint {};
+  std::string_view               entry {};
   std::span<const std::uint32_t> words {};
   std::uint32_t                  group_size {};
   compute_pipeline               pipeline {};
@@ -315,7 +316,7 @@ public:
         });
   }
 
-  template<class Element, class Stage>
+  template<class Element, class Stage, std::size_t EntryIndex = 0UZ>
     requires fiat::scalar<Element> || fiat::soa_element<Element>
   [[nodiscard]]
   auto
@@ -323,12 +324,17 @@ public:
     -> std::expected<std::reference_wrapper<const compute_pipeline>, error_t>
   {
     using traits = detail::kernel_traits<Element, Stage>;
+    static_assert(
+      EntryIndex < traits::entries.size(),
+      "this kernel has no entry point with that index");
     constexpr std::span<const std::uint32_t> words {traits::words};
-    constexpr std::uint64_t fingerprint = fiat::fingerprint(traits::words);
+    constexpr std::uint64_t    fingerprint = fiat::fingerprint(traits::words);
+    constexpr std::string_view entry       = traits::entries[ EntryIndex ];
 
     const auto found = std::ranges::find_if(
       kernels_, [ & ](const cached_kernel& cached) -> bool {
         return cached.fingerprint == fingerprint &&
+               cached.entry == entry &&
                cached.group_size == group_size_ &&
                std::ranges::equal(cached.words, words);
       });
@@ -347,7 +353,7 @@ public:
       },
       {
         .words          = words,
-        .entry          = cstring_view {traits::entry},
+        .entry          = cstring_view {entry},
         .specialization = specialization,
       },
       cache_.get(),
@@ -357,6 +363,7 @@ public:
           -> std::reference_wrapper<const compute_pipeline> {
           kernels_.push_back({
             .fingerprint = fingerprint,
+            .entry       = entry,
             .words       = words,
             .group_size  = group_size_,
             .pipeline    = std::move(created),
