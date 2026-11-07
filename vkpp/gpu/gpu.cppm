@@ -193,6 +193,36 @@ struct kernel_traits<Element, fiat::foreach_stage<Operation>>
   static constexpr std::size_t push_size {sizeof(fiat::detail::foreach_push)};
 };
 
+template<
+  fiat::soa_element Element,
+  class Map,
+  class Combine,
+  class Identity,
+  fiat::scan_mode Mode,
+  class Epilogue
+>
+  requires (
+    fiat::traceable<Map, Element> &&
+    fiat::combinable<Combine, Element> &&
+    std::same_as<Identity, Element> &&
+    fiat::traceable<Epilogue, Element>)
+struct kernel_traits<
+  Element,
+  fiat::scan_stage<Map, Combine, Identity, Mode, Epilogue>
+>
+{
+  static constexpr auto words = fiat::compile<Element>(
+    fiat::scan_stage<Map, Combine, Identity, Mode, Epilogue> {});
+  static constexpr std::array entries {
+    fiat::scan_upsweep_entry,
+    fiat::scan_downsweep_entry,
+  };
+  static constexpr std::size_t push_size {sizeof(fiat::detail::scan_push)};
+};
+
+inline constexpr std::size_t scan_upsweep_index {0UZ};
+inline constexpr std::size_t scan_downsweep_index {1UZ};
+
 #if defined(__cpp_impl_reflection)
 
 template<fiat::soa_element Element>
@@ -786,6 +816,11 @@ inline constexpr std::string_view reduce_mismatch {
   "trace on the array's element type, and the identity must have that type"
 };
 
+inline constexpr std::string_view scan_mismatch {
+  "this fiat::scan cannot run on this array: the map and the combine must "
+  "trace on the array's element type, and the identity must have that type"
+};
+
 template<std::size_t first_slot, class... Arguments>
 [[nodiscard]]
 constexpr
@@ -819,6 +854,40 @@ pack_reduce_arguments_impl(
       fiat::argument_capacity,
     "reduce map and epilogue arguments together take at most 26 slots");
   auto words = pack_arguments_impl<0UZ>(map_arguments);
+  std::apply(
+    [ & ]<class... Arguments>(const Arguments&... argument) {
+      std::array<std::uint32_t, sizeof...(Arguments)> packed {
+        std::bit_cast<std::uint32_t>(argument)...,
+      };
+      std::ranges::copy(
+        packed, words.begin() + std::tuple_size_v<MapArguments>);
+    },
+    epilogue_arguments);
+  return words;
+}
+
+template<class MapArguments, class EpilogueArguments>
+[[nodiscard]]
+constexpr
+auto
+pack_scan_arguments_impl(
+  const MapArguments&      map_arguments,
+  const EpilogueArguments& epilogue_arguments)
+  -> std::array<std::uint32_t, fiat::scan_argument_capacity>
+{
+  static_assert(
+    std::tuple_size_v<MapArguments> + std::tuple_size_v<EpilogueArguments> <=
+      fiat::scan_argument_capacity,
+    "scan map and epilogue arguments together take at most 24 slots");
+  std::array<std::uint32_t, fiat::scan_argument_capacity> words {};
+  std::apply(
+    [ & ]<class... Arguments>(const Arguments&... argument) {
+      std::array<std::uint32_t, sizeof...(Arguments)> packed {
+        std::bit_cast<std::uint32_t>(argument)...,
+      };
+      std::ranges::copy(packed, words.begin());
+    },
+    map_arguments);
   std::apply(
     [ & ]<class... Arguments>(const Arguments&... argument) {
       std::array<std::uint32_t, sizeof...(Arguments)> packed {
@@ -989,6 +1058,56 @@ check_count_impl(std::uint32_t count, std::uint32_t group_size)
   }
   return {};
 }
+
+struct scan_partition
+{
+  std::uint32_t tiles {};
+  std::uint32_t tiles_per_group {};
+  std::uint32_t groups {};
+};
+
+[[nodiscard]]
+constexpr
+auto
+scan_partition_impl(std::uint32_t count, std::uint32_t group_size)
+  -> scan_partition
+{
+  const std::uint32_t tiles = (count + group_size - 1U) / group_size;
+  const std::uint32_t tiles_per_group =
+    (tiles + fiat::detail::reduce_group_limit - 1U) /
+    fiat::detail::reduce_group_limit;
+  const std::uint32_t groups = (tiles + tiles_per_group - 1U) / tiles_per_group;
+  return {
+    .tiles           = tiles,
+    .tiles_per_group = tiles_per_group,
+    .groups          = groups,
+  };
+}
+
+[[nodiscard]]
+constexpr
+auto
+scan_partition_matches_shader_impl(
+  std::uint32_t count, std::uint32_t group_size) -> bool
+{
+  const auto          partition = scan_partition_impl(count, group_size);
+  const std::uint32_t shader_titles_per_group =
+    (partition.tiles + partition.groups - 1U) / partition.groups;
+  return shader_titles_per_group == partition.tiles_per_group &&
+         partition.groups <= fiat::detail::reduce_group_limit &&
+         (partition.groups - 1U) * partition.tiles_per_group < partition.tiles;
+}
+
+static_assert(scan_partition_matches_shader_impl(1U, 256U));
+static_assert(scan_partition_matches_shader_impl(257U, 256U));
+static_assert(scan_partition_matches_shader_impl(1'000'003U, 256U));
+static_assert(
+  scan_partition_matches_shader_impl(0xFF'FF'FFU - 1'024U * 256U, 256U));
+static_assert(
+  scan_partition_matches_shader_impl(0xFF'FF'FFU - 1'024U * 1'024U, 1'024U));
+static_assert(scan_partition_matches_shader_impl(0xFF'FF'FFU - 1'024U, 1U));
+static_assert(scan_partition_impl(1'000'003U, 256U).groups == 977U);
+static_assert(scan_partition_impl(1'000'003U, 256U).tiles_per_group == 4U);
 
 } // namespace detail
 
