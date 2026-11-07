@@ -194,7 +194,7 @@ struct kernel_traits<Element, fiat::foreach_stage<Operation>>
 };
 
 template<
-  fiat::soa_element Element,
+  fiat::scalar Element,
   class Map,
   class Combine,
   class Identity,
@@ -1984,7 +1984,7 @@ operator |(
     return scan_pipeline<Element, Map, Combine, Mode, Next> {
       computation.source(),
       computation.arguments(),
-      computation.identity,
+      computation.identity(),
       std::move(stage.arguments),
     };
   }
