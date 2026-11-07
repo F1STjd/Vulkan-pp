@@ -978,7 +978,7 @@ read_scalar_impl(context& context) -> std::expected<Element, error_t>
 
 [[nodiscard]]
 auto
-check_reduce_count_impl(std::uint32_t count, std::uint32_t group_size)
+check_count_impl(std::uint32_t count, std::uint32_t group_size)
   -> std::expected<void, error_t>
 {
   if (
@@ -1622,7 +1622,7 @@ record(
 {
   const auto count      = computation.source().size();
   const auto group_size = context.group_size();
-  if (auto error = detail::check_reduce_count_impl(count, group_size); !error)
+  if (auto error = detail::check_count_impl(count, group_size); !error)
   {
     return error;
   }
