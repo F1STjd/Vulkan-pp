@@ -1930,7 +1930,7 @@ operator |(
   if constexpr (
     !fiat::traceable<Operation, Element> ||
     !fiat::combinable<Combine, Element> ||
-    !fiat::traceable<Identity, Element>)
+    !std::same_as<Identity, Element>)
   {
     static_assert(false, detail::scan_mismatch);
   }
