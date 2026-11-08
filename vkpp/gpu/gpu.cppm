@@ -1928,8 +1928,8 @@ operator |(
   fiat::scan_stage<fiat::chain<>, Combine, Identity, Mode> next)
 {
   if constexpr (
-    !fiat::traceable<Operation, Element> &&
-    !fiat::combinable<Combine, Element> &&
+    !fiat::traceable<Operation, Element> ||
+    !fiat::combinable<Combine, Element> ||
     !fiat::traceable<Identity, Element>)
   {
     static_assert(false, detail::scan_mismatch);
