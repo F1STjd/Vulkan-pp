@@ -1091,9 +1091,9 @@ scan_partition_matches_shader_impl(
   std::uint32_t count, std::uint32_t group_size) -> bool
 {
   const auto          partition = scan_partition_impl(count, group_size);
-  const std::uint32_t shader_titles_per_group =
+  const std::uint32_t shader_tiles_per_group =
     (partition.tiles + partition.groups - 1U) / partition.groups;
-  return shader_titles_per_group == partition.tiles_per_group &&
+  return shader_tiles_per_group == partition.tiles_per_group &&
          partition.groups <= fiat::detail::reduce_group_limit &&
          (partition.groups - 1U) * partition.tiles_per_group < partition.tiles;
 }
@@ -1896,9 +1896,9 @@ operator |(
   fiat::scan_stage<Map, Combine, Identity, Mode> stage)
 {
   if constexpr (
-    !fiat::traceable<Map, Element> &&
-    !fiat::combinable<Combine, Element> &&
-    !fiat::traceable<Identity, Element>)
+    !fiat::traceable<Map, Element> ||
+    !fiat::combinable<Combine, Element> ||
+    !std::same_as<Identity, Element>)
   {
     static_assert(false, detail::scan_mismatch);
   }
