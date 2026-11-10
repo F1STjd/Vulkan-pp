@@ -220,6 +220,23 @@ struct kernel_traits<
   static constexpr std::size_t push_size {sizeof(fiat::detail::scan_push)};
 };
 
+template<fiat::scalar Element, fiat::compare_operation Compare>
+struct kernel_traits<Element, fiat::predicate_stage<Compare, Element>>
+{
+  static constexpr auto words =
+    fiat::compile<Element>(fiat::predicate_stage<Compare, Element> {});
+  static constexpr std::array  entries {fiat::predicate_entry};
+  static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
+};
+
+template<fiat::scalar Element>
+struct kernel_traits<Element, fiat::scatter_stage>
+{
+  static constexpr auto words = fiat::compile<Element>(fiat::scatter_stage {});
+  static constexpr std::array  entries {fiat::scatter_entry};
+  static constexpr std::size_t push_size {sizeof(fiat::detail::scatter_push)};
+};
+
 inline constexpr std::size_t scan_upsweep_index {0UZ};
 inline constexpr std::size_t scan_downsweep_index {1UZ};
 
@@ -819,6 +836,11 @@ inline constexpr std::string_view reduce_mismatch {
 inline constexpr std::string_view scan_mismatch {
   "this fiat::scan cannot run on this array: the map and the combine must "
   "trace on the array's element type, and the identity must have that type"
+};
+
+inline constexpr std::string_view compact_mismatch {
+  "this fiat::predicate or fiat::compact cannot run on this array; the compare "
+  "threshold must have the array's element type"
 };
 
 template<std::size_t first_slot, class... Arguments>
@@ -2173,6 +2195,480 @@ run(
   const scan_pipeline<Element, Map, Combine, Mode, Epilogue>& computation)
   -> std::expected<device_array<Element>, error_t>
 { return detail::run_into_new_array_impl<Element>(context, computation); }
+
+export template<fiat::scalar Element>
+struct compacted
+{
+  device_array<Element>       value;
+  device_array<std::uint32_t> count;
+};
+
+export template<fiat::scalar Element, class Compare>
+  requires fiat::compare_operation<Compare>
+class predicate_pipeline
+{
+public:
+  explicit predicate_pipeline(
+    const device_array<Element>& source, Element threshold)
+  : source_ {source}, threshold_ {threshold}
+  {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<Element>&
+  { return source_; }
+
+  [[nodiscard]]
+  auto
+  threshold() const noexcept -> Element
+  { return threshold_; }
+
+private:
+  const device_array<Element>& source_;
+  Element                      threshold_;
+};
+
+export
+template<fiat::scalar Element, class Compare, class Threshold>
+[[nodiscard]]
+auto
+operator |(
+  const device_array<Element>&              source,
+  fiat::predicate_stage<Compare, Threshold> stage)
+{
+  if constexpr (
+    !std::same_as<Element, Threshold> || !fiat::compare_operation<Compare>)
+  {
+    static_assert(false, detail::compact_mismatch);
+  }
+  else
+  {
+    return predicate_pipeline<Element, Compare> {source, stage.threshold};
+  }
+}
+
+export template<fiat::scalar Element, class Compare>
+  requires fiat::compare_operation<Compare>
+class compact_pipeline
+{
+public:
+  explicit compact_pipeline(
+    const device_array<Element>& source, Element threshold)
+  : source_ {source}, threshold_ {threshold}
+  {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<Element>&
+  { return source_; }
+
+  [[nodiscard]]
+  auto
+  threshold() const noexcept -> Element
+  { return threshold_; }
+
+private:
+  const device_array<Element>& source_;
+  Element                      threshold_;
+};
+
+export
+template<fiat::scalar Element, class Compare, class Threshold>
+[[nodiscard]]
+auto
+operator |(
+  const device_array<Element>&            source,
+  fiat::compact_stage<Compare, Threshold> stage)
+{
+  if constexpr (
+    !std::same_as<Element, Threshold> || !fiat::compare_operation<Compare>)
+  {
+    static_assert(false, detail::compact_mismatch);
+  }
+  else
+  {
+    return compact_pipeline<Element, Compare> {source, stage.threshold};
+  }
+}
+
+export template<fiat::scalar Element>
+class scatter_pipeline
+{
+public:
+  explicit scatter_pipeline(
+    const device_array<Element>&       source,
+    const device_array<std::uint32_t>& flags,
+    const device_array<std::uint32_t>& indices)
+  : source_ {source}, flags_ {flags}, indices_ {indices}
+  {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<Element>&
+  { return source_; }
+
+  [[nodiscard]]
+  auto
+  flags() const noexcept -> const device_array<std::uint32_t>&
+  { return flags_; }
+
+  [[nodiscard]]
+  auto
+  indices() const noexcept -> const device_array<std::uint32_t>&
+  { return indices_; }
+
+private:
+  const device_array<Element>&       source_;
+  const device_array<std::uint32_t>& flags_;
+  const device_array<std::uint32_t>& indices_;
+};
+
+export
+template<fiat::scalar Element>
+[[nodiscard]]
+auto
+scatter(
+  const device_array<Element&>       source,
+  const device_array<std::uint32_t>& flags,
+  const device_array<std::uint32_t>& indices) -> scatter_pipeline<Element>
+{ return scatter_pipeline<Element> {source, flags, indices}; }
+
+namespace detail
+{
+
+[[nodiscard]]
+auto
+distinct_addresses(std::array<std::uint64_t, 5UZ> addresses)
+  -> std::expected<void, error_t>
+{
+  std::ranges::sort(addresses);
+  if (std::ranges::adjacent_find(addresses) != addresses.end())
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+  return {};
+}
+
+} // namespace detail
+
+export
+template<fiat::scalar Element, class Compare>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&                    command_buffer,
+  context&                                    context,
+  const predicate_pipeline<Element, Compare>& computation,
+  device_array<std::uint32_t>& flags) -> std::expected<void, error_t>
+{
+  const auto count = computation.source().size();
+  if (flags.size() != count)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+
+  using stage = fiat::predicate_stage<Compare, Element>;
+  auto kernel = context.kernel<Element, stage>();
+  if (!kernel) { return std::unexpected {kernel.error()}; }
+
+  auto input_view = computation.source().addressed_view(context.device());
+  auto flags_view = flags.addressed_view(context.device());
+  if (!input_view) { return std::unexpected {input_view.error()}; }
+  if (!flags_view) { return std::unexpected {flags_view.error()}; }
+
+  const auto arguments = detail::pack_arguments_impl<0UZ>(
+    std::tuple<Element> {computation.threshold()});
+
+  detail::record_barrier_impl(command_buffer, detail::compute_reuse);
+  detail::record_chunks_impl(
+    command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
+      return fiat::detail::transform_push {
+        .input     = input_view->device_address(),
+        .output    = flags_view->device_address(),
+        .count     = count,
+        .first     = first,
+        .arguments = arguments,
+      };
+    });
+  return {};
+}
+
+export
+template<fiat::scalar Element, class Compare>
+[[nodiscard]]
+auto
+run(
+  context&                                    context,
+  const predicate_pipeline<Element, Compare>& computation,
+  device_array<std::uint32_t>& flags) -> std::expected<void, error_t>
+{
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (
+        auto error = record(command_buffer, context, computation, flags);
+        !error)
+      {
+        return error;
+      }
+      detail::record_barrier_impl(
+        command_buffer, detail::compute_write_to_any_read);
+      return {};
+    });
+}
+
+export
+template<fiat::scalar Element, class Compare>
+[[nodiscard]]
+auto
+run(context& context, const predicate_pipeline<Element, Compare>& computation)
+  -> std::expected<device_array<std::uint32_t>, error_t>
+{
+  return context.allocate<std::uint32_t>(computation.source().size())
+    .and_then(
+      [ & ](device_array<std::uint32_t>&& flags)
+        -> std::expected<device_array<std::uint32_t>, error_t> {
+        return run(context, computation, flags)
+          .transform([ & ] -> device_array<std::uint32_t> {
+            return std::move(flags);
+          });
+      });
+}
+
+export
+template<fiat::scalar Element>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&         command_buffer,
+  context&                         context,
+  const scatter_pipeline<Element>& computation,
+  device_array<Element>&           output,
+  device_array<std::uint32_t>&     count_out) -> std::expected<void, error_t>
+{
+  const auto count = computation.source().size();
+  if (
+    output.size() != count ||
+    computation.flags().size() != count ||
+    computation.indices().size() != count ||
+    count_out.size() != 1U)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+
+  auto kernel = context.kernel<Element, fiat::scatter_stage>();
+  if (!kernel) { return std::unexpected {kernel.error()}; }
+
+  auto input_view   = computation.source().addressed_view(context.device());
+  auto output_view  = output.addressed_view(context.device());
+  auto flags_view   = computation.flags().addressed_view(context.device());
+  auto indices_view = computation.indices().addressed_view(context.device());
+  auto count_view   = count_out.addressed_view(context.device());
+  if (!input_view) { return std::unexpected {input_view.error()}; }
+  if (!output_view) { return std::unexpected {output_view.error()}; }
+  if (!flags_view) { return std::unexpected {flags_view.error()}; }
+  if (!indices_view) { return std::unexpected {indices_view.error()}; }
+  if (!count_view) { return std::unexpected {count_view.error()}; }
+
+  if (
+    auto error = detail::distinct_addresses({
+      input_view->device_address(),
+      output_view->device_address(),
+      flags_view->device_address(),
+      indices_view->device_address(),
+      count_view->device_address(),
+    });
+    !error)
+  {
+    return error;
+  }
+
+  detail::record_barrier_impl(command_buffer, detail::compute_reuse);
+  detail::record_chunks_impl(
+    command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
+      return fiat::detail::scatter_push {
+        .input     = input_view->device_address(),
+        .output    = flags_view->device_address(),
+        .count     = count,
+        .first     = first,
+        .flags     = flags_view->device_address(),
+        .indices   = indices_view->device_address(),
+        .count_out = count_view->device_address(),
+      };
+    });
+  return {};
+}
+
+export
+template<fiat::scalar Element>
+[[nodiscard]]
+auto
+run(
+  context&                         context,
+  const scatter_pipeline<Element>& computation,
+  device_array<Element>&           output,
+  device_array<std::uint32_t>&     count_out) -> std::expected<void, error_t>
+{
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (
+        auto error =
+          record(command_buffer, context, computation, output, count_out);
+        !error)
+      {
+        return error;
+      }
+      detail::record_barrier_impl(
+        command_buffer, detail::compute_write_to_any_read);
+      return {};
+    });
+}
+
+export
+template<fiat::scalar Element>
+[[nodiscard]]
+auto
+run(context& context, const scatter_pipeline<Element>& computation)
+  -> std::expected<compacted<Element>, error_t>
+{
+  auto output = context.allocate<Element>(computation.source().size());
+  if (!output) { return std::unexpected {output.error()}; }
+
+  auto count_out = context.allocate<std::uint32_t>(1U);
+  if (!count_out) { return std::unexpected {count_out.error()}; }
+
+  return run(context, computation, *output, *count_out)
+    .transform([ & ] -> compacted<Element> {
+      return compacted<Element> {
+        .values = std::move(*output),
+        .count  = std::move(*count_out),
+      };
+    });
+}
+
+export
+template<fiat::scalar Element, class Compare>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&                  command_buffer,
+  context&                                  context,
+  const compact_pipeline<Element, Compare>& computation,
+  device_array<std::uint32_t>&              flags,
+  device_array<std::uint32_t>&              indices,
+  device_array<Element>&                    output,
+  device_array<std::uint32_t>& count_out) -> std::expected<void, error_t>
+{
+  const auto count      = computation.source().size();
+  const auto group_size = context.group_size();
+  if (auto error = detail::check_count_impl(count, group_size); !error)
+  {
+    return error;
+  }
+  if (
+    flags.size() != count ||
+    indices.size() != count ||
+    output.size() != count ||
+    count_out.size() != 1U)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+
+  const predicate_pipeline<Element, Compare> flags_stage {
+    computation.source(), computation.threshold()
+  };
+  if (auto error = record(command_buffer, context, flags_stage, flags); !error)
+  {
+    return error;
+  }
+
+  if (
+    auto error = record(
+      command_buffer,
+      context,
+      flags | fiat::exclusive_scan(fiat::plus {}, 0U),
+      indices);
+    !error)
+  {
+    return error;
+  }
+
+  detail::record_barrier_impl(
+    command_buffer, detail::compute_write_to_any_read);
+
+  return record(
+    command_buffer,
+    context,
+    scatter(computation.source(), flags, indices),
+    output,
+    count_out);
+}
+
+export
+template<fiat::scalar Element, class Compare>
+[[nodiscard]]
+auto
+run(
+  context&                                  context,
+  const compact_pipeline<Element, Compare>& computation,
+  device_array<Element>&                    output,
+  device_array<std::uint32_t>& count_out) -> std::expected<void, error_t>
+{
+  const auto source_size = computation.source().size();
+
+  auto flags = context.allocate<std::uint32_t>(source_size);
+  if (!flags) { return std::unexpected {flags.error()}; }
+
+  auto indices = context.allocate<std::uint32_t>(source_size);
+  if (!indices) { return std::unexpected {indices.error()}; }
+
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (
+        auto error = record(
+          command_buffer,
+          context,
+          computation,
+          *flags,
+          *indices,
+          output,
+          count_out);
+        !error)
+      {
+        return error;
+      }
+      detail::record_barrier_impl(
+        command_buffer, detail::compute_write_to_any_read);
+      return {};
+    });
+}
+
+export
+template<fiat::scalar Element, class Compare>
+[[nodiscard]]
+auto
+run(context& context, const compact_pipeline<Element, Compare>& computation)
+  -> std::expected<compacted<Element>, error_t>
+{
+  auto output = context.allocate<Element>(computation.source().size());
+  if (!output) { return std::unexpected {output.error()}; }
+
+  auto count_out = context.allocate<std::uint32_t>(1U);
+  if (!count_out) { return std::unexpected {count_out.error()}; }
+
+  return run(context, computation, *output, *count_out)
+    .transform([ & ] -> compacted<Element> {
+      return compacted<Element> {
+        .values = std::move(*output),
+        .count  = std::move(*count_out),
+      };
+    });
+}
 
 namespace detail
 {
