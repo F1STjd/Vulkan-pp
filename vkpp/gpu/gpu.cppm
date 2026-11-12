@@ -2199,7 +2199,7 @@ run(
 export template<fiat::scalar Element>
 struct compacted
 {
-  device_array<Element>       value;
+  device_array<Element>       values;
   device_array<std::uint32_t> count;
 };
 
@@ -2328,7 +2328,7 @@ template<fiat::scalar Element>
 [[nodiscard]]
 auto
 scatter(
-  const device_array<Element&>       source,
+  const device_array<Element>&       source,
   const device_array<std::uint32_t>& flags,
   const device_array<std::uint32_t>& indices) -> scatter_pipeline<Element>
 { return scatter_pipeline<Element> {source, flags, indices}; }
