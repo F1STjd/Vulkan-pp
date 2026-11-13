@@ -237,6 +237,18 @@ struct kernel_traits<Element, fiat::scatter_stage>
   static constexpr std::size_t push_size {sizeof(fiat::detail::scatter_push)};
 };
 
+template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
+struct kernel_traits<std::uint32_t, fiat::histogram_stage<Buckets, Mode, Key>>
+{
+  static constexpr auto words =
+    fiat::compile<std::uint32_t>(fiat::histogram_stage<Buckets, Mode, Key> {});
+  static constexpr std::array entries {
+    fiat::histogram_entry,
+    fiat::histogram_global_entry,
+  };
+  static constexpr std::size_t push_size {sizeof(fiat::detail::histogram_push)};
+};
+
 inline constexpr std::size_t scan_upsweep_index {0UZ};
 inline constexpr std::size_t scan_downsweep_index {1UZ};
 
@@ -325,6 +337,7 @@ struct cached_kernel
   std::string_view               entry {};
   std::span<const std::uint32_t> words {};
   std::uint32_t                  group_size {};
+  std::uint32_t                  buckets {};
   compute_pipeline               pipeline {};
 };
 
@@ -367,7 +380,7 @@ public:
     requires fiat::scalar<Element> || fiat::soa_element<Element>
   [[nodiscard]]
   auto
-  kernel()
+  kernel(std::uint32_t buckets = 0U)
     -> std::expected<std::reference_wrapper<const compute_pipeline>, error_t>
   {
     using traits = detail::kernel_traits<Element, Stage>;
@@ -383,16 +396,26 @@ public:
         return cached.fingerprint == fingerprint &&
                cached.entry == entry &&
                cached.group_size == group_size_ &&
+               cached.buckets == buckets &&
                std::ranges::equal(cached.words, words);
       });
     if (found != kernels_.end()) { return std::cref(found->pipeline); }
 
-    const std::array specialization {
-      specialization_constant {
-        .id    = fiat::group_size_constant_id,
-        .value = group_size_,
-      },
+    const specialization_constant group_size_spec {
+      .id    = fiat::group_size_constant_id,
+      .value = group_size_,
     };
+    const specialization_constant buckets_spec {
+      .id    = fiat::buckets_constant_id,
+      .value = buckets,
+    };
+    const std::array one {group_size_spec};
+    const std::array two {group_size_spec, buckets_spec};
+    const auto       specialization =
+      buckets == 0U
+        ? std::span<const specialization_constant> {one}
+        : std::span<const specialization_constant> {two};
+
     return make_compute_pipeline(
       device_.device(),
       {
@@ -413,6 +436,7 @@ public:
             .entry       = entry,
             .words       = words,
             .group_size  = group_size_,
+            .buckets     = buckets,
             .pipeline    = std::move(created),
           });
           return std::cref(kernels_.back().pipeline);
@@ -587,6 +611,11 @@ public:
 
   [[nodiscard]]
   auto
+  shared_memory_size() const noexcept -> std::uint32_t
+  { return shared_memory_size_; }
+
+  [[nodiscard]]
+  auto
   max_group_count() const noexcept -> std::uint32_t
   { return max_group_count_; }
 
@@ -627,6 +656,7 @@ private:
     std::optional<diagnostic_buffer&> diagnostics,
     std::uint32_t                     group_size,
     std::uint32_t                     max_group_count,
+    std::uint32_t                     shared_memory_size,
     std::filesystem::path             pipeline_cache_path,
     device_address_buffer&&           reduce_scratch,
     readback_buffer&&                 reduce_readback)
@@ -637,6 +667,7 @@ private:
     diagnostics_ {diagnostics},
     group_size_ {group_size},
     max_group_count_ {max_group_count},
+    shared_memory_size_ {shared_memory_size},
     pipeline_cache_path_ {std::move(pipeline_cache_path)},
     reduce_scratch_ {std::move(reduce_scratch)},
     reduce_readback_ {std::move(reduce_readback)}
@@ -712,6 +743,7 @@ private:
       create_info.diagnostics,
       group_size,
       limits.maxComputeWorkGroupCount[ 0 ],
+      limits.maxComputeSharedMemorySize,
       std::move(create_info.pipeline_cache_path),
       std::move(*reduce_scratch),
       std::move(*reduce_readback),
@@ -726,6 +758,7 @@ private:
   std::optional<diagnostic_buffer&> diagnostics_ {};
   std::uint32_t                     group_size_ {};
   std::uint32_t                     max_group_count_ {};
+  std::uint32_t                     shared_memory_size_ {};
   std::filesystem::path             pipeline_cache_path_ {};
   device_address_buffer             reduce_scratch_;
   readback_buffer                   reduce_readback_;
@@ -2668,6 +2701,181 @@ run(context& context, const compact_pipeline<Element, Compare>& computation)
         .count  = std::move(*count_out),
       };
     });
+}
+
+namespace detail
+{
+
+template<std::uint32_t Buckets>
+[[nodiscard]]
+auto
+record_zero_counts(
+  vk::raii::CommandBuffer&           command_buffer,
+  const device_array<std::uint32_t>& zeros,
+  device_array<std::uint32_t>&       counts) -> std::expected<void, error_t>
+{
+  if (zeros.size() != Buckets || counts.size() != Buckets)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+  const vk::BufferCopy region {
+    .srcOffset = 0UZ,
+    .dstOffset = 0UZ,
+    .size      = static_cast<vk::DeviceSize>(Buckets) * sizeof(std::uint32_t),
+  };
+  command_buffer.copyBuffer(
+    zeros.buffer().buffer(), counts.buffer().buffer(), region);
+  record_barrier_impl(command_buffer, copy_write_to_compute);
+  return {};
+}
+
+} // namespace detail
+
+export template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
+class histogram_pipeline
+{
+public:
+  using arguments_type =
+    decltype(fiat::histogram_stage<Buckets, Mode, Key> {}.arguments);
+
+  explicit histogram_pipeline(
+    const device_array<std::uint32_t>& source, arguments_type arguments)
+  : source_ {source}, arguments_ {std::move(arguments)}
+  {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<std::uint32_t>&
+  { return source_; }
+
+  [[nodiscard]]
+  auto
+  arguments() const noexcept -> const arguments_type&
+  { return arguments_; }
+
+private:
+  const device_array<std::uint32_t>& source_;
+  arguments_type                     arguments_;
+};
+
+export
+template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
+[[nodiscard]]
+auto
+operator |(
+  const device_array<std::uint32_t>&        source,
+  fiat::histogram_stage<Buckets, Mode, Key> stage)
+  -> histogram_pipeline<Buckets, Mode, Key>
+{ return histogram_pipeline<Buckets, Mode, Key> {source, stage.arguments}; }
+
+export
+template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&                      command_buffer,
+  context&                                      context,
+  const histogram_pipeline<Buckets, Mode, Key>& computation,
+  device_array<std::uint32_t>& counts) -> std::expected<void, error_t>
+{
+  static_assert(Buckets >= 1U, "fiat::histogram needs at least one bucket");
+  if constexpr (Mode == fiat::histogram_mode::privatized)
+  {
+    if (
+      static_cast<std::uint64_t>(Buckets) * 4UZ >
+      static_cast<std::uint64_t>(context.shared_memory_size()))
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::invalid_data_size),
+      };
+    }
+  }
+  if (counts.size() != Buckets)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+
+  constexpr std::size_t entry_index =
+    Mode == fiat::histogram_mode::global ? 1UZ : 0UZ;
+  auto kernel = context.kernel<
+    std::uint32_t,
+    fiat::histogram_stage<Buckets, Mode, Key>,
+    entry_index
+  >(Buckets);
+  if (!kernel) { return std::unexpected {kernel.error()}; }
+
+  auto input_view  = computation.source().addressed_view(context.device());
+  auto counts_view = counts.addressed_view(context.device());
+  if (!input_view) { return std::unexpected {input_view.error()}; }
+  if (!counts_view) { return std::unexpected {counts_view.error()}; }
+  if (input_view->device_address() == counts_view->device_address())
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+
+  const auto count = computation.source().size();
+  detail::record_barrier_impl(command_buffer, detail::compute_reuse);
+  detail::record_chunks_impl(
+    command_buffer, context, kernel->get, count, [ & ](std::uint32_t first) {
+      return fiat::detail::histogram_push {
+        .input     = input_view->device_address(),
+        .counts    = counts_view->device_address(),
+        .count     = count,
+        .first     = first,
+        .arguments = detail::pack_arguments_impl<0UZ>(computation.arguments()),
+      };
+    });
+  return {};
+}
+
+export
+template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
+[[nodiscard]]
+auto
+run(
+  context&                                      context,
+  const histogram_pipeline<Buckets, Mode, Key>& computation,
+  device_array<std::uint32_t>& counts) -> std::expected<void, error_t>
+{
+  const std::vector<std::uint32_t> zeros(Buckets);
+  auto zero_source = context.upload<std::uint32_t>(zeros);
+  if (!zero_source) { return std::unexpected {zero_source.error()}; }
+
+  return detail::submit_impl(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (
+        auto error = detail::record_zero_counts<Buckets>(
+          command_buffer, *zero_source, counts);
+        !error)
+      {
+        return error;
+      }
+      if (
+        auto error = record(command_buffer, context, computation, counts);
+        !error)
+      {
+        return error;
+      }
+      detail::record_barrier_impl(
+        command_buffer, detail::compute_write_to_any_read);
+      return {};
+    });
+}
+
+export
+template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
+[[nodiscard]]
+auto
+run(context& context, const histogram_pipeline<Buckets, Mode, Key>& computation)
+  -> std::expected<device_array<std::uint32_t>, error_t>
+{
+  auto counts = context.allocate<std::uint32_t>(Buckets);
+  if (!counts) { return std::unexpected {counts.error()}; }
+  return run(context, computation, *counts).transform([ & ] {
+    return std::move(*counts);
+  });
 }
 
 namespace detail
