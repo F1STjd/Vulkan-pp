@@ -2816,7 +2816,7 @@ record(
   const auto count = computation.source().size();
   detail::record_barrier_impl(command_buffer, detail::compute_reuse);
   detail::record_chunks_impl(
-    command_buffer, context, kernel->get, count, [ & ](std::uint32_t first) {
+    command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::histogram_push {
         .input     = input_view->device_address(),
         .counts    = counts_view->device_address(),
