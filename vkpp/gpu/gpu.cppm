@@ -810,7 +810,7 @@ inline constexpr vk::MemoryBarrier2 copy_write_to_host_read {
 
 inline
 void
-record_barrier_impl(
+record_barrier(
   vk::raii::CommandBuffer& command_buffer, const vk::MemoryBarrier2& barrier)
 {
   command_buffer.pipelineBarrier2({
@@ -826,7 +826,8 @@ template<std::invocable<vk::raii::CommandBuffer&> Record>
   >
 [[nodiscard]]
 auto
-submit_impl(context& context, Record&& record) -> std::expected<void, error_t>
+submit_and_wait(context& context, Record&& record)
+  -> std::expected<void, error_t>
 {
   single_time_submit submit {
     context.pool(),
@@ -880,7 +881,7 @@ template<std::size_t first_slot, class... Arguments>
 [[nodiscard]]
 constexpr
 auto
-pack_arguments_impl(const std::tuple<Arguments...>& arguments)
+pack_arguments(const std::tuple<Arguments...>& arguments)
   -> std::array<std::uint32_t, fiat::argument_capacity>
 {
   std::array<std::uint32_t, fiat::argument_capacity> words {};
@@ -899,7 +900,7 @@ template<class MapArguments, class EpilogueArguments>
 [[nodiscard]]
 constexpr
 auto
-pack_reduce_arguments_impl(
+pack_reduce_arguments(
   const MapArguments&      map_arguments,
   const EpilogueArguments& epilogue_arguments)
   -> std::array<std::uint32_t, fiat::argument_capacity>
@@ -908,7 +909,7 @@ pack_reduce_arguments_impl(
     std::tuple_size_v<MapArguments> + std::tuple_size_v<EpilogueArguments> <=
       fiat::argument_capacity,
     "reduce map and epilogue arguments together take at most 26 slots");
-  auto words = pack_arguments_impl<0UZ>(map_arguments);
+  auto words = pack_arguments<0UZ>(map_arguments);
   std::apply(
     [ & ]<class... Arguments>(const Arguments&... argument) {
       std::array<std::uint32_t, sizeof...(Arguments)> packed {
@@ -925,7 +926,7 @@ template<class MapArguments, class EpilogueArguments>
 [[nodiscard]]
 constexpr
 auto
-pack_scan_arguments_impl(
+pack_scan_arguments(
   const MapArguments&      map_arguments,
   const EpilogueArguments& epilogue_arguments)
   -> std::array<std::uint32_t, fiat::scan_argument_capacity>
@@ -959,11 +960,11 @@ template<class... Arguments>
 [[nodiscard]]
 constexpr
 auto
-pack_uniform_arguments_impl(
+pack_uniform_arguments(
   std::uint64_t address, const std::tuple<Arguments...>& arguments)
   -> std::array<std::uint32_t, fiat::argument_capacity>
 {
-  auto words = pack_arguments_impl<2UZ>(arguments);
+  auto words = pack_arguments<2UZ>(arguments);
   words[ 0 ] = static_cast<std::uint32_t>(address);
   words[ 1 ] = static_cast<std::uint32_t>(address >> 32U);
   return words;
@@ -971,7 +972,7 @@ pack_uniform_arguments_impl(
 
 template<std::invocable<std::uint32_t> MakePush>
 void
-record_chunks_impl(
+record_chunks(
   vk::raii::CommandBuffer& command_buffer,
   const context&           context,
   const compute_pipeline&  compute,
@@ -998,7 +999,7 @@ record_chunks_impl(
 template<fiat::scalar Element, class Stage>
 [[nodiscard]]
 auto
-record_transform_impl(
+record_transform(
   vk::raii::CommandBuffer&                                  command_buffer,
   context&                                                  context,
   const device_array<Element>&                              source,
@@ -1022,7 +1023,7 @@ record_transform_impl(
 
   const auto input_address  = input_view->device_address();
   const auto output_address = output_view->device_address();
-  record_chunks_impl(
+  record_chunks(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::transform_push {
         .input     = input_address,
@@ -1038,7 +1039,7 @@ record_transform_impl(
 template<fiat::scalar Element, class Computation>
 [[nodiscard]]
 auto
-run_into_new_array_impl(context& context, const Computation& computation)
+run_into_new_array(context& context, const Computation& computation)
   -> std::expected<device_array<Element>, error_t>
 {
   return context.allocate<Element>(computation.source().size())
@@ -1055,7 +1056,7 @@ run_into_new_array_impl(context& context, const Computation& computation)
 template<fiat::scalar Element>
 [[nodiscard]]
 auto
-allocate_scalar_impl(context& context)
+allocate_scalar(context& context)
   -> std::expected<device_scalar<Element>, error_t>
 {
   auto buffer =
@@ -1072,27 +1073,27 @@ allocate_scalar_impl(context& context)
 
 template<fiat::scalar Element>
 void
-record_result_copy_impl(
+record_result_copy(
   vk::raii::CommandBuffer&  command_buffer,
   vk::Buffer                source,
   vk::DeviceSize            source_offset,
   vk::Buffer                destination,
   const vk::MemoryBarrier2& after)
 {
-  record_barrier_impl(command_buffer, compute_write_to_copy_read);
+  record_barrier(command_buffer, compute_write_to_copy_read);
   const vk::BufferCopy region {
     .srcOffset = source_offset,
     .dstOffset = 0UZ,
     .size      = sizeof(Element),
   };
   command_buffer.copyBuffer(source, destination, region);
-  record_barrier_impl(command_buffer, after);
+  record_barrier(command_buffer, after);
 }
 
 template<fiat::scalar Element>
 [[nodiscard]]
 auto
-read_scalar_impl(context& context) -> std::expected<Element, error_t>
+read_scalar(context& context) -> std::expected<Element, error_t>
 {
   Element value {};
   return context.reduce_readback()
@@ -1102,7 +1103,7 @@ read_scalar_impl(context& context) -> std::expected<Element, error_t>
 
 [[nodiscard]]
 auto
-check_count_impl(std::uint32_t count, std::uint32_t group_size)
+check_count(std::uint32_t count, std::uint32_t group_size)
   -> std::expected<void, error_t>
 {
   if (
@@ -1124,7 +1125,7 @@ struct scan_partition
 [[nodiscard]]
 constexpr
 auto
-scan_partition_impl(std::uint32_t count, std::uint32_t group_size)
+make_scan_partition(std::uint32_t count, std::uint32_t group_size)
   -> scan_partition
 {
   const std::uint32_t tiles = (count + group_size - 1U) / group_size;
@@ -1142,10 +1143,10 @@ scan_partition_impl(std::uint32_t count, std::uint32_t group_size)
 [[nodiscard]]
 constexpr
 auto
-scan_partition_matches_shader_impl(
-  std::uint32_t count, std::uint32_t group_size) -> bool
+scan_partition_matches_shader(std::uint32_t count, std::uint32_t group_size)
+  -> bool
 {
-  const auto          partition = scan_partition_impl(count, group_size);
+  const auto          partition = make_scan_partition(count, group_size);
   const std::uint32_t shader_tiles_per_group =
     (partition.tiles + partition.groups - 1U) / partition.groups;
   return shader_tiles_per_group == partition.tiles_per_group &&
@@ -1153,16 +1154,15 @@ scan_partition_matches_shader_impl(
          (partition.groups - 1U) * partition.tiles_per_group < partition.tiles;
 }
 
-static_assert(scan_partition_matches_shader_impl(1U, 256U));
-static_assert(scan_partition_matches_shader_impl(257U, 256U));
-static_assert(scan_partition_matches_shader_impl(1'000'003U, 256U));
+static_assert(scan_partition_matches_shader(1U, 256U));
+static_assert(scan_partition_matches_shader(257U, 256U));
+static_assert(scan_partition_matches_shader(1'000'003U, 256U));
+static_assert(scan_partition_matches_shader(0xFF'FF'FFU - 1'024U * 256U, 256U));
 static_assert(
-  scan_partition_matches_shader_impl(0xFF'FF'FFU - 1'024U * 256U, 256U));
-static_assert(
-  scan_partition_matches_shader_impl(0xFF'FF'FFU - 1'024U * 1'024U, 1'024U));
-static_assert(scan_partition_matches_shader_impl(0xFF'FF'FFU - 1'024U, 1U));
-static_assert(scan_partition_impl(1'000'003U, 256U).groups == 977U);
-static_assert(scan_partition_impl(1'000'003U, 256U).tiles_per_group == 4U);
+  scan_partition_matches_shader(0xFF'FF'FFU - 1'024U * 1'024U, 1'024U));
+static_assert(scan_partition_matches_shader(0xFF'FF'FFU - 1'024U, 1U));
+static_assert(make_scan_partition(1'000'003U, 256U).groups == 977U);
+static_assert(make_scan_partition(1'000'003U, 256U).tiles_per_group == 4U);
 
 } // namespace detail
 
@@ -1218,7 +1218,7 @@ namespace detail
 template<fiat::scalar Element, class Operation, class Fused>
 [[nodiscard]]
 auto
-extend_transform_pipeline_impl(
+extend_transform_pipeline(
   const transform_pipeline<Element, Operation>& current,
   fiat::transform_stage<Fused>                  fused)
 {
@@ -1244,7 +1244,7 @@ operator |(
   const transform_pipeline<Element, Operation>& current,
   fiat::transform_stage<Next>                   next)
 {
-  return detail::extend_transform_pipeline_impl(
+  return detail::extend_transform_pipeline(
     current,
     fiat::fuse(
       fiat::transform_stage<Operation> {.arguments = current.arguments()},
@@ -1371,10 +1371,9 @@ record(
   auto base = computation.buffer().base_address(context.device());
   if (!base) { return std::unexpected {base.error()}; }
 
-  const auto arguments =
-    detail::pack_arguments_impl<0UZ>(computation.arguments());
+  const auto arguments = detail::pack_arguments<0UZ>(computation.arguments());
 
-  detail::record_chunks_impl(
+  detail::record_chunks(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::foreach_push {
         .base      = *base,
@@ -1394,7 +1393,7 @@ auto
 run(context& context, const foreach_pipeline<Element, Operation>& computation)
   -> std::expected<void, error_t>
 {
-  return detail::submit_impl(
+  return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -1402,8 +1401,7 @@ run(context& context, const foreach_pipeline<Element, Operation>& computation)
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_any_read);
+      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
       return {};
     });
 }
@@ -1622,14 +1620,12 @@ record(
   const transform_pipeline<Element, Operation>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  return detail::record_transform_impl<
-    Element,
-    fiat::transform_stage<Operation>
-  >(command_buffer,
+  return detail::record_transform<Element, fiat::transform_stage<Operation>>(
+    command_buffer,
     context,
     computation.source(),
     output,
-    detail::pack_arguments_impl<0UZ>(computation.arguments()));
+    detail::pack_arguments<0UZ>(computation.arguments()));
 }
 
 export
@@ -1641,7 +1637,7 @@ run(
   const transform_pipeline<Element, Operation>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  return detail::submit_impl(
+  return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -1651,8 +1647,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_any_read);
+      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
       return {};
     });
 }
@@ -1663,7 +1658,7 @@ template<fiat::scalar Element, class Operation>
 auto
 run(context& context, const transform_pipeline<Element, Operation>& computation)
   -> std::expected<device_array<Element>, error_t>
-{ return detail::run_into_new_array_impl<Element>(context, computation); }
+{ return detail::run_into_new_array<Element>(context, computation); }
 
 export struct execute_stage
 {
@@ -1701,10 +1696,10 @@ operator |(
   keep_stage stage) -> std::expected<device_scalar<Element>, error_t>
 {
   auto& context = stage.context;
-  auto  slot    = detail::allocate_scalar_impl<Element>(context);
+  auto  slot    = detail::allocate_scalar<Element>(context);
   if (!slot) { return std::unexpected {slot.error()}; }
 
-  return detail::submit_impl(
+  return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -1712,7 +1707,7 @@ operator |(
       {
         return error;
       }
-      detail::record_result_copy_impl<Element>(
+      detail::record_result_copy<Element>(
         command_buffer,
         context.reduce_scratch().buffer(),
         fiat::reduce_result_offset,
@@ -1733,14 +1728,14 @@ record(
   const transform_with_pipeline<Element, Uniform, Operation>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  return detail::record_transform_impl<
+  return detail::record_transform<
     Element,
     fiat::transform_with_stage<Uniform, Operation>
   >(command_buffer,
     context,
     computation.source(),
     output,
-    detail::pack_uniform_arguments_impl(
+    detail::pack_uniform_arguments(
       computation.address(), computation.arguments()));
 }
 
@@ -1753,7 +1748,7 @@ run(
   const transform_with_pipeline<Element, Uniform, Operation>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  return detail::submit_impl(
+  return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -1763,8 +1758,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_any_read);
+      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
       return {};
     });
 }
@@ -1777,7 +1771,7 @@ run(
   context&                                                    context,
   const transform_with_pipeline<Element, Uniform, Operation>& computation)
   -> std::expected<device_array<Element>, error_t>
-{ return detail::run_into_new_array_impl<Element>(context, computation); }
+{ return detail::run_into_new_array<Element>(context, computation); }
 
 export
 template<
@@ -1796,7 +1790,7 @@ record(
 {
   const auto count      = computation.source().size();
   const auto group_size = context.group_size();
-  if (auto error = detail::check_count_impl(count, group_size); !error)
+  if (auto error = detail::check_count(count, group_size); !error)
   {
     return error;
   }
@@ -1814,7 +1808,7 @@ record(
       context.device(), 0UZ, fiat::detail::reduce_scratch_bytes);
   if (!scratch_view) { return std::unexpected {scratch_view.error()}; }
 
-  detail::record_barrier_impl(command_buffer, detail::compute_reuse);
+  detail::record_barrier(command_buffer, detail::compute_reuse);
 
   const compute_pipeline& compute = kernel->get();
   command_buffer.bindPipeline(
@@ -1822,7 +1816,7 @@ record(
 
   const auto groups = std::min(
     (count + group_size - 1U) / group_size, fiat::detail::reduce_group_limit);
-  const auto arguments = detail::pack_reduce_arguments_impl(
+  const auto arguments = detail::pack_reduce_arguments(
     computation.arguments(), computation.epilogue_arguments());
 
   push_compute<descriptor_table_backend::classic>(
@@ -1853,7 +1847,7 @@ run(
   const reduce_pipeline<Element, Map, Combine, Epilogue>& computation)
   -> std::expected<Element, error_t>
 {
-  return detail::submit_impl(
+  return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -1861,7 +1855,7 @@ run(
       {
         return error;
       }
-      detail::record_result_copy_impl<Element>(
+      detail::record_result_copy<Element>(
         command_buffer,
         context.reduce_scratch().buffer(),
         fiat::reduce_result_offset,
@@ -1870,7 +1864,7 @@ run(
       return {};
     })
     .and_then([ & ] -> std::expected<Element, error_t> {
-      return detail::read_scalar_impl<Element>(context);
+      return detail::read_scalar<Element>(context);
     });
 }
 
@@ -2122,7 +2116,7 @@ record(
 {
   const auto count      = computation.source().size();
   const auto group_size = context.group_size();
-  if (auto error = detail::check_count_impl(count, group_size); !error)
+  if (auto error = detail::check_count(count, group_size); !error)
   {
     return error;
   }
@@ -2150,18 +2144,18 @@ record(
   if (!scratch_view) { return std::unexpected {scratch_view.error()}; }
 
   const detail::scan_partition partition =
-    detail::scan_partition_impl(count, group_size);
+    detail::make_scan_partition(count, group_size);
   const fiat::detail::scan_push scan_constants {
     .input     = input_view->device_address(),
     .scratch   = scratch_view->device_address(),
     .count     = count,
     .identity  = std::bit_cast<std::uint32_t>(computation.identity()),
-    .arguments = detail::pack_scan_arguments_impl(
+    .arguments = detail::pack_scan_arguments(
       computation.arguments(), computation.epilogue_arguments()),
     .output = output_view->device_address(),
   };
 
-  detail::record_barrier_impl(command_buffer, detail::compute_reuse);
+  detail::record_barrier(command_buffer, detail::compute_reuse);
 
   const auto& upsweep_compute = upsweep->get();
   command_buffer.bindPipeline(
@@ -2170,8 +2164,7 @@ record(
     command_buffer, upsweep_compute, scan_constants);
   dispatch(command_buffer, partition.groups);
 
-  detail::record_barrier_impl(
-    command_buffer, detail::compute_write_to_any_read);
+  detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
 
   const auto& downsweep_compute = downsweep->get();
   command_buffer.bindPipeline(
@@ -2197,7 +2190,7 @@ run(
   const scan_pipeline<Element, Map, Combine, Mode, Epilogue>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  return detail::submit_impl(
+  return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -2207,8 +2200,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_any_read);
+      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
       return {};
     });
 }
@@ -2227,7 +2219,7 @@ run(
   context&                                                    context,
   const scan_pipeline<Element, Map, Combine, Mode, Epilogue>& computation)
   -> std::expected<device_array<Element>, error_t>
-{ return detail::run_into_new_array_impl<Element>(context, computation); }
+{ return detail::run_into_new_array<Element>(context, computation); }
 
 export template<fiat::scalar Element>
 struct compacted
@@ -2409,11 +2401,11 @@ record(
   if (!input_view) { return std::unexpected {input_view.error()}; }
   if (!flags_view) { return std::unexpected {flags_view.error()}; }
 
-  const auto arguments = detail::pack_arguments_impl<0UZ>(
-    std::tuple<Element> {computation.threshold()});
+  const auto arguments =
+    detail::pack_arguments<0UZ>(std::tuple<Element> {computation.threshold()});
 
-  detail::record_barrier_impl(command_buffer, detail::compute_reuse);
-  detail::record_chunks_impl(
+  detail::record_barrier(command_buffer, detail::compute_reuse);
+  detail::record_chunks(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::transform_push {
         .input     = input_view->device_address(),
@@ -2435,7 +2427,7 @@ run(
   const predicate_pipeline<Element, Compare>& computation,
   device_array<std::uint32_t>& flags) -> std::expected<void, error_t>
 {
-  return detail::submit_impl(
+  return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -2445,8 +2437,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_any_read);
+      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
       return {};
     });
 }
@@ -2517,8 +2508,8 @@ record(
     return error;
   }
 
-  detail::record_barrier_impl(command_buffer, detail::compute_reuse);
-  detail::record_chunks_impl(
+  detail::record_barrier(command_buffer, detail::compute_reuse);
+  detail::record_chunks(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::scatter_push {
         .input     = input_view->device_address(),
@@ -2543,7 +2534,7 @@ run(
   device_array<Element>&           output,
   device_array<std::uint32_t>&     count_out) -> std::expected<void, error_t>
 {
-  return detail::submit_impl(
+  return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -2554,8 +2545,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_any_read);
+      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
       return {};
     });
 }
@@ -2597,7 +2587,7 @@ record(
 {
   const auto count      = computation.source().size();
   const auto group_size = context.group_size();
-  if (auto error = detail::check_count_impl(count, group_size); !error)
+  if (auto error = detail::check_count(count, group_size); !error)
   {
     return error;
   }
@@ -2629,8 +2619,7 @@ record(
     return error;
   }
 
-  detail::record_barrier_impl(
-    command_buffer, detail::compute_write_to_any_read);
+  detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
 
   return record(
     command_buffer,
@@ -2658,7 +2647,7 @@ run(
   auto indices = context.allocate<std::uint32_t>(source_size);
   if (!indices) { return std::unexpected {indices.error()}; }
 
-  return detail::submit_impl(
+  return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -2675,8 +2664,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_any_read);
+      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
       return {};
     });
 }
@@ -2725,7 +2713,7 @@ record_zero_counts(
   };
   command_buffer.copyBuffer(
     zeros.buffer().buffer(), counts.buffer().buffer(), region);
-  record_barrier_impl(command_buffer, copy_write_to_compute);
+  record_barrier(command_buffer, copy_write_to_compute);
   return {};
 }
 
@@ -2814,15 +2802,15 @@ record(
   }
 
   const auto count = computation.source().size();
-  detail::record_barrier_impl(command_buffer, detail::compute_reuse);
-  detail::record_chunks_impl(
+  detail::record_barrier(command_buffer, detail::compute_reuse);
+  detail::record_chunks(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::histogram_push {
         .input     = input_view->device_address(),
         .counts    = counts_view->device_address(),
         .count     = count,
         .first     = first,
-        .arguments = detail::pack_arguments_impl<0UZ>(computation.arguments()),
+        .arguments = detail::pack_arguments<0UZ>(computation.arguments()),
       };
     });
   return {};
@@ -2841,7 +2829,7 @@ run(
   auto zero_source = context.upload<std::uint32_t>(zeros);
   if (!zero_source) { return std::unexpected {zero_source.error()}; }
 
-  return detail::submit_impl(
+  return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -2858,8 +2846,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier_impl(
-        command_buffer, detail::compute_write_to_any_read);
+      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
       return {};
     });
 }
