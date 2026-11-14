@@ -801,6 +801,15 @@ inline constexpr vk::MemoryBarrier2 copy_write_to_compute {
     vk::AccessFlagBits2::eShaderStorageWrite,
 };
 
+inline constexpr vk::MemoryBarrier2 transfer_write_to_compute {
+  .srcStageMask  = vk::PipelineStageFlagBits2::eAllTransfer,
+  .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+  .dstStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
+  .dstAccessMask =
+    vk::AccessFlagBits2::eShaderStorageRead |
+    vk::AccessFlagBits2::eShaderStorageWrite,
+};
+
 inline constexpr vk::MemoryBarrier2 copy_write_to_host_read {
   .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
   .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
