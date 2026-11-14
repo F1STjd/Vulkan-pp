@@ -2513,7 +2513,7 @@ record(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::scatter_push {
         .input     = input_view->device_address(),
-        .output    = flags_view->device_address(),
+        .output    = output_view->device_address(),
         .count     = count,
         .first     = first,
         .flags     = flags_view->device_address(),
