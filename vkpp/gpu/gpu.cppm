@@ -2700,34 +2700,6 @@ run(context& context, const compact_pipeline<Element, Compare>& computation)
     });
 }
 
-namespace detail
-{
-
-template<std::uint32_t Buckets>
-[[nodiscard]]
-auto
-record_zero_counts(
-  vk::raii::CommandBuffer&           command_buffer,
-  const device_array<std::uint32_t>& zeros,
-  device_array<std::uint32_t>&       counts) -> std::expected<void, error_t>
-{
-  if (zeros.size() != Buckets || counts.size() != Buckets)
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-  const vk::BufferCopy region {
-    .srcOffset = 0UZ,
-    .dstOffset = 0UZ,
-    .size      = static_cast<vk::DeviceSize>(Buckets) * sizeof(std::uint32_t),
-  };
-  command_buffer.copyBuffer(
-    zeros.buffer().buffer(), counts.buffer().buffer(), region);
-  record_barrier(command_buffer, copy_write_to_compute);
-  return {};
-}
-
-} // namespace detail
-
 export template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
 class histogram_pipeline
 {
@@ -2834,21 +2806,20 @@ run(
   const histogram_pipeline<Buckets, Mode, Key>& computation,
   device_array<std::uint32_t>& counts) -> std::expected<void, error_t>
 {
-  const std::vector<std::uint32_t> zeros(Buckets);
-  auto zero_source = context.upload<std::uint32_t>(zeros);
-  if (!zero_source) { return std::unexpected {zero_source.error()}; }
+  if (counts.size() != Buckets)
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
 
   return detail::submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      if (
-        auto error = detail::record_zero_counts<Buckets>(
-          command_buffer, *zero_source, counts);
-        !error)
-      {
-        return error;
-      }
+      command_buffer.fillBuffer(
+        counts.buffer().buffer(),
+        0UZ,
+        static_cast<vk::DeviceSize>(Buckets) * sizeof(std::uint32_t),
+        0U);
       if (
         auto error = record(command_buffer, context, computation, counts);
         !error)
