@@ -31,6 +31,16 @@ export struct feature_tag
   struct pipeline_binary {};
   struct maintenance4 {};
   struct vulkan_memory_model {};
+  struct subgroup_size_control {};
+  struct subgroup_extended_types {};
+  struct subgroup_uniform_control_flow {};
+  struct maximal_reconvergence {};
+  struct subgroup_partitioned {};
+  struct cooperative_matrix {};
+  struct integer_dot_product {};
+  struct int64_atomics {};
+  struct float_atomics {};
+  struct workgroup_memory_explicit_layout {};
 };
 
 export template<typename Tag>
@@ -133,6 +143,90 @@ template<>
 struct feature_traits<feature_tag::vulkan_memory_model>
 {
   static constexpr auto member = &device_feature_requests::vulkan_memory_model;
+};
+
+template<>
+struct feature_traits<feature_tag::subgroup_size_control>
+{
+  static constexpr auto member =
+    &device_feature_requests::subgroup_size_control;
+};
+
+template<>
+struct feature_traits<feature_tag::subgroup_extended_types>
+{
+  static constexpr auto member =
+    &device_feature_requests::subgroup_extended_types;
+};
+
+template<>
+struct feature_traits<feature_tag::subgroup_uniform_control_flow>
+{
+  static constexpr auto member =
+    &device_feature_requests::subgroup_uniform_control_flow;
+  static constexpr std::array extensions {
+    vk::KHRShaderSubgroupUniformControlFlowExtensionName,
+  };
+};
+
+template<>
+struct feature_traits<feature_tag::maximal_reconvergence>
+{
+  static constexpr auto member =
+    &device_feature_requests::maximal_reconvergence;
+  static constexpr std::array extensions {
+    vk::KHRShaderMaximalReconvergenceExtensionName,
+  };
+};
+
+template<>
+struct feature_traits<feature_tag::subgroup_partitioned>
+{
+  static constexpr auto member = &device_feature_requests::subgroup_partitioned;
+  static constexpr std::array extensions {
+    vk::EXTShaderSubgroupPartitionedExtensionName,
+  };
+};
+
+template<>
+struct feature_traits<feature_tag::cooperative_matrix>
+{
+  static constexpr auto member = &device_feature_requests::cooperative_matrix;
+  static constexpr std::array extensions {
+    vk::KHRCooperativeMatrixExtensionName,
+  };
+};
+
+template<>
+struct feature_traits<feature_tag::integer_dot_product>
+{
+  static constexpr auto member = &device_feature_requests::integer_dot_product;
+};
+
+template<>
+struct feature_traits<feature_tag::int64_atomics>
+{
+  static constexpr auto member = &device_feature_requests::int64_atomics;
+};
+
+template<>
+struct feature_traits<feature_tag::float_atomics>
+{
+  static constexpr auto       member = &device_feature_requests::float_atomics;
+  static constexpr std::array extensions {
+    vk::EXTShaderAtomicFloatExtensionName,
+    vk::EXTShaderAtomicFloat2ExtensionName,
+  };
+};
+
+template<>
+struct feature_traits<feature_tag::workgroup_memory_explicit_layout>
+{
+  static constexpr auto member =
+    &device_feature_requests::workgroup_memory_explicit_layout;
+  static constexpr std::array extensions {
+    vk::KHRWorkgroupMemoryExplicitLayoutExtensionName,
+  };
 };
 
 export [[nodiscard]]
@@ -330,8 +424,12 @@ public:
                 >()
                 .get<vk::PhysicalDevicePipelineBinaryPropertiesKHR>();
 
+            const auto compute_support = query_compute_capabilities(
+              output.physical_device_, std::get<1>(*chosen));
             auto enabled = resolve_enabled_features(
-              profile, output.physical_device_, diagnostics);
+              profile, output.physical_device_, compute_support, diagnostics);
+            const auto compute =
+              restrict_compute_capabilities(compute_support, enabled);
             const auto mode =
               resolve_pipeline_mode(profile.pipeline, binary_props);
             const auto backend =
@@ -339,9 +437,10 @@ public:
                 ? descriptor_table_backend::heap
                 : descriptor_table_backend::classic;
 
-            const auto extensions =
-              derive_device_extensions(enabled, requirements.extra_extensions);
-            const auto feature_chain = make_enable_chain(enabled);
+            const auto extensions = derive_device_extensions(
+              enabled, compute, requirements.extra_extensions);
+            auto feature_chain = make_enable_chain(enabled, compute);
+            unlink_disabled_features(feature_chain, enabled, compute);
 
             vk::DevicePipelineBinaryInternalCacheControlKHR cache_control {};
             const void*                                     p_next =
@@ -431,6 +530,7 @@ public:
                   .pipeline_binary_properties = binary_props,
                   .descriptor_heap_enabled    = enabled.descriptor_heap,
                   .pipeline_binary_enabled    = enabled.pipeline_binary,
+                  .compute                    = compute,
                 };
                 return std::move(output);
               });
@@ -514,13 +614,21 @@ private:
     vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
     vk::PhysicalDeviceShaderObjectFeaturesEXT,
     vk::PhysicalDeviceDescriptorHeapFeaturesEXT,
-    vk::PhysicalDevicePipelineBinaryFeaturesKHR
+    vk::PhysicalDevicePipelineBinaryFeaturesKHR,
+    vk::PhysicalDeviceShaderSubgroupUniformControlFlowFeaturesKHR,
+    vk::PhysicalDeviceShaderMaximalReconvergenceFeaturesKHR,
+    vk::PhysicalDeviceShaderSubgroupPartitionedFeaturesEXT,
+    vk::PhysicalDeviceCooperativeMatrixFeaturesKHR,
+    vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT,
+    vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT,
+    vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR
   >;
 
   [[nodiscard]]
   static constexpr
   auto
-  make_enable_chain(const enabled_device_features& enabled)
+  make_enable_chain(
+    const enabled_device_features& enabled, const compute_capabilities& compute)
     -> device_feature_chain
   {
     device_feature_chain chain {};
@@ -550,11 +658,18 @@ private:
     v12.bufferDeviceAddress          = vk::Bool32 {device_address};
     v12.vulkanMemoryModel            = vk::Bool32 {enabled.vulkan_memory_model};
     v12.vulkanMemoryModelDeviceScope = vk::Bool32 {enabled.vulkan_memory_model};
+    v12.shaderSubgroupExtendedTypes =
+      vk::Bool32 {compute.subgroup_extended_types};
+    v12.shaderBufferInt64Atomics = vk::Bool32 {compute.buffer_int64_atomics};
+    v12.shaderSharedInt64Atomics = vk::Bool32 {compute.shared_int64_atomics};
 
-    auto& v13            = chain.get<vk::PhysicalDeviceVulkan13Features>();
-    v13.dynamicRendering = vk::Bool32 {enabled.dynamic_rendering};
-    v13.synchronization2 = vk::Bool32 {enabled.synchronization2};
-    v13.maintenance4     = vk::Bool32 {enabled.maintenance4};
+    auto& v13                = chain.get<vk::PhysicalDeviceVulkan13Features>();
+    v13.dynamicRendering     = vk::Bool32 {enabled.dynamic_rendering};
+    v13.synchronization2     = vk::Bool32 {enabled.synchronization2};
+    v13.maintenance4         = vk::Bool32 {enabled.maintenance4};
+    v13.subgroupSizeControl  = vk::Bool32 {compute.subgroup_size_control};
+    v13.computeFullSubgroups = vk::Bool32 {compute.compute_full_subgroups};
+    v13.shaderIntegerDotProduct = vk::Bool32 {compute.integer_dot_product};
 
     auto& eds = chain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
     eds.extendedDynamicState = vk::Bool32 {enabled.extended_dynamic_state};
@@ -571,7 +686,306 @@ private:
     chain.get<vk::PhysicalDevicePipelineBinaryFeaturesKHR>().pipelineBinaries =
       vk::Bool32 {enabled.pipeline_binary};
 
+    chain.get<vk::PhysicalDeviceShaderSubgroupUniformControlFlowFeaturesKHR>()
+      .shaderSubgroupUniformControlFlow =
+      vk::Bool32 {compute.subgroup_uniform_control_flow};
+
+    chain.get<vk::PhysicalDeviceShaderMaximalReconvergenceFeaturesKHR>()
+      .shaderMaximalReconvergence = vk::Bool32 {compute.maximal_reconvergence};
+
+    chain.get<vk::PhysicalDeviceShaderSubgroupPartitionedFeaturesEXT>()
+      .shaderSubgroupPartitioned = vk::Bool32 {compute.subgroup_partitioned};
+
+    chain.get<vk::PhysicalDeviceCooperativeMatrixFeaturesKHR>()
+      .cooperativeMatrix = vk::Bool32 {compute.cooperative_matrix};
+
+    auto& float_atomics =
+      chain.get<vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT>();
+    float_atomics.shaderBufferFloat32AtomicAdd =
+      vk::Bool32 {compute.buffer_float32_atomic_add};
+    float_atomics.shaderSharedFloat32AtomicAdd =
+      vk::Bool32 {compute.shared_float32_atomic_add};
+
+    auto& float_minimum_maximum =
+      chain.get<vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT>();
+    float_minimum_maximum.shaderBufferFloat32AtomicMinMax =
+      vk::Bool32 {compute.buffer_float32_atomic_minimum_maximum};
+    float_minimum_maximum.shaderSharedFloat32AtomicMinMax =
+      vk::Bool32 {compute.shared_float32_atomic_minimum_maximum};
+
+    chain.get<vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR>()
+      .workgroupMemoryExplicitLayout =
+      vk::Bool32 {compute.workgroup_memory_explicit_layout};
+
     return chain;
+  }
+
+  static
+  void
+  unlink_disabled_features(
+    device_feature_chain&          chain,
+    const enabled_device_features& enabled,
+    const compute_capabilities&    compute)
+  {
+    if (!enabled.extended_dynamic_state)
+    {
+      chain.unlink<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+    }
+    if (!enabled.graphics_pipeline_library)
+    {
+      chain.unlink<vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>();
+    }
+    if (!enabled.shader_object)
+    {
+      chain.unlink<vk::PhysicalDeviceShaderObjectFeaturesEXT>();
+    }
+    if (!enabled.descriptor_heap)
+    {
+      chain.unlink<vk::PhysicalDeviceDescriptorHeapFeaturesEXT>();
+    }
+    if (!enabled.pipeline_binary)
+    {
+      chain.unlink<vk::PhysicalDevicePipelineBinaryFeaturesKHR>();
+    }
+    if (!compute.subgroup_uniform_control_flow)
+    {
+      using uniform_control_flow =
+        vk::PhysicalDeviceShaderSubgroupUniformControlFlowFeaturesKHR;
+      chain.unlink<uniform_control_flow>();
+    }
+    if (!compute.maximal_reconvergence)
+    {
+      chain.unlink<vk::PhysicalDeviceShaderMaximalReconvergenceFeaturesKHR>();
+    }
+    if (!compute.subgroup_partitioned)
+    {
+      chain.unlink<vk::PhysicalDeviceShaderSubgroupPartitionedFeaturesEXT>();
+    }
+    if (!compute.cooperative_matrix)
+    {
+      chain.unlink<vk::PhysicalDeviceCooperativeMatrixFeaturesKHR>();
+    }
+    if (!any_float_atomics(compute))
+    {
+      chain.unlink<vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT>();
+    }
+    if (!any_float_minimum_maximum(compute))
+    {
+      chain.unlink<vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT>();
+    }
+    if (!compute.workgroup_memory_explicit_layout)
+    {
+      using explicit_layout =
+        vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR;
+      chain.unlink<explicit_layout>();
+    }
+  }
+
+  [[nodiscard]]
+  static constexpr
+  auto
+  any_int64_atomics(const compute_capabilities& compute) -> bool
+  { return compute.buffer_int64_atomics || compute.shared_int64_atomics; }
+
+  [[nodiscard]]
+  static constexpr
+  auto
+  any_float_minimum_maximum(const compute_capabilities& compute) -> bool
+  {
+    return compute.buffer_float32_atomic_minimum_maximum ||
+           compute.shared_float32_atomic_minimum_maximum;
+  }
+
+  [[nodiscard]]
+  static constexpr
+  auto
+  any_float_atomics(const compute_capabilities& compute) -> bool
+  {
+    return compute.buffer_float32_atomic_add ||
+           compute.shared_float32_atomic_add ||
+           any_float_minimum_maximum(compute);
+  }
+
+  template<class Feature>
+  [[nodiscard]]
+  static
+  auto
+  query_extension_feature(
+    const vk::raii::PhysicalDevice& physical_device,
+    const device_extensions&        extensions,
+    std::string_view                extension_name) -> Feature
+  {
+    if (!extensions.contains(extension_name)) { return Feature {}; }
+    auto feature =
+      physical_device.getFeatures2<vk::PhysicalDeviceFeatures2, Feature>()
+        .template get<Feature>();
+    feature.pNext = nullptr;
+    return feature;
+  }
+
+  [[nodiscard]]
+  static
+  auto
+  query_compute_capabilities(
+    const vk::raii::PhysicalDevice& physical_device,
+    const device_extensions&        extensions) -> compute_capabilities
+  {
+    const auto properties = physical_device.getProperties2<
+      vk::PhysicalDeviceProperties2,
+      vk::PhysicalDeviceVulkan11Properties,
+      vk::PhysicalDeviceVulkan13Properties
+    >();
+    const auto& limits =
+      properties.get<vk::PhysicalDeviceProperties2>().properties.limits;
+    const auto& vulkan11 =
+      properties.get<vk::PhysicalDeviceVulkan11Properties>();
+    const auto& vulkan13 =
+      properties.get<vk::PhysicalDeviceVulkan13Properties>();
+
+    const auto features = physical_device.getFeatures2<
+      vk::PhysicalDeviceFeatures2,
+      vk::PhysicalDeviceVulkan12Features,
+      vk::PhysicalDeviceVulkan13Features
+    >();
+    const auto& vulkan12_features =
+      features.get<vk::PhysicalDeviceVulkan12Features>();
+    const auto& vulkan13_features =
+      features.get<vk::PhysicalDeviceVulkan13Features>();
+
+    const auto uniform_control_flow = query_extension_feature<
+      vk::PhysicalDeviceShaderSubgroupUniformControlFlowFeaturesKHR
+    >(physical_device,
+      extensions,
+      vk::KHRShaderSubgroupUniformControlFlowExtensionName);
+    const auto maximal_reconvergence = query_extension_feature<
+      vk::PhysicalDeviceShaderMaximalReconvergenceFeaturesKHR
+    >(physical_device,
+      extensions,
+      vk::KHRShaderMaximalReconvergenceExtensionName);
+    const auto partitioned = query_extension_feature<
+      vk::PhysicalDeviceShaderSubgroupPartitionedFeaturesEXT
+    >(physical_device,
+      extensions,
+      vk::EXTShaderSubgroupPartitionedExtensionName);
+    const auto cooperative_matrix = query_extension_feature<
+      vk::PhysicalDeviceCooperativeMatrixFeaturesKHR
+    >(physical_device, extensions, vk::KHRCooperativeMatrixExtensionName);
+    const auto float_atomics = query_extension_feature<
+      vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT
+    >(physical_device, extensions, vk::EXTShaderAtomicFloatExtensionName);
+    const auto float_minimum_maximum = query_extension_feature<
+      vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT
+    >(physical_device, extensions, vk::EXTShaderAtomicFloat2ExtensionName);
+    const auto explicit_layout = query_extension_feature<
+      vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR
+    >(physical_device,
+      extensions,
+      vk::KHRWorkgroupMemoryExplicitLayoutExtensionName);
+
+    compute_capabilities output {
+      .subgroup_size                 = vulkan11.subgroupSize,
+      .minimum_subgroup_size         = vulkan13.minSubgroupSize,
+      .maximum_subgroup_size         = vulkan13.maxSubgroupSize,
+      .maximum_workgroup_subgroups   = vulkan13.maxComputeWorkgroupSubgroups,
+      .subgroup_stages               = vulkan11.subgroupSupportedStages,
+      .subgroup_operations           = vulkan11.subgroupSupportedOperations,
+      .required_subgroup_size_stages = vulkan13.requiredSubgroupSizeStages,
+      .subgroup_size_control = vulkan13_features.subgroupSizeControl == vk::True,
+      .compute_full_subgroups =
+        vulkan13_features.computeFullSubgroups == vk::True,
+      .subgroup_extended_types =
+        vulkan12_features.shaderSubgroupExtendedTypes == vk::True,
+      .subgroup_uniform_control_flow =
+        uniform_control_flow.shaderSubgroupUniformControlFlow == vk::True,
+      .maximal_reconvergence =
+        maximal_reconvergence.shaderMaximalReconvergence == vk::True,
+      .subgroup_partitioned = partitioned.shaderSubgroupPartitioned == vk::True,
+      .cooperative_matrix   = cooperative_matrix.cooperativeMatrix == vk::True,
+      .integer_dot_product =
+        vulkan13_features.shaderIntegerDotProduct == vk::True,
+      .buffer_int64_atomics =
+        vulkan12_features.shaderBufferInt64Atomics == vk::True,
+      .shared_int64_atomics =
+        vulkan12_features.shaderSharedInt64Atomics == vk::True,
+      .buffer_float32_atomic_add =
+        float_atomics.shaderBufferFloat32AtomicAdd == vk::True,
+      .shared_float32_atomic_add =
+        float_atomics.shaderSharedFloat32AtomicAdd == vk::True,
+      .buffer_float32_atomic_minimum_maximum =
+        float_minimum_maximum.shaderBufferFloat32AtomicMinMax == vk::True,
+      .shared_float32_atomic_minimum_maximum =
+        float_minimum_maximum.shaderSharedFloat32AtomicMinMax == vk::True,
+      .workgroup_memory_explicit_layout =
+        explicit_layout.workgroupMemoryExplicitLayout == vk::True,
+      .maximum_shared_memory_size  = limits.maxComputeSharedMemorySize,
+      .maximum_push_constants_size = limits.maxPushConstantsSize,
+      .maximum_workgroup_size      = {
+        limits.maxComputeWorkGroupSize[ 0 ],
+        limits.maxComputeWorkGroupSize[ 1 ],
+        limits.maxComputeWorkGroupSize[ 2 ],
+      },
+    };
+    if (output.cooperative_matrix)
+    {
+      output.cooperative_matrix_properties =
+        physical_device.getCooperativeMatrixPropertiesKHR().value_or(
+          std::vector<vk::CooperativeMatrixPropertiesKHR> {});
+    }
+    if (output.integer_dot_product)
+    {
+      output.integer_dot_product_properties =
+        physical_device
+          .getProperties2<
+            vk::PhysicalDeviceProperties2,
+            vk::PhysicalDeviceShaderIntegerDotProductProperties
+          >()
+          .get<vk::PhysicalDeviceShaderIntegerDotProductProperties>();
+      output.integer_dot_product_properties.pNext = nullptr;
+    }
+    return output;
+  }
+
+  [[nodiscard]]
+  static
+  auto
+  restrict_compute_capabilities(
+    compute_capabilities support, const enabled_device_features& enabled)
+    -> compute_capabilities
+  {
+    if (!enabled.subgroup_size_control)
+    {
+      support.subgroup_size_control  = false;
+      support.compute_full_subgroups = false;
+    }
+    support.subgroup_extended_types =
+      support.subgroup_extended_types && enabled.subgroup_extended_types;
+    support.subgroup_uniform_control_flow =
+      support.subgroup_uniform_control_flow &&
+      enabled.subgroup_uniform_control_flow;
+    support.maximal_reconvergence =
+      support.maximal_reconvergence && enabled.maximal_reconvergence;
+    support.subgroup_partitioned =
+      support.subgroup_partitioned && enabled.subgroup_partitioned;
+    support.cooperative_matrix =
+      support.cooperative_matrix && enabled.cooperative_matrix;
+    support.integer_dot_product =
+      support.integer_dot_product && enabled.integer_dot_product;
+    if (!enabled.int64_atomics)
+    {
+      support.buffer_int64_atomics = false;
+      support.shared_int64_atomics = false;
+    }
+    if (!enabled.float_atomics)
+    {
+      support.buffer_float32_atomic_add             = false;
+      support.shared_float32_atomic_add             = false;
+      support.buffer_float32_atomic_minimum_maximum = false;
+      support.shared_float32_atomic_minimum_maximum = false;
+    }
+    support.workgroup_memory_explicit_layout =
+      support.workgroup_memory_explicit_layout &&
+      enabled.workgroup_memory_explicit_layout;
+    return support;
   }
 
   [[nodiscard]]
@@ -579,7 +993,8 @@ private:
   auto
   supports_requested_features(
     const vk::raii::PhysicalDevice& physical_device,
-    const device_feature_requests&  features) -> bool
+    const device_feature_requests&  features,
+    const compute_capabilities&     compute) -> bool
   {
     const auto available = physical_device.getFeatures2<
       vk::PhysicalDeviceFeatures2,
@@ -674,6 +1089,29 @@ private:
       features.shader_object == capability_requirement::required &&
       available.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject !=
         vk::True)
+    {
+      return false;
+    }
+    const auto missing =
+      [](capability_requirement requirement, bool supported) -> bool {
+      return requirement == capability_requirement::required && !supported;
+    };
+    if (
+      missing(features.subgroup_size_control, compute.subgroup_size_control) ||
+      missing(
+        features.subgroup_extended_types, compute.subgroup_extended_types) ||
+      missing(
+        features.subgroup_uniform_control_flow,
+        compute.subgroup_uniform_control_flow) ||
+      missing(features.maximal_reconvergence, compute.maximal_reconvergence) ||
+      missing(features.subgroup_partitioned, compute.subgroup_partitioned) ||
+      missing(features.cooperative_matrix, compute.cooperative_matrix) ||
+      missing(features.integer_dot_product, compute.integer_dot_product) ||
+      missing(features.int64_atomics, any_int64_atomics(compute)) ||
+      missing(features.float_atomics, any_float_atomics(compute)) ||
+      missing(
+        features.workgroup_memory_explicit_layout,
+        compute.workgroup_memory_explicit_layout))
     {
       return false;
     }
@@ -815,7 +1253,11 @@ private:
     {
       return false;
     }
-    if (!supports_requested_features(physical, profile.features))
+    if (
+      !supports_requested_features(
+        physical,
+        profile.features,
+        query_compute_capabilities(physical, extensions)))
     {
       return false;
     }
@@ -905,6 +1347,7 @@ private:
   resolve_enabled_features(
     const device_profile&             profile,
     const vk::raii::PhysicalDevice&   physical,
+    const compute_capabilities&       compute,
     std::optional<diagnostic_buffer&> diagnostics) -> enabled_device_features
   {
     enabled_device_features enabled {};
@@ -1001,6 +1444,46 @@ private:
       core.get<vk::PhysicalDeviceShaderObjectFeaturesEXT>().shaderObject ==
         vk::True,
       "shader_object");
+    enabled.subgroup_size_control = apply(
+      profile.features.subgroup_size_control,
+      compute.subgroup_size_control,
+      "subgroup_size_control");
+    enabled.subgroup_extended_types = apply(
+      profile.features.subgroup_extended_types,
+      compute.subgroup_extended_types,
+      "subgroup_extended_types");
+    enabled.subgroup_uniform_control_flow = apply(
+      profile.features.subgroup_uniform_control_flow,
+      compute.subgroup_uniform_control_flow,
+      "subgroup_uniform_control_flow");
+    enabled.maximal_reconvergence = apply(
+      profile.features.maximal_reconvergence,
+      compute.maximal_reconvergence,
+      "maximal_reconvergence");
+    enabled.subgroup_partitioned = apply(
+      profile.features.subgroup_partitioned,
+      compute.subgroup_partitioned,
+      "subgroup_partitioned");
+    enabled.cooperative_matrix = apply(
+      profile.features.cooperative_matrix,
+      compute.cooperative_matrix,
+      "cooperative_matrix");
+    enabled.integer_dot_product = apply(
+      profile.features.integer_dot_product,
+      compute.integer_dot_product,
+      "integer_dot_product");
+    enabled.int64_atomics = apply(
+      profile.features.int64_atomics,
+      any_int64_atomics(compute),
+      "int64_atomics");
+    enabled.float_atomics = apply(
+      profile.features.float_atomics,
+      any_float_atomics(compute),
+      "float_atomics");
+    enabled.workgroup_memory_explicit_layout = apply(
+      profile.features.workgroup_memory_explicit_layout,
+      compute.workgroup_memory_explicit_layout,
+      "workgroup_memory_explicit_layout");
 
     enabled.descriptor_heap =
       profile.descriptor == descriptor_binding_request::heap;
@@ -1014,8 +1497,9 @@ private:
   static
   auto
   derive_device_extensions(
-    const enabled_device_features& enabled, std::span<const char* const> extra)
-    -> std::vector<const char*>
+    const enabled_device_features& enabled,
+    const compute_capabilities&    compute,
+    std::span<const char* const>   extra) -> std::vector<const char*>
   {
     std::vector<const char*> names {std::from_range, extra};
     auto                     push_unique = [ & ](const char* name) -> void {
@@ -1050,6 +1534,34 @@ private:
     if (enabled.pipeline_binary)
     {
       push_unique(vk::KHRPipelineBinaryExtensionName);
+    }
+    if (compute.subgroup_uniform_control_flow)
+    {
+      push_unique(vk::KHRShaderSubgroupUniformControlFlowExtensionName);
+    }
+    if (compute.maximal_reconvergence)
+    {
+      push_unique(vk::KHRShaderMaximalReconvergenceExtensionName);
+    }
+    if (compute.subgroup_partitioned)
+    {
+      push_unique(vk::EXTShaderSubgroupPartitionedExtensionName);
+    }
+    if (compute.cooperative_matrix)
+    {
+      push_unique(vk::KHRCooperativeMatrixExtensionName);
+    }
+    if (any_float_atomics(compute))
+    {
+      push_unique(vk::EXTShaderAtomicFloatExtensionName);
+    }
+    if (any_float_minimum_maximum(compute))
+    {
+      push_unique(vk::EXTShaderAtomicFloat2ExtensionName);
+    }
+    if (compute.workgroup_memory_explicit_layout)
+    {
+      push_unique(vk::KHRWorkgroupMemoryExplicitLayoutExtensionName);
     }
     return names;
   }
