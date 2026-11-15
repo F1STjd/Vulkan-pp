@@ -55,6 +55,16 @@ export struct device_feature_requests
   capability_requirement shader_object {disabled};
   capability_requirement maintenance4 {disabled};
   capability_requirement vulkan_memory_model {disabled};
+  capability_requirement subgroup_size_control {disabled};
+  capability_requirement subgroup_extended_types {disabled};
+  capability_requirement subgroup_uniform_control_flow {disabled};
+  capability_requirement maximal_reconvergence {disabled};
+  capability_requirement subgroup_partitioned {disabled};
+  capability_requirement cooperative_matrix {disabled};
+  capability_requirement integer_dot_product {disabled};
+  capability_requirement int64_atomics {disabled};
+  capability_requirement float_atomics {disabled};
+  capability_requirement workgroup_memory_explicit_layout {disabled};
 };
 
 export struct device_profile
@@ -99,6 +109,49 @@ export struct enabled_device_features
   bool pipeline_binary {false};
   bool maintenance4 {false};
   bool vulkan_memory_model {false};
+  bool subgroup_size_control {false};
+  bool subgroup_extended_types {false};
+  bool subgroup_uniform_control_flow {false};
+  bool maximal_reconvergence {false};
+  bool subgroup_partitioned {false};
+  bool cooperative_matrix {false};
+  bool integer_dot_product {false};
+  bool int64_atomics {false};
+  bool float_atomics {false};
+  bool workgroup_memory_explicit_layout {false};
+};
+
+export struct compute_capabilities
+{
+  std::uint32_t                subgroup_size {};
+  std::uint32_t                minimum_subgroup_size {};
+  std::uint32_t                maximum_subgroup_size {};
+  std::uint32_t                maximum_workgroup_subgroups {};
+  vk::ShaderStageFlags         subgroup_stages {};
+  vk::SubgroupFeatureFlags     subgroup_operations {};
+  vk::ShaderStageFlags         required_subgroup_size_stages {};
+  bool                         subgroup_size_control {false};
+  bool                         compute_full_subgroups {false};
+  bool                         subgroup_extended_types {false};
+  bool                         subgroup_uniform_control_flow {false};
+  bool                         maximal_reconvergence {false};
+  bool                         subgroup_partitioned {false};
+  bool                         cooperative_matrix {false};
+  bool                         integer_dot_product {false};
+  bool                         buffer_int64_atomics {false};
+  bool                         shared_int64_atomics {false};
+  bool                         buffer_float32_atomic_add {false};
+  bool                         shared_float32_atomic_add {false};
+  bool                         buffer_float32_atomic_minimum_maximum {false};
+  bool                         shared_float32_atomic_minimum_maximum {false};
+  bool                         workgroup_memory_explicit_layout {false};
+  std::uint32_t                maximum_shared_memory_size {};
+  std::uint32_t                maximum_push_constants_size {};
+  std::array<std::uint32_t, 3> maximum_workgroup_size {};
+  std::vector<vk::CooperativeMatrixPropertiesKHR>
+    cooperative_matrix_properties {};
+  vk::PhysicalDeviceShaderIntegerDotProductProperties
+    integer_dot_product_properties {};
 };
 
 export struct selected_device_capabilities
@@ -113,6 +166,7 @@ export struct selected_device_capabilities
   vk::PhysicalDevicePipelineBinaryPropertiesKHR pipeline_binary_properties {};
   bool                                          descriptor_heap_enabled {false};
   bool                                          pipeline_binary_enabled {false};
+  compute_capabilities                          compute {};
 };
 
 export
