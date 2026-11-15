@@ -611,6 +611,11 @@ public:
 
   [[nodiscard]]
   auto
+  capabilities() const noexcept -> const compute_capabilities&
+  { return device_.selected_capabilities().compute; }
+
+  [[nodiscard]]
+  auto
   shared_memory_size() const noexcept -> std::uint32_t
   { return shared_memory_size_; }
 
@@ -640,10 +645,20 @@ private:
     device_profile {
       .name     = "vkpp-gpu",
       .features = {
-        .synchronization2      = capability_requirement::required,
-        .buffer_device_address = capability_requirement::required,
-        .maintenance4          = capability_requirement::required,
-        .vulkan_memory_model   = capability_requirement::required,
+        .synchronization2                 = capability_requirement::required,
+        .buffer_device_address            = capability_requirement::required,
+        .maintenance4                     = capability_requirement::required,
+        .vulkan_memory_model              = capability_requirement::required,
+        .subgroup_size_control            = capability_requirement::preferred,
+        .subgroup_extended_types          = capability_requirement::preferred,
+        .subgroup_uniform_control_flow    = capability_requirement::preferred,
+        .maximal_reconvergence            = capability_requirement::preferred,
+        .subgroup_partitioned             = capability_requirement::preferred,
+        .cooperative_matrix               = capability_requirement::preferred,
+        .integer_dot_product              = capability_requirement::preferred,
+        .int64_atomics                    = capability_requirement::preferred,
+        .float_atomics                    = capability_requirement::preferred,
+        .workgroup_memory_explicit_layout = capability_requirement::preferred,
       },
     },
   };
