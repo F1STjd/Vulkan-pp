@@ -22,6 +22,7 @@ import vkpp.command.record;
 import vkpp.pipeline.compute;
 import vkpp.pipeline.cache;
 export import vkpp.cstring_view;
+export import :recorder;
 
 namespace vkpp::gpu
 {
@@ -141,14 +142,20 @@ namespace detail
 template<class Element, class Stage>
 struct kernel_traits;
 
-template<fiat::scalar Element, class Operation>
-  requires fiat::traceable<Operation, Element>
-struct kernel_traits<Element, fiat::transform_stage<Operation>>
+template<fiat::scalar Element, class Stage>
+  requires fiat::archetype_stage<Stage, Element>
+struct kernel_traits<Element, Stage>
 {
-  static constexpr auto words =
-    fiat::compile<Element>(fiat::transform_stage<Operation> {});
-  static constexpr std::array  entries {fiat::transform_entry};
-  static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
+  static constexpr auto       words   = fiat::compile<Element>(Stage {});
+  static constexpr std::array entries = [] {
+    std::array<std::string_view, Stage::dispatches.size()> names {};
+    std::ranges::transform(
+      Stage::dispatches, names.begin(), &fiat::dispatch_rule::entry);
+    return names;
+  }();
+  static constexpr std::size_t push_size {
+    fiat::skeleton_push_of<Stage, Element>.size(),
+  };
 };
 
 template<
@@ -336,8 +343,7 @@ struct cached_kernel
   std::uint64_t                  fingerprint {};
   std::string_view               entry {};
   std::span<const std::uint32_t> words {};
-  std::uint32_t                  group_size {};
-  std::uint32_t                  buckets {};
+  std::array<std::uint32_t, 2UZ> specialization {};
   compute_pipeline               pipeline {};
 };
 
@@ -390,24 +396,27 @@ public:
     constexpr std::span<const std::uint32_t> words {traits::words};
     constexpr std::uint64_t    fingerprint = fiat::fingerprint(traits::words);
     constexpr std::string_view entry       = traits::entries[ EntryIndex ];
+    const std::array<std::uint32_t, 2UZ> specialization_values {
+      group_size_,
+      buckets,
+    };
 
     const auto found = std::ranges::find_if(
       kernels_, [ & ](const cached_kernel& cached) -> bool {
         return cached.fingerprint == fingerprint &&
                cached.entry == entry &&
-               cached.group_size == group_size_ &&
-               cached.buckets == buckets &&
+               cached.specialization == specialization_values &&
                std::ranges::equal(cached.words, words);
       });
     if (found != kernels_.end()) { return std::cref(found->pipeline); }
 
     const specialization_constant group_size_spec {
       .id    = fiat::group_size_constant_id,
-      .value = group_size_,
+      .value = specialization_values[ fiat::group_size_constant_id ],
     };
     const specialization_constant buckets_spec {
       .id    = fiat::buckets_constant_id,
-      .value = buckets,
+      .value = specialization_values[ fiat::buckets_constant_id ],
     };
     const std::array one {group_size_spec};
     const std::array two {group_size_spec, buckets_spec};
@@ -432,12 +441,11 @@ public:
         [ & ](compute_pipeline&& created)
           -> std::reference_wrapper<const compute_pipeline> {
           kernels_.push_back({
-            .fingerprint = fingerprint,
-            .entry       = entry,
-            .words       = words,
-            .group_size  = group_size_,
-            .buckets     = buckets,
-            .pipeline    = std::move(created),
+            .fingerprint    = fingerprint,
+            .entry          = entry,
+            .words          = words,
+            .specialization = specialization_values,
+            .pipeline       = std::move(created),
           });
           return std::cref(kernels_.back().pipeline);
         });
@@ -782,91 +790,6 @@ private:
 namespace detail
 {
 
-inline constexpr vk::MemoryBarrier2 compute_write_to_any_read {
-  .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-  .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-  .dstStageMask  = vk::PipelineStageFlagBits2::eAllCommands,
-  .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
-};
-
-inline constexpr vk::MemoryBarrier2 compute_reuse {
-  .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-  .srcAccessMask =
-    vk::AccessFlagBits2::eShaderStorageRead |
-    vk::AccessFlagBits2::eShaderStorageWrite,
-  .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-  .dstAccessMask =
-    vk::AccessFlagBits2::eShaderStorageRead |
-    vk::AccessFlagBits2::eShaderStorageWrite,
-};
-
-inline constexpr vk::MemoryBarrier2 compute_write_to_copy_read {
-  .srcStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-  .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-  .dstStageMask  = vk::PipelineStageFlagBits2::eCopy,
-  .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
-};
-
-inline constexpr vk::MemoryBarrier2 copy_write_to_compute {
-  .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
-  .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-  .dstStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-  .dstAccessMask =
-    vk::AccessFlagBits2::eShaderStorageRead |
-    vk::AccessFlagBits2::eShaderStorageWrite,
-};
-
-inline constexpr vk::MemoryBarrier2 transfer_write_to_compute {
-  .srcStageMask  = vk::PipelineStageFlagBits2::eAllTransfer,
-  .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-  .dstStageMask  = vk::PipelineStageFlagBits2::eComputeShader,
-  .dstAccessMask =
-    vk::AccessFlagBits2::eShaderStorageRead |
-    vk::AccessFlagBits2::eShaderStorageWrite,
-};
-
-inline constexpr vk::MemoryBarrier2 copy_write_to_host_read {
-  .srcStageMask  = vk::PipelineStageFlagBits2::eCopy,
-  .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-  .dstStageMask  = vk::PipelineStageFlagBits2::eHost,
-  .dstAccessMask = vk::AccessFlagBits2::eHostRead,
-};
-
-inline
-void
-record_barrier(
-  vk::raii::CommandBuffer& command_buffer, const vk::MemoryBarrier2& barrier)
-{
-  command_buffer.pipelineBarrier2({
-    .memoryBarrierCount = 1U,
-    .pMemoryBarriers    = &barrier,
-  });
-}
-
-template<std::invocable<vk::raii::CommandBuffer&> Record>
-  requires std::same_as<
-    std::invoke_result_t<Record&, vk::raii::CommandBuffer&>,
-    std::expected<void, error_t>
-  >
-[[nodiscard]]
-auto
-submit_and_wait(context& context, Record&& record)
-  -> std::expected<void, error_t>
-{
-  single_time_submit submit {
-    context.pool(),
-    context.device().device(),
-    context.device().graphics_queue(),
-  };
-  return submit.begin()
-    .and_then([ & ] -> std::expected<void, error_t> {
-      return std::invoke(record, submit.command_buffer());
-    })
-    .and_then([ & ] -> std::expected<void, error_t> {
-      return submit.end_and_submit(upload::wait_idle);
-    });
-}
-
 inline constexpr std::string_view transform_mismatch {
   "this fiat::transform cannot run on this array: every runtime argument must "
   "have the array's element type, and the lambda must take (value, "
@@ -994,36 +917,10 @@ pack_uniform_arguments(
   return words;
 }
 
-template<std::invocable<std::uint32_t> MakePush>
-void
-record_chunks(
-  vk::raii::CommandBuffer& command_buffer,
-  const context&           context,
-  const compute_pipeline&  compute,
-  std::uint32_t            count,
-  MakePush&&               make_push)
-{
-  command_buffer.bindPipeline(
-    vk::PipelineBindPoint::eCompute, *compute.pipeline());
-  const std::uint32_t group_size = context.group_size();
-  const auto          stride     = static_cast<std::uint32_t>(std::min(
-    std::uint64_t {context.max_group_count()} * group_size,
-    std::uint64_t {count}));
-  for (
-    const auto first : std::views::indices(count) | std::views::stride(stride))
-  {
-    const auto first_element = static_cast<std::uint32_t>(first);
-    const auto elements      = std::min(count - first_element, stride);
-    push_compute<descriptor_table_backend::classic>(
-      command_buffer, compute, make_push(first_element));
-    dispatch(command_buffer, (elements + group_size - 1U) / group_size);
-  }
-}
-
 template<fiat::scalar Element, class Stage>
 [[nodiscard]]
 auto
-record_transform(
+record_transform_with(
   vk::raii::CommandBuffer&                                  command_buffer,
   context&                                                  context,
   const device_array<Element>&                              source,
@@ -1190,16 +1087,31 @@ static_assert(make_scan_partition(1'000'003U, 256U).tiles_per_group == 4U);
 
 } // namespace detail
 
-export template<fiat::scalar Element, class Operation>
-  requires fiat::traceable<Operation, Element>
-class transform_pipeline
+static_assert(
+  std::bit_cast<dispatch_words>(fiat::detail::transform_push {
+    .input     = 0x01'23'45'67'89'AB'CD'EFULL,
+    .output    = 0xFE'DC'BA'98'76'54'32'10ULL,
+    .count     = 1'048'576U,
+    .first     = 0U,
+    .arguments = detail::pack_arguments<0UZ>(std::tuple {3.0F, 7.0F}),
+  }) ==
+    fill_dispatch_push<float>(
+      fiat::transform(fiat::multiplies {}, 3.0F) |
+        fiat::transform(fiat::plus {}, 7.0F),
+      {0x01'23'45'67'89'AB'CD'EFULL, 0xFE'DC'BA'98'76'54'32'10ULL},
+      1'048'576U),
+  "the generic dispatch push is byte-equal to the transform push");
+
+export template<fiat::scalar Element, fiat::archetype_stage<Element> Stage>
+  requires (Stage::kind == fiat::stage_class::elementwise)
+class elementwise_pipeline
 {
 public:
-  using argument_tuple = decltype(fiat::transform_stage<Operation>::arguments);
+  using argument_tuple = std::remove_cvref_t<decltype(Stage::arguments)>;
 
-  explicit transform_pipeline(
-    const device_array<Element>& source, argument_tuple arguments)
-  : source_ {source}, arguments_ {std::move(arguments)}
+  explicit elementwise_pipeline(
+    const device_array<Element>& source, Stage stage)
+  : source_ {source}, stage_ {std::move(stage)}
   {}
 
   [[nodiscard]]
@@ -1209,13 +1121,22 @@ public:
 
   [[nodiscard]]
   auto
+  stage() const noexcept -> const Stage&
+  { return stage_; }
+
+  [[nodiscard]]
+  auto
   arguments() const noexcept -> const argument_tuple&
-  { return arguments_; }
+  { return stage_.arguments; }
 
 private:
   const device_array<Element>& source_;
-  argument_tuple               arguments_;
+  Stage                        stage_;
 };
+
+export template<fiat::scalar Element, class Operation>
+using transform_pipeline =
+  elementwise_pipeline<Element, fiat::transform_stage<Operation>>;
 
 export
 template<fiat::scalar Element, class Operation>
@@ -1230,9 +1151,7 @@ operator |(
   }
   else
   {
-    return transform_pipeline<Element, Operation> {
-      source, std::move(stage.arguments)
-    };
+    return transform_pipeline<Element, Operation> {source, std::move(stage)};
   }
 }
 
@@ -1253,7 +1172,7 @@ extend_transform_pipeline(
   else
   {
     return transform_pipeline<Element, Fused> {
-      current.source(), std::move(fused.arguments)
+      current.source(), std::move(fused)
     };
   }
 }
@@ -1397,7 +1316,7 @@ record(
 
   const auto arguments = detail::pack_arguments<0UZ>(computation.arguments());
 
-  detail::record_chunks(
+  record_chunks(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::foreach_push {
         .base      = *base,
@@ -1417,7 +1336,7 @@ auto
 run(context& context, const foreach_pipeline<Element, Operation>& computation)
   -> std::expected<void, error_t>
 {
-  return detail::submit_and_wait(
+  return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -1425,7 +1344,7 @@ run(context& context, const foreach_pipeline<Element, Operation>& computation)
       {
         return error;
       }
-      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
+      record_barrier(command_buffer, compute_write_to_any_read);
       return {};
     });
 }
@@ -1635,33 +1554,29 @@ operator |(
 }
 
 export
-template<fiat::scalar Element, class Operation>
+template<fiat::scalar Element, class Stage>
 [[nodiscard]]
 auto
 record(
-  vk::raii::CommandBuffer&                      command_buffer,
-  context&                                      context,
-  const transform_pipeline<Element, Operation>& computation,
+  vk::raii::CommandBuffer&                    command_buffer,
+  context&                                    context,
+  const elementwise_pipeline<Element, Stage>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  return detail::record_transform<Element, fiat::transform_stage<Operation>>(
-    command_buffer,
-    context,
-    computation.source(),
-    output,
-    detail::pack_arguments<0UZ>(computation.arguments()));
+  return record_kernel<Element>(
+    command_buffer, context, computation.stage(), computation.source(), output);
 }
 
 export
-template<fiat::scalar Element, class Operation>
+template<fiat::scalar Element, class Stage>
 [[nodiscard]]
 auto
 run(
-  context&                                      context,
-  const transform_pipeline<Element, Operation>& computation,
+  context&                                    context,
+  const elementwise_pipeline<Element, Stage>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  return detail::submit_and_wait(
+  return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -1671,16 +1586,16 @@ run(
       {
         return error;
       }
-      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
+      record_barrier(command_buffer, compute_write_to_any_read);
       return {};
     });
 }
 
 export
-template<fiat::scalar Element, class Operation>
+template<fiat::scalar Element, class Stage>
 [[nodiscard]]
 auto
-run(context& context, const transform_pipeline<Element, Operation>& computation)
+run(context& context, const elementwise_pipeline<Element, Stage>& computation)
   -> std::expected<device_array<Element>, error_t>
 { return detail::run_into_new_array<Element>(context, computation); }
 
@@ -1723,7 +1638,7 @@ operator |(
   auto  slot    = detail::allocate_scalar<Element>(context);
   if (!slot) { return std::unexpected {slot.error()}; }
 
-  return detail::submit_and_wait(
+  return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -1736,7 +1651,7 @@ operator |(
         context.reduce_scratch().buffer(),
         fiat::reduce_result_offset,
         slot->buffer().buffer(),
-        detail::copy_write_to_compute);
+        copy_write_to_compute);
       return {};
     })
     .transform([ & ] -> device_scalar<Element> { return std::move(*slot); });
@@ -1752,7 +1667,7 @@ record(
   const transform_with_pipeline<Element, Uniform, Operation>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  return detail::record_transform<
+  return detail::record_transform_with<
     Element,
     fiat::transform_with_stage<Uniform, Operation>
   >(command_buffer,
@@ -1772,7 +1687,7 @@ run(
   const transform_with_pipeline<Element, Uniform, Operation>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  return detail::submit_and_wait(
+  return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -1782,7 +1697,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
+      record_barrier(command_buffer, compute_write_to_any_read);
       return {};
     });
 }
@@ -1832,7 +1747,7 @@ record(
       context.device(), 0UZ, fiat::detail::reduce_scratch_bytes);
   if (!scratch_view) { return std::unexpected {scratch_view.error()}; }
 
-  detail::record_barrier(command_buffer, detail::compute_reuse);
+  record_barrier(command_buffer, compute_reuse);
 
   const compute_pipeline& compute = kernel->get();
   command_buffer.bindPipeline(
@@ -1871,7 +1786,7 @@ run(
   const reduce_pipeline<Element, Map, Combine, Epilogue>& computation)
   -> std::expected<Element, error_t>
 {
-  return detail::submit_and_wait(
+  return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -1884,7 +1799,7 @@ run(
         context.reduce_scratch().buffer(),
         fiat::reduce_result_offset,
         context.reduce_readback().buffer(),
-        detail::copy_write_to_host_read);
+        copy_write_to_host_read);
       return {};
     })
     .and_then([ & ] -> std::expected<Element, error_t> {
@@ -2179,7 +2094,7 @@ record(
     .output = output_view->device_address(),
   };
 
-  detail::record_barrier(command_buffer, detail::compute_reuse);
+  record_barrier(command_buffer, compute_reuse);
 
   const auto& upsweep_compute = upsweep->get();
   command_buffer.bindPipeline(
@@ -2188,7 +2103,7 @@ record(
     command_buffer, upsweep_compute, scan_constants);
   dispatch(command_buffer, partition.groups);
 
-  detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
+  record_barrier(command_buffer, compute_write_to_any_read);
 
   const auto& downsweep_compute = downsweep->get();
   command_buffer.bindPipeline(
@@ -2214,7 +2129,7 @@ run(
   const scan_pipeline<Element, Map, Combine, Mode, Epilogue>& computation,
   device_array<Element>& output) -> std::expected<void, error_t>
 {
-  return detail::submit_and_wait(
+  return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -2224,7 +2139,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
+      record_barrier(command_buffer, compute_write_to_any_read);
       return {};
     });
 }
@@ -2382,24 +2297,6 @@ scatter(
   const device_array<std::uint32_t>& indices) -> scatter_pipeline<Element>
 { return scatter_pipeline<Element> {source, flags, indices}; }
 
-namespace detail
-{
-
-[[nodiscard]]
-auto
-distinct_addresses(std::array<std::uint64_t, 5UZ> addresses)
-  -> std::expected<void, error_t>
-{
-  std::ranges::sort(addresses);
-  if (std::ranges::adjacent_find(addresses) != addresses.end())
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-  return {};
-}
-
-} // namespace detail
-
 export
 template<fiat::scalar Element, class Compare>
 [[nodiscard]]
@@ -2428,8 +2325,8 @@ record(
   const auto arguments =
     detail::pack_arguments<0UZ>(std::tuple<Element> {computation.threshold()});
 
-  detail::record_barrier(command_buffer, detail::compute_reuse);
-  detail::record_chunks(
+  record_barrier(command_buffer, compute_reuse);
+  record_chunks(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::transform_push {
         .input     = input_view->device_address(),
@@ -2451,7 +2348,7 @@ run(
   const predicate_pipeline<Element, Compare>& computation,
   device_array<std::uint32_t>& flags) -> std::expected<void, error_t>
 {
-  return detail::submit_and_wait(
+  return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -2461,7 +2358,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
+      record_barrier(command_buffer, compute_write_to_any_read);
       return {};
     });
 }
@@ -2520,20 +2417,21 @@ record(
   if (!count_view) { return std::unexpected {count_view.error()}; }
 
   if (
-    auto error = detail::distinct_addresses({
-      input_view->device_address(),
-      output_view->device_address(),
-      flags_view->device_address(),
-      indices_view->device_address(),
-      count_view->device_address(),
-    });
+    auto error = distinct_addresses(
+      std::array {
+        input_view->device_address(),
+        output_view->device_address(),
+        flags_view->device_address(),
+        indices_view->device_address(),
+        count_view->device_address(),
+      });
     !error)
   {
     return error;
   }
 
-  detail::record_barrier(command_buffer, detail::compute_reuse);
-  detail::record_chunks(
+  record_barrier(command_buffer, compute_reuse);
+  record_chunks(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::scatter_push {
         .input     = input_view->device_address(),
@@ -2558,7 +2456,7 @@ run(
   device_array<Element>&           output,
   device_array<std::uint32_t>&     count_out) -> std::expected<void, error_t>
 {
-  return detail::submit_and_wait(
+  return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -2569,7 +2467,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
+      record_barrier(command_buffer, compute_write_to_any_read);
       return {};
     });
 }
@@ -2643,7 +2541,7 @@ record(
     return error;
   }
 
-  detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
+  record_barrier(command_buffer, compute_write_to_any_read);
 
   return record(
     command_buffer,
@@ -2671,7 +2569,7 @@ run(
   auto indices = context.allocate<std::uint32_t>(source_size);
   if (!indices) { return std::unexpected {indices.error()}; }
 
-  return detail::submit_and_wait(
+  return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -2688,7 +2586,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
+      record_barrier(command_buffer, compute_write_to_any_read);
       return {};
     });
 }
@@ -2798,8 +2696,8 @@ record(
   }
 
   const auto count = computation.source().size();
-  detail::record_barrier(command_buffer, detail::compute_reuse);
-  detail::record_chunks(
+  record_barrier(command_buffer, compute_reuse);
+  record_chunks(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
       return fiat::detail::histogram_push {
         .input     = input_view->device_address(),
@@ -2826,7 +2724,7 @@ run(
     return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
   }
 
-  return detail::submit_and_wait(
+  return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
@@ -2841,7 +2739,7 @@ run(
       {
         return error;
       }
-      detail::record_barrier(command_buffer, detail::compute_write_to_any_read);
+      record_barrier(command_buffer, compute_write_to_any_read);
       return {};
     });
 }
