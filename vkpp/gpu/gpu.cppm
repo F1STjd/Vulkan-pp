@@ -2417,7 +2417,7 @@ record(
   if (!count_view) { return std::unexpected {count_view.error()}; }
 
   if (
-    auto error = distinct_addresses(
+    auto error = check_distinct_addresses(
       std::array {
         input_view->device_address(),
         output_view->device_address(),

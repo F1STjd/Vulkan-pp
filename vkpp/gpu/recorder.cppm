@@ -135,7 +135,7 @@ record_chunks(
 [[nodiscard]]
 inline
 auto
-check_distinct_addresses(std::span<const std::uint32_t> addresses)
+check_distinct_addresses(std::span<const std::uint64_t> addresses)
   -> std::expected<void, error_t>
 {
   for (const auto position : std::views::indices(addresses.size()))
