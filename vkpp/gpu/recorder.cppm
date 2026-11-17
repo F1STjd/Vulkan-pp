@@ -5,6 +5,7 @@ import vulkan;
 import fiat;
 
 import vkpp.error;
+import vkpp.integer;
 import vkpp.capabilities;
 import vkpp.command;
 import vkpp.command.record;
@@ -128,9 +129,11 @@ record_chunks(
     const auto elements      = std::min(count - first_element, stride);
     push_compute<descriptor_table_backend::classic>(
       command_buffer, compute, make_push(first_element));
-    dispatch(command_buffer, (elements + group_size - 1U) / group_size);
+    dispatch(command_buffer, divide_rounding_up(elements, group_size));
   }
 }
+
+static_assert(divide_rounding_up(0xFF'FF'FF'FFU, 256U) == 0x1'00'00'00U);
 
 [[nodiscard]]
 inline
