@@ -10,6 +10,7 @@ import vulkan;
 import fiat;
 
 import vkpp.error;
+import vkpp.integer;
 import vkpp.diagnostics;
 import vkpp.capabilities;
 import vkpp.instance;
@@ -338,6 +339,10 @@ transpose_from_soa_bytes(std::span<const std::byte>, std::span<Element>)
 
 } // namespace detail
 
+inline constexpr std::uint32_t shader_index_limit {
+  std::numeric_limits<std::int32_t>::max(),
+};
+
 struct cached_kernel
 {
   std::uint64_t                  fingerprint {};
@@ -462,13 +467,10 @@ public:
   upload(std::span<const Element> elements)
     -> std::expected<device_array<Element>, error_t>
   {
-    if (
-      elements.empty() ||
-      elements.size() > std::numeric_limits<std::uint32_t>::max())
+    const auto count = try_narrow<std::uint32_t>(elements.size());
+    if (!count || *count == 0U || *count > maximum_element_count<Element>())
     {
-      return std::unexpected {
-        make_app_error(app_error_code::invalid_data_size),
-      };
+      return std::unexpected {make_app_error(app_error_code::invalid_count)};
     }
     return upload_device_local_buffer(
       buffer_upload_create_info_for<buffer_kind::device_address> {
@@ -477,10 +479,7 @@ public:
         .bytes  = std::as_bytes(elements),
       })
       .transform([ & ](device_address_buffer&& buffer) -> device_array<Element> {
-        return device_array<Element> {
-          std::move(buffer),
-          static_cast<std::uint32_t>(elements.size()),
-        };
+        return device_array<Element> {std::move(buffer), *count};
       });
   }
 
@@ -493,14 +492,17 @@ public:
 #if !defined(__cpp_impl_reflection)
     return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
 #else
-    if (host.empty() || host.size() > std::numeric_limits<std::uint32_t>::max())
+    const auto count = try_narrow<std::uint32_t>(host.size());
+    if (
+      !cound ||
+      *count == 0U ||
+      *count > shader_index_limit ||
+      fiat::detail::soa_bytes<Element>(*count) >
+        capabilities().maximum_buffer_size)
     {
-      return std::unexpected {
-        make_app_error(app_error_code::invalid_data_size),
-      };
+      return std::unexpected {make_app_error(app_error_code::invalid_count)};
     }
-    const auto             count      = static_cast<std::uint32_t>(host.size());
-    const auto             byte_count = fiat::detail::soa_bytes<Element>(count);
+    const auto byte_count = fiat::detail::soa_bytes<Element>(*count);
     std::vector<std::byte> staging(static_cast<std::size_t>(byte_count));
     detail::transpose_to_soa_bytes<Element>(host, staging);
     return upload_device_local_buffer(
@@ -511,7 +513,7 @@ public:
       })
       .transform(
         [ count ](device_address_buffer&& buffer) -> soa_array<Element> {
-          return soa_array<Element> {std::move(buffer), count};
+          return soa_array<Element> {std::move(buffer), *count};
         });
 #endif
   }
@@ -521,11 +523,9 @@ public:
   auto
   allocate(std::uint32_t count) -> std::expected<device_array<Element>, error_t>
   {
-    if (count == 0U)
+    if (count == 0U || count > maximum_element_count<Element>())
     {
-      return std::unexpected {
-        make_app_error(app_error_code::invalid_data_size),
-      };
+      return std::unexpected {make_app_error(app_error_code::invalid_count)};
     }
     return device_address_buffer::create<Element>(device_.allocator(), count)
       .transform(
@@ -631,6 +631,16 @@ public:
   auto
   max_group_count() const noexcept -> std::uint32_t
   { return max_group_count_; }
+
+  template<fiat::scalar Element>
+  [[nodiscard]]
+  auto
+  maximum_element_count() const noexcept -> std::uint32_t
+  {
+    return narrow<std::uint32_t>(std::min<vk::DeviceSize>(
+      shader_index_limit,
+      capabilities().maximum_buffer_size / sizeof(Element)));
+  }
 
   [[nodiscard]]
   auto
