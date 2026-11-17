@@ -650,8 +650,21 @@ public:
 
   [[nodiscard]]
   auto
-  reduce_scratch(this auto&& self) -> decltype(auto)
-  { return std::forward_like<decltype(self)>(self.reduce_scratch_); }
+  allocate_workspace(const workspace_sizes& sizes)
+    -> std::expected<workspace, error_t>
+  {
+    const auto bytes = workspace_bytes(sizes);
+    if (bytes == 0U || bytes > capabilities().maximum_buffer_size)
+    {
+      return std::unexpected {make_app_error(app_error_code::invalid_count)};
+    }
+    return create_workspace(device_, pool_, sizes);
+  }
+
+  [[nodiscard]]
+  auto
+  default_workspace(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.default_workspace_); }
 
   [[nodiscard]]
   auto
@@ -697,7 +710,7 @@ private:
     std::uint32_t                     max_group_count,
     std::uint32_t                     shared_memory_size,
     std::filesystem::path             pipeline_cache_path,
-    device_address_buffer&&           reduce_scratch,
+    workspace&&                       default_workspace,
     readback_buffer&&                 reduce_readback)
   : instance_ {std::move(instance)},
     device_ {std::move(device)},
@@ -708,7 +721,7 @@ private:
     max_group_count_ {max_group_count},
     shared_memory_size_ {shared_memory_size},
     pipeline_cache_path_ {std::move(pipeline_cache_path)},
-    reduce_scratch_ {std::move(reduce_scratch)},
+    default_workspace_ {std::move(default_workspace)},
     reduce_readback_ {std::move(reduce_readback)}
   {}
 
@@ -728,6 +741,30 @@ private:
           device.device(),
           matches ? std::span {bytes} : std::span<const std::byte> {});
       });
+  }
+
+  [[nodiscard]]
+  static
+  auto
+  create_workspace(
+    device_context& device, command_pool& pool, const workspace_sizes& sizes)
+    -> std::expected<workspace, error_t>
+  {
+    const std::vector<std::byte> zeros(
+      static_cast<std::size_t>(workspace_bytes(sizes)));
+    return upload_device_local_buffer(
+      buffer_upload_create_info_for<buffer_kind::device_address> {
+        .device = device,
+        .pool   = pool,
+        .bytes  = std::span {zeros},
+      })
+      .and_then(
+        [ & ](
+          device_address_buffer&& buffer) -> std::expected<workspace, error_t> {
+          const auto view = buffer.addressed_view(device);
+          if (!view) { return std::unexpected {view.error()}; }
+          return workspace {std::move(buffer), sizes, view->device_address()};
+        });
   }
 
   [[nodiscard]]
@@ -761,14 +798,12 @@ private:
         limits.maxComputeWorkGroupInvocations));
     const auto group_size = std::bit_floor(clamped_group_size);
 
-    const std::array<std::byte, fiat::detail::reduce_scratch_bytes> zeros {};
-    auto reduce_scratch = upload_device_local_buffer(
-      buffer_upload_create_info_for<buffer_kind::device_address> {
-        .device = *device,
-        .pool   = *pool,
-        .bytes  = std::as_bytes(std::span {zeros}),
-      });
-    if (!reduce_scratch) { return std::unexpected {reduce_scratch.error()}; }
+    auto default_workspace = create_workspace(
+      *device, *pool, {.scratch_bytes = fiat::detail::reduce_scratch_bytes});
+    if (!default_workspace)
+    {
+      return std::unexpected {default_workspace.error()};
+    }
 
     auto reduce_readback =
       readback_buffer::create(device->allocator(), sizeof(std::uint32_t));
@@ -784,7 +819,7 @@ private:
       limits.maxComputeWorkGroupCount[ 0 ],
       limits.maxComputeSharedMemorySize,
       std::move(create_info.pipeline_cache_path),
-      std::move(*reduce_scratch),
+      std::move(*default_workspace),
       std::move(*reduce_readback),
     };
   }
@@ -799,7 +834,7 @@ private:
   std::uint32_t                     max_group_count_ {};
   std::uint32_t                     shared_memory_size_ {};
   std::filesystem::path             pipeline_cache_path_ {};
-  device_address_buffer             reduce_scratch_;
+  workspace                         default_workspace_;
   readback_buffer                   reduce_readback_;
 };
 
@@ -1580,7 +1615,12 @@ record(
   device_array<Element>& output) -> std::expected<void, error_t>
 {
   return record_kernel<Element>(
-    command_buffer, context, computation.stage(), computation.source(), output);
+    command_buffer,
+    context,
+    computation.stage(),
+    {},
+    computation.source(),
+    output);
 }
 
 export
@@ -1664,7 +1704,7 @@ operator |(
       }
       detail::record_result_copy<Element>(
         command_buffer,
-        context.reduce_scratch().buffer(),
+        context.default_workspace().buffer().buffer(),
         fiat::reduce_result_offset,
         slot->buffer().buffer(),
         copy_write_to_compute);
@@ -1759,7 +1799,7 @@ record(
   if (!input_view) { return std::unexpected {input_view.error()}; }
 
   auto scratch_view =
-    context.reduce_scratch().template addressed_view<std::byte>(
+    context.default_workspace().buffer().template addressed_view<std::byte>(
       context.device(), 0UZ, fiat::detail::reduce_scratch_bytes);
   if (!scratch_view) { return std::unexpected {scratch_view.error()}; }
 
@@ -1812,7 +1852,7 @@ run(
       }
       detail::record_result_copy<Element>(
         command_buffer,
-        context.reduce_scratch().buffer(),
+        context.default_workspace().buffer().buffer(),
         fiat::reduce_result_offset,
         context.reduce_readback().buffer(),
         copy_write_to_host_read);
@@ -2093,16 +2133,11 @@ record(
   if (!input_view) { return std::unexpected {input_view.error()}; }
   if (!output_view) { return std::unexpected {output_view.error()}; }
 
-  auto scratch_view =
-    context.reduce_scratch().template addressed_view<std::byte>(
-      context.device(), 0UZ, fiat::detail::reduce_scratch_bytes);
-  if (!scratch_view) { return std::unexpected {scratch_view.error()}; }
-
   const detail::scan_partition partition =
     detail::make_scan_partition(count, group_size);
   const fiat::detail::scan_push scan_constants {
     .input     = input_view->device_address(),
-    .scratch   = scratch_view->device_address(),
+    .scratch   = context.default_workspace().address(workspace_region::scratch),
     .count     = count,
     .identity  = std::bit_cast<std::uint32_t>(computation.identity()),
     .arguments = detail::pack_scan_arguments(
