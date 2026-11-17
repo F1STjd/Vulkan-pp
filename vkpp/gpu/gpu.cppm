@@ -1778,6 +1778,118 @@ operator |(
 }
 
 export
+template<fiat::scalar Element, class Stage>
+[[nodiscard]]
+constexpr auto
+workspace_requirements(const context&, const sink_pipeline<Element, Stage>&)
+  -> workspace_sizes
+{ return fiat::workspace_of<Stage>; }
+
+export
+template<fiat::scalar Element, class Stage>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&             command_buffer,
+  context&                             context,
+  const sink_pipeline<Element, Stage>& computation,
+  workspace& workspace) -> std::expected<void, error_t>
+{
+  return bind_workspace<Stage>(workspace).and_then(
+    [ & ](
+      const region_addresses<Stage>& regions) -> std::expected<void, error_t> {
+      return record_kernel<Element>(
+        command_buffer,
+        context,
+        computation.stage(),
+        regions,
+        computation.source());
+    });
+}
+
+template<fiat::scalar Element, class Stage>
+[[nodiscard]]
+auto
+record_sink_result(
+  vk::raii::CommandBuffer&             command_buffer,
+  context&                             context,
+  const sink_pipeline<Element, Stage>& computation,
+  workspace&                           workspace,
+  vk::Buffer                           destination,
+  const vk::MemoryBarrier2&            after) -> std::expected<void, error_t>
+{
+  return record(command_buffer, context, computation, workspace)
+    .transform([ & ] -> void {
+      detauil::record_result_copy<Element>(
+        command_buffer,
+        workspace.buffer().buffer(),
+        workspace.offset(workspace_region::scratch) + fiat::reduce_result_offset,
+        destination,
+        after);
+    });
+}
+
+export
+template<fiat::scalar Element, class Stage>
+[[nodiscard]]
+auto
+run(
+  context&                             context,
+  const sink_pipeline<Element, Stage>& computation,
+  workspace& workspace) -> std::expected<Element, error_t>
+{
+  return submit_and_wait(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      return record_sink_result(
+        command_buffer,
+        context,
+        computation,
+        workspace,
+        context.reduce_readback().buffer(),
+        copy_write_to_host_read);
+    })
+    .and_then([ & ] -> std::expected<Element, error_t> {
+      return detail::read_scalar<Element>(context);
+    });
+}
+
+export
+template<fiat::scalar Element, class Stage>
+[[nodiscard]]
+auto
+run(context& context, const sink_pipeline<Element, Stage>& computation)
+  -> std::expected<Element, error_t>
+{ return run(context, computation, context.default_workspace()); }
+
+export
+template<fiat::scalar Element, class Stage>
+[[nodiscard]]
+auto
+operator |(const sink_pipeline<Element, Stage>& computation, keep_stage stage)
+  -> std::expected<device_scalar<Element>, error_t>
+{
+  auto& context = stage.context;
+  auto  slot    = detail::allocate_scalar<Element>(context);
+  if (!slot) { return std::unexpected {slot.error()}; }
+
+  return submit_and_wait(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      return record_sink_result(
+        command_buffer,
+        context,
+        computation,
+        context.default_workspace(),
+        slot->buffer().buffer(),
+        copy_write_to_compute);
+    })
+    .transform([ & ] -> device_scalar<Element> { return std::move(*slot); });
+}
+
+export
 template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
 [[nodiscard]]
 auto
