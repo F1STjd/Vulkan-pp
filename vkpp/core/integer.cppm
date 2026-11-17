@@ -43,7 +43,7 @@ template<std::unsigned_integral Integer>
   requires (sizeof(Integer) >= sizeof(unsigned))
 [[nodiscard]]
 constexpr auto
-devide_rounding_up(Integer dividend, Integer divisor) noexcept -> Integer
+divide_rounding_up(Integer dividend, Integer divisor) noexcept -> Integer
 { return dividend / divisor + (dividend % divisor != 0U ? 1U : 0U); }
 
 export
