@@ -41,6 +41,11 @@ public:
 
   [[nodiscard]]
   auto
+  size_bytes() const noexcept -> vk::DeviceSize
+  { return vk::DeviceSize {count_} * sizeof(Element); }
+
+  [[nodiscard]]
+  auto
   buffer() const noexcept -> const device_address_buffer&
   { return buffer_; }
 
@@ -545,7 +550,7 @@ public:
         .device = device_,
         .pool   = pool_,
         .source = array.buffer().buffer(),
-        .size   = array.buffer().size(),
+        .size   = array.size_bytes(),
       })
       .and_then(
         [ & ](readback_buffer&& readback)
