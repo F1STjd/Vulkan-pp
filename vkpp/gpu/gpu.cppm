@@ -24,6 +24,7 @@ import vkpp.pipeline.compute;
 import vkpp.pipeline.cache;
 export import vkpp.cstring_view;
 export import :recorder;
+export import :workspace;
 
 namespace vkpp::gpu
 {

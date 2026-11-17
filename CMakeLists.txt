@@ -48,7 +48,7 @@ if(VKPP_WITH_GPU)
   target_sources(vkpp_gpu
     PUBLIC FILE_SET CXX_MODULES
       BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/vkpp
-      FILES vkpp/gpu/gpu.cppm vkpp/gpu/recorder.cppm)
+      FILES vkpp/gpu/gpu.cppm vkpp/gpu/recorder.cppm vkpp/gpu/workspace.cppm)
   target_compile_features(vkpp_gpu PUBLIC cxx_std_26)
   set_target_properties(vkpp_gpu PROPERTIES CXX_MODULE_STD ON)
   target_link_libraries(vkpp_gpu PUBLIC vkpp::vkpp fiat::fiat)
