@@ -147,6 +147,7 @@ export struct compute_capabilities
   bool                         workgroup_memory_explicit_layout {false};
   std::uint32_t                maximum_shared_memory_size {};
   std::uint32_t                maximum_push_constants_size {};
+  vk::DeviceSize               maximum_buffer_size {};
   std::array<std::uint32_t, 3> maximum_workgroup_size {};
   std::vector<vk::CooperativeMatrixPropertiesKHR>
     cooperative_matrix_properties {};

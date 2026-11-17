@@ -919,6 +919,7 @@ private:
         explicit_layout.workgroupMemoryExplicitLayout == vk::True,
       .maximum_shared_memory_size  = limits.maxComputeSharedMemorySize,
       .maximum_push_constants_size = limits.maxPushConstantsSize,
+      .maximum_buffer_size         = vulkan13.maxBufferSize,
       .maximum_workgroup_size      = {
         limits.maxComputeWorkGroupSize[ 0 ],
         limits.maxComputeWorkGroupSize[ 1 ],
