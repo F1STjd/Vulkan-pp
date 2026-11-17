@@ -1400,6 +1400,70 @@ run(context& context, const foreach_pipeline<Element, Operation>& computation)
     });
 }
 
+inline constexpr std::string_view sink_mismatch {
+  "this fiat sink stage cannot run on this array: the map, the combine and "
+  "every epilogue transform must trace on the array's element type, and the "
+  "identity must have that type"
+};
+
+export template<fiat::scalar Element, fiat::archetype_stage<Element> Stage>
+  requires (Stage::kind == fiat::stage_class::sink)
+class sink_pipeline
+{
+public:
+  explicit sink_pipeline(const device_array<Element>& source, Stage stage)
+  : source_ {source}, stage_ {std::move(stage)}
+  {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<Element>&
+  { return source_; }
+
+  [[nodiscard]]
+  auto
+  stage() const noexcept -> const Stage&
+  { return stage_; }
+
+private:
+  const device_array<Element>& source_;
+  Stage                        stage_;
+};
+
+export
+template<fiat::scalar Element, class Stage>
+  requires (Stage::kind == fiat::stage_class::sink)
+[[nodiscard]]
+auto
+operator |(const device_array<Element>& source, Stage stage)
+{
+  if constexpr (!fiat::archetype_stage<Stage, Element>)
+  {
+    static_assert(false, sink_mismatch);
+  }
+  else
+  {
+    return sink_pipeline<Element, Stage> {source, std::move(stage)};
+  }
+}
+
+export
+template<fiat::scalar Element, class Current, class Next>
+  requires (Next::kind == fiat::stage_class::sink)
+[[nodiscard]]
+auto
+operator |(const elementwise_pipeline<Element, Current>& current, Next next)
+{ return current.source() | (current.stage() | std::move(next)); }
+
+export
+template<fiat::scalar Element, class Stage, class Next>
+[[nodiscard]]
+auto
+operator |(
+  const sink_pipeline<Element, Stage>& current,
+  fiat::transform_stage<Next>          next)
+{ return current.source() | (current.stage() | std::move(next)); }
+
 export template<
   fiat::scalar Element,
   class Map,
