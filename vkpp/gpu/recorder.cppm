@@ -10,6 +10,7 @@ import vkpp.capabilities;
 import vkpp.command;
 import vkpp.command.record;
 import vkpp.pipeline.compute;
+import :workspace;
 
 namespace vkpp::gpu
 {
@@ -227,15 +228,14 @@ template<
 [[nodiscard]]
 auto
 record_kernel(
-  vk::raii::CommandBuffer& command_buffer,
-  Context&                 context,
-  const Stage&             stage,
+  vk::raii::CommandBuffer&       command_buffer,
+  Context&                       context,
+  const Stage&                   stage,
+  const region_addresses<Stage>& regions,
   const device_array<PortElements>&... ports) -> std::expected<void, error_t>
 {
   static_assert(
-    Stage::dispatches.size() == 1UZ &&
-      Stage::dispatches.front().extent == fiat::dispatch_extent::per_element,
-    "record_kernel records one per_element dispatch");
+    Stage::dispatches.size() == 1UZ, "record_kernel records one dispatch");
 
   const std::array    sizes {ports.size()...};
   const std::uint32_t count = sizes.front();
@@ -255,7 +255,7 @@ record_kernel(
   port_addresses<Element, Stage> addresses {};
   port_addresses<Element, Stage> written {};
   std::size_t                    written_count {};
-  for (const auto port_index : std::views::indices(addresses.size()))
+  for (const auto port_index : std::views::indices(bound.size()))
   {
     if (!bound[ port_index ])
     {
@@ -276,17 +276,35 @@ record_kernel(
   {
     return distinct;
   }
+  std::ranges::copy(
+    regions, std::span {addresses}.last(regions.size()).begin());
 
   auto kernel = context.template kernel<Element, Stage>();
   if (!kernel) { return std::unexpected {kernel.error()}; }
 
   constexpr auto layout = fiat::skeleton_push_of<Stage, Element>;
+  constexpr auto rule   = Stage::dispatches.front();
   auto           words  = fill_dispatch_push<Element>(stage, addresses, count);
-  record_chunks(
-    command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
-      words[ word_at(layout.first_offset()) ] = first;
-      return words;
-    });
+  if constexpr (rule.extent == fiat::dispatch_extent::grid_stride)
+  {
+    record_barrier(command_buffer, compute_reuse);
+    command_buffer.bindPipeline(
+      vk::PipelineBindPoint::eCompute, *kernel->get().pipeline());
+    push_compute<descriptor_table_backend::classic>(
+      command_buffer, kernel->get(), words);
+    dispatch(
+      command_buffer,
+      std::min(
+        divide_rounding_up(count, context.group_size()), rule.maximum_groups));
+  }
+  else
+  {
+    record_chunks(
+      command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
+        words[ word_at(layout.first_offset()) ] = first;
+        return words;
+      });
+  }
   return {};
 }
 

@@ -109,6 +109,33 @@ private:
   vk::DeviceAddress     base_address_ {};
 };
 
+template<class Stage>
+using region_addresses =
+  std::array<vk::DeviceSize, fiat::workspace_of<Stage>.region_count()>;
+
+template<class Stage>
+[[nodiscard]]
+auto
+bind_workspace(const workspace& available)
+  -> std::expected<region_addresses<Stage>, error_t>
+{
+  constexpr auto required = fiat::workspace_of<Stage>;
+  if (!covers(available.sizes(), required))
+  {
+    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
+  }
+  region_addresses<Stage> addresses {};
+  auto                    next = addresses.begin();
+  for (const auto region : workspace_regions)
+  {
+    if (required.regions()[ std::to_underlying(region) ] != 0UZ)
+    {
+      *next++ = available.address(region);
+    }
+  }
+  return addresses;
+}
+
 static_assert(workspace_bytes({.scratch_bytes = 4'104UZ}) == 4'112U);
 static_assert(
   region_bounds({.table_bytes = 1UZ, .scratch_bytes = 8UZ}) ==
