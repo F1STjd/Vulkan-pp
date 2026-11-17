@@ -500,7 +500,7 @@ public:
 #else
     const auto count = try_narrow<std::uint32_t>(host.size());
     if (
-      !cound ||
+      !count ||
       *count == 0U ||
       *count > shader_index_limit ||
       fiat::detail::soa_bytes<Element>(*count) >
