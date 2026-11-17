@@ -1820,7 +1820,7 @@ record_sink_result(
 {
   return record(command_buffer, context, computation, workspace)
     .transform([ & ] -> void {
-      detauil::record_result_copy<Element>(
+      detail::record_result_copy<Element>(
         command_buffer,
         workspace.buffer().buffer(),
         workspace.offset(workspace_region::scratch) + fiat::reduce_result_offset,
