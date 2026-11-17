@@ -153,13 +153,13 @@ template<fiat::scalar Element, class Stage>
   requires fiat::archetype_stage<Stage, Element>
 struct kernel_traits<Element, Stage>
 {
-  static constexpr auto       words   = fiat::compile<Element>(Stage {});
-  static constexpr std::array entries = [] {
-    std::array<std::string_view, Stage::dispatches.size()> names {};
-    std::ranges::transform(
-      Stage::dispatches, names.begin(), &fiat::dispatch_rule::entry);
-    return names;
-  }();
+  static constexpr auto       words = fiat::compile<Element>(Stage {});
+  static constexpr std::array entries =
+    []<std::size_t... Index>(std::index_sequence<Index...>) {
+      return std::array<std::string_view, sizeof...(Index)> {
+        Stage::dispatches[ Index ].entry...,
+      };
+    }(std::make_index_sequence<Stage::dispatches.size()> {});
   static constexpr std::size_t push_size {
     fiat::skeleton_push_of<Stage, Element>.size(),
   };
