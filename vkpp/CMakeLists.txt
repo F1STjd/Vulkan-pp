@@ -42,6 +42,7 @@ target_sources(vkpp
       resources/stage_pool.cppm # module vkpp.buffer.stage_pool
 
       core/cstring_view.cppm       # module vkpp.cstring_view
+      core/integer.cppm            # module vkpp.integer
       core/instance_context.cppm   # module vkpp.instance
       core/capabilities.cppm       # module vkpp.capabilities
       core/device_context.cppm     # module vkpp.device
