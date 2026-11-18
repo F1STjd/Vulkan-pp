@@ -587,11 +587,6 @@ public:
 
   [[nodiscard]]
   auto
-  shared_memory_size() const noexcept -> std::uint32_t
-  { return shared_memory_size_; }
-
-  [[nodiscard]]
-  auto
   max_group_count() const noexcept -> std::uint32_t
   { return max_group_count_; }
 
@@ -666,7 +661,6 @@ private:
     std::optional<diagnostic_buffer&> diagnostics,
     std::uint32_t                     group_size,
     std::uint32_t                     max_group_count,
-    std::uint32_t                     shared_memory_size,
     std::filesystem::path             pipeline_cache_path,
     workspace&&                       default_workspace,
     readback_buffer&&                 reduce_readback)
@@ -677,7 +671,6 @@ private:
     diagnostics_ {diagnostics},
     group_size_ {group_size},
     max_group_count_ {max_group_count},
-    shared_memory_size_ {shared_memory_size},
     pipeline_cache_path_ {std::move(pipeline_cache_path)},
     default_workspace_ {std::move(default_workspace)},
     reduce_readback_ {std::move(reduce_readback)}
@@ -775,7 +768,6 @@ private:
       create_info.diagnostics,
       group_size,
       limits.maxComputeWorkGroupCount[ 0 ],
-      limits.maxComputeSharedMemorySize,
       std::move(create_info.pipeline_cache_path),
       std::move(*default_workspace),
       std::move(*reduce_readback),
@@ -790,7 +782,6 @@ private:
   std::optional<diagnostic_buffer&> diagnostics_ {};
   std::uint32_t                     group_size_ {};
   std::uint32_t                     max_group_count_ {};
-  std::uint32_t                     shared_memory_size_ {};
   std::filesystem::path             pipeline_cache_path_ {};
   workspace                         default_workspace_;
   readback_buffer                   reduce_readback_;
