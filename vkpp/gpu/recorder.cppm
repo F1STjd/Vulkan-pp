@@ -235,7 +235,16 @@ record_kernel(
   const device_array<PortElements>&... ports) -> std::expected<void, error_t>
 {
   static_assert(
-    Stage::dispatches.size() == 1UZ, "record_kernel records one dispatch");
+    (Stage::dispatches.size() == 1UZ &&
+      Stage::dispatches.front().extent == fiat::dispatch_extent::per_element) ||
+      std::ranges::all_of(
+        Stage::dispatches,
+        [](const fiat::dispatch_rule& rule) -> bool {
+          return rule.extent == fiat::dispatch_extent::grid_stride &&
+                 rule.maximum_groups == Stage::dispatches.front().maximum_groups;
+        }),
+    "record_kernel records one per_element dispatch or grid_stride dispatches "
+    "that share maximum_groups");
 
   const std::array    sizes {ports.size()...};
   const std::uint32_t count = sizes.front();
@@ -279,26 +288,38 @@ record_kernel(
   std::ranges::copy(
     regions, std::span {addresses}.last(regions.size()).begin());
 
-  auto kernel = context.template kernel<Element, Stage>();
-  if (!kernel) { return std::unexpected {kernel.error()}; }
-
   constexpr auto layout = fiat::skeleton_push_of<Stage, Element>;
   constexpr auto rule   = Stage::dispatches.front();
   auto           words  = fill_dispatch_push<Element>(stage, addresses, count);
   if constexpr (rule.extent == fiat::dispatch_extent::grid_stride)
   {
-    record_barrier(command_buffer, compute_reuse);
-    command_buffer.bindPipeline(
-      vk::PipelineBindPoint::eCompute, *kernel->get().pipeline());
-    push_compute<descriptor_table_backend::classic>(
-      command_buffer, kernel->get(), words);
-    dispatch(
-      command_buffer,
-      std::min(
-        divide_rounding_up(count, context.group_size()), rule.maximum_groups));
+    const auto kernels =
+      [ & ]<std::size_t... Index>(std::index_sequence<Index...>) {
+        return std::array {context.template kernel<Element, Stage, Index>()...};
+      }(std::make_index_sequence<Stage::dispatches.size()> {});
+    if (
+      const auto failed = std::ranges::find_if(
+        kernels, [](const auto& kernel) -> bool { return !kernel; });
+      failed != kernels.end())
+    {
+      return std::unexpected {failed->error()};
+    }
+    const std::uint32_t groups = std::min(
+      divide_rounding_up(count, context.group_size()), rule.maximum_groups);
+    for (const auto& kernel : kernels)
+    {
+      record_barrier(command_buffer, compute_reuse);
+      command_buffer.bindPipeline(
+        vk::PipelineBindPoint::eCompute, *kernel->get().pipeline());
+      push_compute<descriptor_table_backend::classic>(
+        command_buffer, kernel->get(), words);
+      dispatch(command_buffer, groups);
+    }
   }
   else
   {
+    auto kernel = context.template kernel<Element, Stage>();
+    if (!kernel) { return std::unexpected {kernel.error()}; }
     record_chunks(
       command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
         words[ word_at(layout.first_offset()) ] = first;
