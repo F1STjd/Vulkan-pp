@@ -184,33 +184,6 @@ struct kernel_traits<Element, fiat::foreach_stage<Operation>>
   static constexpr std::size_t push_size {sizeof(fiat::detail::foreach_push)};
 };
 
-template<
-  fiat::scalar Element,
-  class Map,
-  class Combine,
-  class Identity,
-  fiat::scan_mode Mode,
-  class Epilogue
->
-  requires (
-    fiat::traceable<Map, Element> &&
-    fiat::combinable<Combine, Element> &&
-    std::same_as<Identity, Element> &&
-    fiat::traceable<Epilogue, Element>)
-struct kernel_traits<
-  Element,
-  fiat::scan_stage<Map, Combine, Identity, Mode, Epilogue>
->
-{
-  static constexpr auto words = fiat::compile<Element>(
-    fiat::scan_stage<Map, Combine, Identity, Mode, Epilogue> {});
-  static constexpr std::array entries {
-    fiat::scan_upsweep_entry,
-    fiat::scan_downsweep_entry,
-  };
-  static constexpr std::size_t push_size {sizeof(fiat::detail::scan_push)};
-};
-
 template<fiat::scalar Element, fiat::compare_operation Compare>
 struct kernel_traits<Element, fiat::predicate_stage<Compare, Element>>
 {
@@ -239,9 +212,6 @@ struct kernel_traits<std::uint32_t, fiat::histogram_stage<Buckets, Mode, Key>>
   };
   static constexpr std::size_t push_size {sizeof(fiat::detail::histogram_push)};
 };
-
-inline constexpr std::size_t scan_upsweep_index {0UZ};
-inline constexpr std::size_t scan_downsweep_index {1UZ};
 
 #if defined(__cpp_impl_reflection)
 
@@ -329,6 +299,17 @@ static_assert(
   std::uint64_t {shader_index_limit} + (1ULL << 21U) < (1ULL << 32U),
   "reduce and scan index arithmetic stays below 2^32 for every group size "
   "below 2^21");
+
+static_assert(
+  covers(
+    {.scratch_bytes = fiat::detail::reduce_scratch_bytes},
+    fiat::workspace_of<fiat::scan_stage<
+      fiat::chain<>,
+      fiat::plus,
+      std::uint32_t,
+      fiat::scan_mode::inclusive
+    >>),
+  "the default workspace covers every scan");
 
 struct cached_kernel
 {
@@ -841,11 +822,6 @@ inline constexpr std::string_view foreach_mismatch {
   "argument must be float, std::int32_t, or std::uint32_t"
 };
 
-inline constexpr std::string_view scan_mismatch {
-  "this fiat::scan cannot run on this array: the map and the combine must "
-  "trace on the array's element type, and the identity must have that type"
-};
-
 inline constexpr std::string_view compact_mismatch {
   "this fiat::predicate or fiat::compact cannot run on this array; the compare "
   "threshold must have the array's element type"
@@ -867,40 +843,6 @@ pack_arguments(const std::tuple<Arguments...>& arguments)
       std::ranges::copy(packed, words.begin() + first_slot);
     },
     arguments);
-  return words;
-}
-
-template<class MapArguments, class EpilogueArguments>
-[[nodiscard]]
-constexpr
-auto
-pack_scan_arguments(
-  const MapArguments&      map_arguments,
-  const EpilogueArguments& epilogue_arguments)
-  -> std::array<std::uint32_t, fiat::scan_argument_capacity>
-{
-  static_assert(
-    std::tuple_size_v<MapArguments> + std::tuple_size_v<EpilogueArguments> <=
-      fiat::scan_argument_capacity,
-    "scan map and epilogue arguments together take at most 24 slots");
-  std::array<std::uint32_t, fiat::scan_argument_capacity> words {};
-  std::apply(
-    [ & ]<class... Arguments>(const Arguments&... argument) {
-      std::array<std::uint32_t, sizeof...(Arguments)> packed {
-        std::bit_cast<std::uint32_t>(argument)...,
-      };
-      std::ranges::copy(packed, words.begin());
-    },
-    map_arguments);
-  std::apply(
-    [ & ]<class... Arguments>(const Arguments&... argument) {
-      std::array<std::uint32_t, sizeof...(Arguments)> packed {
-        std::bit_cast<std::uint32_t>(argument)...,
-      };
-      std::ranges::copy(
-        packed, words.begin() + std::tuple_size_v<MapArguments>);
-    },
-    epilogue_arguments);
   return words;
 }
 
@@ -1036,55 +978,6 @@ check_count(std::uint32_t count, std::uint32_t group_size)
   }
   return {};
 }
-
-struct scan_partition
-{
-  std::uint32_t tiles {};
-  std::uint32_t tiles_per_group {};
-  std::uint32_t groups {};
-};
-
-[[nodiscard]]
-constexpr
-auto
-make_scan_partition(std::uint32_t count, std::uint32_t group_size)
-  -> scan_partition
-{
-  const std::uint32_t tiles = (count + group_size - 1U) / group_size;
-  const std::uint32_t tiles_per_group =
-    (tiles + fiat::detail::reduce_group_limit - 1U) /
-    fiat::detail::reduce_group_limit;
-  const std::uint32_t groups = (tiles + tiles_per_group - 1U) / tiles_per_group;
-  return {
-    .tiles           = tiles,
-    .tiles_per_group = tiles_per_group,
-    .groups          = groups,
-  };
-}
-
-[[nodiscard]]
-constexpr
-auto
-scan_partition_matches_shader(std::uint32_t count, std::uint32_t group_size)
-  -> bool
-{
-  const auto          partition = make_scan_partition(count, group_size);
-  const std::uint32_t shader_tiles_per_group =
-    (partition.tiles + partition.groups - 1U) / partition.groups;
-  return shader_tiles_per_group == partition.tiles_per_group &&
-         partition.groups <= fiat::detail::reduce_group_limit &&
-         (partition.groups - 1U) * partition.tiles_per_group < partition.tiles;
-}
-
-static_assert(scan_partition_matches_shader(1U, 256U));
-static_assert(scan_partition_matches_shader(257U, 256U));
-static_assert(scan_partition_matches_shader(1'000'003U, 256U));
-static_assert(scan_partition_matches_shader(0xFF'FF'FFU - 1'024U * 256U, 256U));
-static_assert(
-  scan_partition_matches_shader(0xFF'FF'FFU - 1'024U * 1'024U, 1'024U));
-static_assert(scan_partition_matches_shader(0xFF'FF'FFU - 1'024U, 1U));
-static_assert(make_scan_partition(1'000'003U, 256U).groups == 977U);
-static_assert(make_scan_partition(1'000'003U, 256U).tiles_per_group == 4U);
 
 } // namespace detail
 
@@ -1712,354 +1605,6 @@ run(
   -> std::expected<device_array<Element>, error_t>
 { return detail::run_into_new_array<Element>(context, computation); }
 
-export template<
-  fiat::scalar Element,
-  class Map,
-  class Combine,
-  fiat::scan_mode Mode,
-  class Epilogue = fiat::identity
->
-  requires (
-    fiat::traceable<Map, Element> &&
-    fiat::combinable<Combine, Element> &&
-    fiat::traceable<Epilogue, Element>)
-class scan_pipeline
-{
-public:
-  using argument_tuple =
-    decltype(fiat::scan_stage<Map, Combine, Element, Mode, Epilogue>::arguments);
-  using epilogue_argument_tuple = decltype(fiat::scan_stage<
-    Map,
-    Combine,
-    Element,
-    Mode,
-    Epilogue
-  >::epilogue_arguments);
-
-  explicit scan_pipeline(
-    const device_array<Element>& source,
-    argument_tuple               arguments,
-    Element                      identity,
-    epilogue_argument_tuple      epilogue_arguments = {})
-  : source_ {source},
-    arguments_ {std::move(arguments)},
-    identity_ {identity},
-    epilogue_arguments_ {std::move(epilogue_arguments)}
-  {}
-
-  [[nodiscard]]
-  auto
-  source() const noexcept -> const device_array<Element>&
-  { return source_; }
-
-  [[nodiscard]]
-  auto
-  arguments() const noexcept -> const argument_tuple&
-  { return arguments_; }
-
-  [[nodiscard]]
-  auto
-  identity() const noexcept -> Element
-  { return identity_; }
-
-  [[nodiscard]]
-  auto
-  epilogue_arguments() const noexcept -> const epilogue_argument_tuple&
-  { return epilogue_arguments_; }
-
-private:
-  const device_array<Element>& source_;
-  argument_tuple               arguments_;
-  Element                      identity_;
-  epilogue_argument_tuple      epilogue_arguments_;
-};
-
-export
-template<
-  fiat::scalar Element,
-  class Map,
-  class Combine,
-  class Identity,
-  fiat::scan_mode Mode
->
-[[nodiscard]]
-auto
-operator |(
-  const device_array<Element>&                   source,
-  fiat::scan_stage<Map, Combine, Identity, Mode> stage)
-{
-  if constexpr (
-    !fiat::traceable<Map, Element> ||
-    !fiat::combinable<Combine, Element> ||
-    !std::same_as<Identity, Element>)
-  {
-    static_assert(false, detail::scan_mismatch);
-  }
-  else
-  {
-    return scan_pipeline<Element, Map, Combine, Mode> {
-      source,
-      std::move(stage.arguments),
-      stage.identity,
-      {},
-    };
-  }
-}
-
-export
-template<
-  fiat::scalar Element,
-  class Operation,
-  class Combine,
-  class Identity,
-  fiat::scan_mode Mode
->
-[[nodiscard]]
-auto
-operator |(
-  const transform_pipeline<Element, Operation>&            current,
-  fiat::scan_stage<fiat::chain<>, Combine, Identity, Mode> next)
-{
-  if constexpr (
-    !fiat::traceable<Operation, Element> ||
-    !fiat::combinable<Combine, Element> ||
-    !std::same_as<Identity, Element>)
-  {
-    static_assert(false, detail::scan_mismatch);
-  }
-  else
-  {
-    auto fused =
-      fiat::transform_stage<Operation> {.arguments = current.arguments()} |
-      std::move(next);
-    return scan_pipeline<Element, Operation, Combine, Mode> {
-      current.source(),
-      std::move(fused.arguments),
-      fused.identity,
-      {},
-    };
-  }
-}
-
-export
-template<
-  fiat::scalar Element,
-  class Map,
-  class Combine,
-  fiat::scan_mode Mode,
-  class Next
->
-[[nodiscard]]
-auto
-operator |(
-  const scan_pipeline<Element, Map, Combine, Mode, fiat::identity>& computation,
-  fiat::transform_stage<Next>                                       stage)
-{
-  if constexpr (!fiat::traceable<Next, Element>)
-  {
-    static_assert(false, detail::transform_mismatch);
-  }
-  else
-  {
-    static_assert(
-      std::tuple_size_v<
-          typename scan_pipeline<Element, Map, Combine, Mode, Next>::argument_tuple
-      > +
-          std::tuple_size_v<typename scan_pipeline<
-            Element,
-            Map,
-            Combine,
-            Mode,
-            Next
-          >::epilogue_argument_tuple> <=
-        fiat::scan_argument_capacity,
-      "scan map and epilogue arguments together take at most 24 slots");
-    return scan_pipeline<Element, Map, Combine, Mode, Next> {
-      computation.source(),
-      computation.arguments(),
-      computation.identity(),
-      std::move(stage.arguments),
-    };
-  }
-}
-
-export
-template<
-  fiat::scalar Element,
-  class Map,
-  class Combine,
-  fiat::scan_mode Mode,
-  class... Current,
-  class... Next
->
-[[nodiscard]]
-auto
-operator |(
-  const scan_pipeline<Element, Map, Combine, Mode, fiat::chain<Current...>>&
-                                              current,
-  fiat::transform_stage<fiat::chain<Next...>> next)
-{
-  auto fused = fiat::fuse(
-    fiat::transform_stage<fiat::chain<Current...>> {
-      .arguments = current.epilogue_arguments(),
-    },
-    std::move(next));
-  if constexpr (!fiat::traceable<fiat::chain<Current..., Next...>, Element>)
-  {
-    static_assert(false, detail::transform_mismatch);
-  }
-  else
-  {
-    static_assert(
-      std::tuple_size_v<typename scan_pipeline<
-            Element,
-            Map,
-            Combine,
-            Mode,
-            fiat::chain<Current..., Next...>
-          >::argument_tuple> +
-          std::tuple_size_v<typename scan_pipeline<
-            Element,
-            Map,
-            Combine,
-            Mode,
-            fiat::chain<Current..., Next...>
-          >::epilogue_argument_tuple> <=
-        fiat::scan_argument_capacity,
-      "scan map and epilogue arguments together take at most 24 slots");
-    return scan_pipeline<
-      Element,
-      Map,
-      Combine,
-      Mode,
-      fiat::chain<Current..., Next...>
-    > {
-      current.source(),
-      current.arguments(),
-      current.identity(),
-      std::move(fused.arguments),
-    };
-  }
-}
-
-export
-template<
-  fiat::scalar Element,
-  class Map,
-  class Combine,
-  fiat::scan_mode Mode,
-  class Epilogue
->
-[[nodiscard]]
-auto
-record(
-  vk::raii::CommandBuffer&                                    command_buffer,
-  context&                                                    context,
-  const scan_pipeline<Element, Map, Combine, Mode, Epilogue>& computation,
-  device_array<Element>& output) -> std::expected<void, error_t>
-{
-  const auto count      = computation.source().size();
-  const auto group_size = context.group_size();
-  if (auto error = detail::check_count(count, group_size); !error)
-  {
-    return error;
-  }
-  if (output.size() != count)
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-
-  using scan_kernel = fiat::scan_stage<Map, Combine, Element, Mode, Epilogue>;
-  auto upsweep =
-    context.kernel<Element, scan_kernel, detail::scan_upsweep_index>();
-  if (!upsweep) { return std::unexpected {upsweep.error()}; }
-  auto downsweep =
-    context.kernel<Element, scan_kernel, detail::scan_downsweep_index>();
-  if (!downsweep) { return std::unexpected {downsweep.error()}; }
-
-  auto input_view  = computation.source().addressed_view(context.device());
-  auto output_view = output.addressed_view(context.device());
-  if (!input_view) { return std::unexpected {input_view.error()}; }
-  if (!output_view) { return std::unexpected {output_view.error()}; }
-
-  const detail::scan_partition partition =
-    detail::make_scan_partition(count, group_size);
-  const fiat::detail::scan_push scan_constants {
-    .input     = input_view->device_address(),
-    .scratch   = context.default_workspace().address(workspace_region::scratch),
-    .count     = count,
-    .identity  = std::bit_cast<std::uint32_t>(computation.identity()),
-    .arguments = detail::pack_scan_arguments(
-      computation.arguments(), computation.epilogue_arguments()),
-    .output = output_view->device_address(),
-  };
-
-  record_barrier(command_buffer, compute_reuse);
-
-  const auto& upsweep_compute = upsweep->get();
-  command_buffer.bindPipeline(
-    vk::PipelineBindPoint::eCompute, *upsweep_compute.pipeline());
-  push_compute<descriptor_table_backend::classic>(
-    command_buffer, upsweep_compute, scan_constants);
-  dispatch(command_buffer, partition.groups);
-
-  record_barrier(command_buffer, compute_write_to_any_read);
-
-  const auto& downsweep_compute = downsweep->get();
-  command_buffer.bindPipeline(
-    vk::PipelineBindPoint::eCompute, *downsweep_compute.pipeline());
-  push_compute<descriptor_table_backend::classic>(
-    command_buffer, downsweep_compute, scan_constants);
-  dispatch(command_buffer, partition.groups);
-  return {};
-}
-
-export
-template<
-  fiat::scalar Element,
-  class Map,
-  class Combine,
-  fiat::scan_mode Mode,
-  class Epilogue
->
-[[nodiscard]]
-auto
-run(
-  context&                                                    context,
-  const scan_pipeline<Element, Map, Combine, Mode, Epilogue>& computation,
-  device_array<Element>& output) -> std::expected<void, error_t>
-{
-  return submit_and_wait(
-    context,
-    [ & ](
-      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      if (
-        auto error = record(command_buffer, context, computation, output);
-        !error)
-      {
-        return error;
-      }
-      record_barrier(command_buffer, compute_write_to_any_read);
-      return {};
-    });
-}
-
-export
-template<
-  fiat::scalar Element,
-  class Map,
-  class Combine,
-  fiat::scan_mode Mode,
-  class Epilogue
->
-[[nodiscard]]
-auto
-run(
-  context&                                                    context,
-  const scan_pipeline<Element, Map, Combine, Mode, Epilogue>& computation)
-  -> std::expected<device_array<Element>, error_t>
-{ return detail::run_into_new_array<Element>(context, computation); }
-
 export template<fiat::scalar Element>
 struct compacted
 {
@@ -2435,7 +1980,8 @@ record(
       command_buffer,
       context,
       flags | fiat::exclusive_scan(fiat::plus {}, 0U),
-      indices);
+      indices,
+      context.default_workspace());
     !error)
   {
     return error;
