@@ -325,6 +325,10 @@ transpose_from_soa_bytes(std::span<const std::byte>, std::span<Element>)
 inline constexpr std::uint32_t shader_index_limit {
   std::numeric_limits<std::int32_t>::max(),
 };
+static_assert(
+  std::uint64_t {shader_index_limit} + (1ULL << 21U) < (1ULL << 32U),
+  "reduce and scan index arithmetic stays below 2^32 for every group size "
+  "below 2^21");
 
 struct cached_kernel
 {
@@ -1100,14 +1104,15 @@ static_assert(
   "the generic dispatch push is byte-equal to the transform push");
 
 export template<fiat::scalar Element, fiat::archetype_stage<Element> Stage>
-  requires (Stage::kind == fiat::stage_class::elementwise)
-class elementwise_pipeline
+  requires (
+    Stage::kind == fiat::stage_class::elementwise ||
+    Stage::kind == fiat::stage_class::scan)
+class array_pipeline
 {
 public:
   using argument_tuple = std::remove_cvref_t<decltype(Stage::arguments)>;
 
-  explicit elementwise_pipeline(
-    const device_array<Element>& source, Stage stage)
+  explicit array_pipeline(const device_array<Element>& source, Stage stage)
   : source_ {source}, stage_ {std::move(stage)}
   {}
 
@@ -1133,7 +1138,7 @@ private:
 
 export template<fiat::scalar Element, class Operation>
 using transform_pipeline =
-  elementwise_pipeline<Element, fiat::transform_stage<Operation>>;
+  array_pipeline<Element, fiat::transform_stage<Operation>>;
 
 export
 template<fiat::scalar Element, class Operation>
@@ -1346,10 +1351,10 @@ run(context& context, const foreach_pipeline<Element, Operation>& computation)
     });
 }
 
-inline constexpr std::string_view sink_mismatch {
-  "this fiat sink stage cannot run on this array: the map, the combine and "
-  "every epilogue transform must trace on the array's element type, and the "
-  "identity must have that type"
+inline constexpr std::string_view stage_mismatch {
+  "this fiat sink or scan stage cannot run on this array: the map, the combine "
+  "and every epilogue transform must trace on the array's element type, and "
+  "the identity must have that type"
 };
 
 export template<fiat::scalar Element, fiat::archetype_stage<Element> Stage>
@@ -1378,27 +1383,35 @@ private:
 
 export
 template<fiat::scalar Element, class Stage>
-  requires (Stage::kind == fiat::stage_class::sink)
+  requires (
+    Stage::kind == fiat::stage_class::sink ||
+    Stage::kind == fiat::stage_class::scan)
 [[nodiscard]]
 auto
 operator |(const device_array<Element>& source, Stage stage)
 {
   if constexpr (!fiat::archetype_stage<Stage, Element>)
   {
-    static_assert(false, sink_mismatch);
+    static_assert(false, stage_mismatch);
+  }
+  else if constexpr (Stage::kind == fiat::stage_class::sink)
+  {
+    return sink_pipeline<Element, Stage> {source, std::move(stage)};
   }
   else
   {
-    return sink_pipeline<Element, Stage> {source, std::move(stage)};
+    return array_pipeline<Element, Stage> {source, std::move(stage)};
   }
 }
 
 export
-template<fiat::scalar Element, class Current, class Next>
-  requires (Next::kind == fiat::stage_class::sink)
+template<fiat::scalar Element, class Operation, class Next>
+  requires (
+    Next::kind == fiat::stage_class::sink ||
+    Next::kind == fiat::stage_class::scan)
 [[nodiscard]]
 auto
-operator |(const elementwise_pipeline<Element, Current>& current, Next next)
+operator |(const transform_pipeline<Element, Operation>& current, Next next)
 { return current.source() | (current.stage() | std::move(next)); }
 
 export
@@ -1410,15 +1423,24 @@ operator |(
   fiat::transform_stage<Next>          next)
 { return current.source() | (current.stage() | std::move(next)); }
 
+template<fiat::scalar Element, class Stage, class Next>
+  requires (Stage::kind == fiat::stage_class::scan)
+[[nodiscard]]
+auto
+operator |(
+  const array_pipeline<Element, Stage>& current,
+  fiat::transform_stage<Next>           next)
+{ return current.source() | (current.stage() | std::move(next)); }
+
 export
 template<fiat::scalar Element, class Stage>
 [[nodiscard]]
 auto
 record(
-  vk::raii::CommandBuffer&                    command_buffer,
-  context&                                    context,
-  const elementwise_pipeline<Element, Stage>& computation,
-  device_array<Element>& output) -> std::expected<void, error_t>
+  vk::raii::CommandBuffer&              command_buffer,
+  context&                              context,
+  const array_pipeline<Element, Stage>& computation,
+  device_array<Element>&                output) -> std::expected<void, error_t>
 {
   return record_kernel<Element>(
     command_buffer,
@@ -1434,9 +1456,9 @@ template<fiat::scalar Element, class Stage>
 [[nodiscard]]
 auto
 run(
-  context&                                    context,
-  const elementwise_pipeline<Element, Stage>& computation,
-  device_array<Element>& output) -> std::expected<void, error_t>
+  context&                              context,
+  const array_pipeline<Element, Stage>& computation,
+  device_array<Element>&                output) -> std::expected<void, error_t>
 {
   return submit_and_wait(
     context,
@@ -1457,7 +1479,7 @@ export
 template<fiat::scalar Element, class Stage>
 [[nodiscard]]
 auto
-run(context& context, const elementwise_pipeline<Element, Stage>& computation)
+run(context& context, const array_pipeline<Element, Stage>& computation)
   -> std::expected<device_array<Element>, error_t>
 { return detail::run_into_new_array<Element>(context, computation); }
 
