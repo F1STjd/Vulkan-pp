@@ -1552,6 +1552,78 @@ operator |(const sink_pipeline<Element, Stage>& computation, keep_stage stage)
     .transform([ & ] -> device_scalar<Element> { return std::move(*slot); });
 }
 
+template<fiat::scalar Element, class Stage>
+inline constexpr std::uint32_t result_port_size {
+  stage_ports<Element, Stage>::sizes.back(),
+};
+
+export
+template<fiat::scalar Element, class Stage>
+  requires (result_port_size<Element, Stage> != 0U)
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&             command_buffer,
+  context&                             context,
+  const sink_pipeline<Element, Stage>& computation,
+  device_array<Element>&               result) -> std::expected<void, error_t>
+{
+  command_buffer.fillBuffer(
+    result.buffer().buffer(), 0UZ, result.size_bytes(), 0U);
+  record_barrier(command_buffer, transfer_write_to_compute);
+  return record_kernel<Element>(
+    command_buffer,
+    context,
+    computation.stage(),
+    {},
+    computation.source(),
+    result);
+}
+
+export
+template<fiat::scalar Element, class Stage>
+  requires (result_port_size<Element, Stage> != 0U)
+[[nodiscard]]
+auto
+run(
+  context&                             context,
+  const sink_pipeline<Element, Stage>& computation,
+  device_array<Element>&               result) -> std::expected<void, error_t>
+{
+  return submit_and_wait(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (
+        auto error = record(command_buffer, context, computation, result);
+        !error)
+      {
+        return error;
+      }
+      record_barrier(command_buffer, compute_write_to_any_read);
+      return {};
+    });
+}
+
+export
+template<fiat::scalar Element, class Stage>
+  requires (result_port_size<Element, Stage> != 0U)
+[[nodiscard]]
+auto
+run(context& context, const sink_pipeline<Element, Stage>& computation)
+  -> std::expected<device_array<Element>, error_t>
+{
+  return context.allocate<Element>(result_port_size<Element, Stage>)
+    .and_then(
+      [ & ](device_array<Element>&& result)
+        -> std::expected<device_array<Element>, error_t> {
+        return run(context, computation, result)
+          .transform([ & ] -> device_array<Element> {
+            return std::move(result);
+          })
+      })
+}
+
 export
 template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
 [[nodiscard]]
