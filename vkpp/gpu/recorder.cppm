@@ -165,6 +165,7 @@ struct port_traits<std::tuple<Ports...>>
   using elements = std::tuple<typename Ports::element_type...>;
 
   static constexpr std::array accesses {Ports::access...};
+  static constexpr std::array sizes {Ports::size...};
 };
 
 template<fiat::scalar Element, class Stage>
@@ -245,11 +246,18 @@ record_kernel(
         }),
     "record_kernel records one per_element dispatch or grid_stride dispatches "
     "that share maximum_groups");
+  static_assert(
+    stage_ports<Element, Stage>::sizes.front() == 0U,
+    "the first port of a stage sets the dispatch count");
 
   const std::array    sizes {ports.size()...};
   const std::uint32_t count = sizes.front();
-  if (std::ranges::any_of(sizes, [ & ](std::uint32_t size) -> bool {
-        return size != count;
+  if (
+    !std::ranges::equal(
+      sizes,
+      stage_ports<Element, Stage>::sizes,
+      [ & ](std::uint32_t size, std::uint32_t required) -> bool {
+        return size == (required == 0U ? count : required);
       }))
   {
     return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
@@ -261,6 +269,9 @@ record_kernel(
         return view.device_address();
       })...,
   };
+  constexpr auto accesses = stage_ports<Element, Stage>::accesses;
+  constexpr bool accumulates =
+    std::ranges::contains(accesses, fiat::port_access::read_write);
   port_addresses<Element, Stage> addresses {};
   port_addresses<Element, Stage> written {};
   std::size_t                    written_count {};
@@ -271,9 +282,7 @@ record_kernel(
       return std::unexpected {bound[ port_index ].error()};
     }
     addresses[ port_index ] = *bound[ port_index ];
-    if (
-      stage_ports<Element, Stage>::accesses[ port_index ] !=
-      fiat::port_access::read)
+    if (accumulates || accesses[ port_index ] != fiat::port_access::read)
     {
       written[ written_count++ ] = addresses[ port_index ];
     }
