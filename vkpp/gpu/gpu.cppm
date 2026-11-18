@@ -1620,8 +1620,8 @@ run(context& context, const sink_pipeline<Element, Stage>& computation)
         return run(context, computation, result)
           .transform([ & ] -> device_array<Element> {
             return std::move(result);
-          })
-      })
+          });
+      });
 }
 
 export
