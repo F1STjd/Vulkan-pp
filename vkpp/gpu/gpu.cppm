@@ -1434,6 +1434,7 @@ operator |(
 
 export
 template<fiat::scalar Element, class Stage>
+  requires (fiat::workspace_of<Stage>.region_count() == 0UZ)
 [[nodiscard]]
 auto
 record(
@@ -1455,17 +1456,43 @@ export
 template<fiat::scalar Element, class Stage>
 [[nodiscard]]
 auto
+record(
+  vk::raii::CommandBuffer&              command_buffer,
+  context&                              context,
+  const array_pipeline<Element, Stage>& computation,
+  device_array<Element>&                output,
+  workspace& workspace) -> std::expected<void, error_t>
+{
+  return bind_workspace<Stage>(workspace).and_then(
+    [ & ](
+      const region_addresses<Stage>& regions) -> std::expected<void, error_t> {
+      return record_kernel<Element>(
+        command_buffer,
+        context,
+        computation.stage(),
+        regions,
+        computation.source(),
+        output);
+    });
+}
+
+export
+template<fiat::scalar Element, class Stage>
+[[nodiscard]]
+auto
 run(
   context&                              context,
   const array_pipeline<Element, Stage>& computation,
-  device_array<Element>&                output) -> std::expected<void, error_t>
+  device_array<Element>&                output,
+  workspace& workspace) -> std::expected<void, error_t>
 {
   return submit_and_wait(
     context,
     [ & ](
       vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
       if (
-        auto error = record(command_buffer, context, computation, output);
+        auto error =
+          record(command_buffer, context, computation, output, workspace);
         !error)
       {
         return error;
@@ -1474,6 +1501,16 @@ run(
       return {};
     });
 }
+
+export
+template<fiat::scalar Element, class Stage>
+[[nodiscard]]
+auto
+run(
+  context&                              context,
+  const array_pipeline<Element, Stage>& computation,
+  device_array<Element>&                output) -> std::expected<void, error_t>
+{ return run(context, computation, output, context.default_workspace()); }
 
 export
 template<fiat::scalar Element, class Stage>
@@ -1506,12 +1543,15 @@ keep(context& context) -> keep_stage
 { return keep_stage {.context = context}; }
 
 export
-template<fiat::scalar Element, class Stage>
+template<class Computation>
+  requires requires(const Computation& computation) { computation.stage(); }
 [[nodiscard]]
 constexpr auto
-workspace_requirements(const context&, const sink_pipeline<Element, Stage>&)
+workspace_requirements(const context&, const Computation& computation)
   -> workspace_sizes
-{ return fiat::workspace_of<Stage>; }
+{
+  return fiat::workspace_of<std::remove_cvref_t<decltype(computation.stage())>>;
+}
 
 export
 template<fiat::scalar Element, class Stage>
