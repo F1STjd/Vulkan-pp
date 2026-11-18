@@ -648,6 +648,7 @@ private:
         .buffer_device_address            = capability_requirement::required,
         .maintenance4                     = capability_requirement::required,
         .vulkan_memory_model              = capability_requirement::required,
+        .zero_initialize_workgroup_memory = capability_requirement::required,
         .subgroup_size_control            = capability_requirement::preferred,
         .subgroup_extended_types          = capability_requirement::preferred,
         .subgroup_uniform_control_flow    = capability_requirement::preferred,
