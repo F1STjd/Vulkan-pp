@@ -55,6 +55,7 @@ export struct device_feature_requests
   capability_requirement shader_object {disabled};
   capability_requirement maintenance4 {disabled};
   capability_requirement vulkan_memory_model {disabled};
+  capability_requirement zero_initialize_workgroup_memory {disabled};
   capability_requirement subgroup_size_control {disabled};
   capability_requirement subgroup_extended_types {disabled};
   capability_requirement subgroup_uniform_control_flow {disabled};
@@ -109,6 +110,7 @@ export struct enabled_device_features
   bool pipeline_binary {false};
   bool maintenance4 {false};
   bool vulkan_memory_model {false};
+  bool zero_initialize_workgroup_memory {false};
   bool subgroup_size_control {false};
   bool subgroup_extended_types {false};
   bool subgroup_uniform_control_flow {false};
