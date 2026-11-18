@@ -31,6 +31,7 @@ export struct feature_tag
   struct pipeline_binary {};
   struct maintenance4 {};
   struct vulkan_memory_model {};
+  struct zero_initialize_workgroup_memory {};
   struct subgroup_size_control {};
   struct subgroup_extended_types {};
   struct subgroup_uniform_control_flow {};
@@ -143,6 +144,13 @@ template<>
 struct feature_traits<feature_tag::vulkan_memory_model>
 {
   static constexpr auto member = &device_feature_requests::vulkan_memory_model;
+};
+
+template<>
+struct feature_traits<feature_tag::zero_initialize_workgroup_memory>
+{
+  static constexpr auto member =
+    &device_feature_requests::zero_initialize_workgroup_memory;
 };
 
 template<>
@@ -670,6 +678,8 @@ private:
     v13.subgroupSizeControl  = vk::Bool32 {compute.subgroup_size_control};
     v13.computeFullSubgroups = vk::Bool32 {compute.compute_full_subgroups};
     v13.shaderIntegerDotProduct = vk::Bool32 {compute.integer_dot_product};
+    v13.shaderZeroInitializeWorkgroupMemory =
+      vk::Bool32 {enabled.zero_initialize_workgroup_memory};
 
     auto& eds = chain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
     eds.extendedDynamicState = vk::Bool32 {enabled.extended_dynamic_state};
@@ -1043,6 +1053,13 @@ private:
       return false;
     }
     if (
+      features.zero_initialize_workgroup_memory ==
+        capability_requirement::required &&
+      v13.shaderZeroInitializeWorkgroupMemory != vk::True)
+    {
+      return false;
+    }
+    if (
       features.extended_dynamic_state == capability_requirement::required &&
       eds.extendedDynamicState != vk::True)
     {
@@ -1410,6 +1427,10 @@ private:
       profile.features.maintenance4,
       v13.maintenance4 == vk::True,
       "maintenance4");
+    enabled.zero_initialize_workgroup_memory = apply(
+      profile.features.zero_initialize_workgroup_memory,
+      v13.shaderZeroInitializeWorkgroupMemory == vk::True,
+      "zero_initialize_workgroup_memory");
     enabled.extended_dynamic_state = apply(
       profile.features.extended_dynamic_state,
       eds.extendedDynamicState == vk::True,
