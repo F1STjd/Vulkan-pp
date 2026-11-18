@@ -201,18 +201,6 @@ struct kernel_traits<Element, fiat::scatter_stage>
   static constexpr std::size_t push_size {sizeof(fiat::detail::scatter_push)};
 };
 
-template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
-struct kernel_traits<std::uint32_t, fiat::histogram_stage<Buckets, Mode, Key>>
-{
-  static constexpr auto words =
-    fiat::compile<std::uint32_t>(fiat::histogram_stage<Buckets, Mode, Key> {});
-  static constexpr std::array entries {
-    fiat::histogram_entry,
-    fiat::histogram_global_entry,
-  };
-  static constexpr std::size_t push_size {sizeof(fiat::detail::histogram_push)};
-};
-
 #if defined(__cpp_impl_reflection)
 
 template<fiat::soa_element Element>
@@ -311,6 +299,13 @@ static_assert(
     >>),
   "the default workspace covers every scan");
 
+template<class Stage>
+inline constexpr std::uint32_t buckets_of {};
+
+template<class Stage>
+  requires requires { Stage::buckets; }
+inline constexpr std::uint32_t buckets_of<Stage> {Stage::buckets};
+
 struct cached_kernel
 {
   std::uint64_t                  fingerprint {};
@@ -359,7 +354,7 @@ public:
     requires fiat::scalar<Element> || fiat::soa_element<Element>
   [[nodiscard]]
   auto
-  kernel(std::uint32_t buckets = 0U)
+  kernel()
     -> std::expected<std::reference_wrapper<const compute_pipeline>, error_t>
   {
     using traits = detail::kernel_traits<Element, Stage>;
@@ -371,7 +366,7 @@ public:
     constexpr std::string_view entry       = traits::entries[ EntryIndex ];
     const std::array<std::uint32_t, 2UZ> specialization_values {
       group_size_,
-      buckets,
+      buckets_of<Stage>,
     };
 
     const auto found = std::ranges::find_if(
@@ -394,7 +389,7 @@ public:
     const std::array one {group_size_spec};
     const std::array two {group_size_spec, buckets_spec};
     const auto       specialization =
-      buckets == 0U
+      buckets_of<Stage> == 0U
         ? std::span<const specialization_constant> {one}
         : std::span<const specialization_constant> {two};
 
@@ -1248,7 +1243,7 @@ run(context& context, const foreach_pipeline<Element, Operation>& computation)
 inline constexpr std::string_view stage_mismatch {
   "this fiat sink or scan stage cannot run on this array: the map, the combine "
   "and every epilogue transform must trace on the array's element type, and "
-  "the identity must have that type"
+  "the identity must have that type; a histogram needs a std::uint32_t array"
 };
 
 export template<fiat::scalar Element, fiat::archetype_stage<Element> Stage>
@@ -2131,151 +2126,6 @@ run(context& context, const compact_pipeline<Element, Compare>& computation)
         .count  = std::move(*count_out),
       };
     });
-}
-
-export template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
-class histogram_pipeline
-{
-public:
-  using arguments_type =
-    decltype(fiat::histogram_stage<Buckets, Mode, Key> {}.arguments);
-
-  explicit histogram_pipeline(
-    const device_array<std::uint32_t>& source, arguments_type arguments)
-  : source_ {source}, arguments_ {std::move(arguments)}
-  {}
-
-  [[nodiscard]]
-  auto
-  source() const noexcept -> const device_array<std::uint32_t>&
-  { return source_; }
-
-  [[nodiscard]]
-  auto
-  arguments() const noexcept -> const arguments_type&
-  { return arguments_; }
-
-private:
-  const device_array<std::uint32_t>& source_;
-  arguments_type                     arguments_;
-};
-
-export
-template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
-[[nodiscard]]
-auto
-operator |(
-  const device_array<std::uint32_t>&        source,
-  fiat::histogram_stage<Buckets, Mode, Key> stage)
-  -> histogram_pipeline<Buckets, Mode, Key>
-{ return histogram_pipeline<Buckets, Mode, Key> {source, stage.arguments}; }
-
-export
-template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
-[[nodiscard]]
-auto
-record(
-  vk::raii::CommandBuffer&                      command_buffer,
-  context&                                      context,
-  const histogram_pipeline<Buckets, Mode, Key>& computation,
-  device_array<std::uint32_t>& counts) -> std::expected<void, error_t>
-{
-  static_assert(Buckets >= 1U, "fiat::histogram needs at least one bucket");
-  if constexpr (Mode == fiat::histogram_mode::privatized)
-  {
-    if (
-      static_cast<std::uint64_t>(Buckets) * 4UZ >
-      static_cast<std::uint64_t>(context.shared_memory_size()))
-    {
-      return std::unexpected {
-        make_app_error(app_error_code::invalid_data_size),
-      };
-    }
-  }
-  if (counts.size() != Buckets)
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-
-  constexpr std::size_t entry_index =
-    Mode == fiat::histogram_mode::global ? 1UZ : 0UZ;
-  auto kernel = context.kernel<
-    std::uint32_t,
-    fiat::histogram_stage<Buckets, Mode, Key>,
-    entry_index
-  >(Buckets);
-  if (!kernel) { return std::unexpected {kernel.error()}; }
-
-  auto input_view  = computation.source().addressed_view(context.device());
-  auto counts_view = counts.addressed_view(context.device());
-  if (!input_view) { return std::unexpected {input_view.error()}; }
-  if (!counts_view) { return std::unexpected {counts_view.error()}; }
-  if (input_view->device_address() == counts_view->device_address())
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-
-  const auto count = computation.source().size();
-  record_barrier(command_buffer, compute_reuse);
-  record_chunks(
-    command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
-      return fiat::detail::histogram_push {
-        .input     = input_view->device_address(),
-        .counts    = counts_view->device_address(),
-        .count     = count,
-        .first     = first,
-        .arguments = detail::pack_arguments<0UZ>(computation.arguments()),
-      };
-    });
-  return {};
-}
-
-export
-template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
-[[nodiscard]]
-auto
-run(
-  context&                                      context,
-  const histogram_pipeline<Buckets, Mode, Key>& computation,
-  device_array<std::uint32_t>& counts) -> std::expected<void, error_t>
-{
-  if (counts.size() != Buckets)
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-
-  return submit_and_wait(
-    context,
-    [ & ](
-      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      command_buffer.fillBuffer(
-        counts.buffer().buffer(),
-        0UZ,
-        static_cast<vk::DeviceSize>(Buckets) * sizeof(std::uint32_t),
-        0U);
-      if (
-        auto error = record(command_buffer, context, computation, counts);
-        !error)
-      {
-        return error;
-      }
-      record_barrier(command_buffer, compute_write_to_any_read);
-      return {};
-    });
-}
-
-export
-template<std::uint32_t Buckets, fiat::histogram_mode Mode, class Key>
-[[nodiscard]]
-auto
-run(context& context, const histogram_pipeline<Buckets, Mode, Key>& computation)
-  -> std::expected<device_array<std::uint32_t>, error_t>
-{
-  auto counts = context.allocate<std::uint32_t>(Buckets);
-  if (!counts) { return std::unexpected {counts.error()}; }
-  return run(context, computation, *counts).transform([ & ] {
-    return std::move(*counts);
-  });
 }
 
 namespace detail
