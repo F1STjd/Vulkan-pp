@@ -1316,6 +1316,7 @@ operator |(
   fiat::transform_stage<Next>          next)
 { return current.source() | (current.stage() | std::move(next)); }
 
+export
 template<fiat::scalar Element, class Stage, class Next>
   requires (Stage::kind == fiat::stage_class::scan)
 [[nodiscard]]
