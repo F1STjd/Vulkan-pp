@@ -270,7 +270,8 @@ record_kernel(
       })...,
   };
   constexpr auto accesses = stage_ports<Element, Stage>::accesses;
-  constexpr bool accumulates =
+  constexpr bool every_port_distinct =
+    Stage::kind == fiat::stage_class::permute ||
     std::ranges::contains(accesses, fiat::port_access::read_write);
   port_addresses<Element, Stage> addresses {};
   port_addresses<Element, Stage> written {};
@@ -282,7 +283,7 @@ record_kernel(
       return std::unexpected {bound[ port_index ].error()};
     }
     addresses[ port_index ] = *bound[ port_index ];
-    if (accumulates || accesses[ port_index ] != fiat::port_access::read)
+    if (every_port_distinct || accesses[ port_index ] != fiat::port_access::read)
     {
       written[ written_count++ ] = addresses[ port_index ];
     }
