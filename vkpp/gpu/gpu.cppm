@@ -193,14 +193,6 @@ struct kernel_traits<Element, fiat::predicate_stage<Compare, Element>>
   static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
 };
 
-template<fiat::scalar Element>
-struct kernel_traits<Element, fiat::scatter_stage>
-{
-  static constexpr auto words = fiat::compile<Element>(fiat::scatter_stage {});
-  static constexpr std::array  entries {fiat::scatter_entry};
-  static constexpr std::size_t push_size {sizeof(fiat::detail::scatter_push)};
-};
-
 #if defined(__cpp_impl_reflection)
 
 template<fiat::soa_element Element>
@@ -1760,48 +1752,6 @@ operator |(
   }
 }
 
-export template<fiat::scalar Element>
-class scatter_pipeline
-{
-public:
-  explicit scatter_pipeline(
-    const device_array<Element>&       source,
-    const device_array<std::uint32_t>& flags,
-    const device_array<std::uint32_t>& indices)
-  : source_ {source}, flags_ {flags}, indices_ {indices}
-  {}
-
-  [[nodiscard]]
-  auto
-  source() const noexcept -> const device_array<Element>&
-  { return source_; }
-
-  [[nodiscard]]
-  auto
-  flags() const noexcept -> const device_array<std::uint32_t>&
-  { return flags_; }
-
-  [[nodiscard]]
-  auto
-  indices() const noexcept -> const device_array<std::uint32_t>&
-  { return indices_; }
-
-private:
-  const device_array<Element>&       source_;
-  const device_array<std::uint32_t>& flags_;
-  const device_array<std::uint32_t>& indices_;
-};
-
-export
-template<fiat::scalar Element>
-[[nodiscard]]
-auto
-scatter(
-  const device_array<Element>&       source,
-  const device_array<std::uint32_t>& flags,
-  const device_array<std::uint32_t>& indices) -> scatter_pipeline<Element>
-{ return scatter_pipeline<Element> {source, flags, indices}; }
-
 export
 template<fiat::scalar Element, class Compare>
 [[nodiscard]]
@@ -1887,119 +1837,6 @@ run(context& context, const predicate_pipeline<Element, Compare>& computation)
 }
 
 export
-template<fiat::scalar Element>
-[[nodiscard]]
-auto
-record(
-  vk::raii::CommandBuffer&         command_buffer,
-  context&                         context,
-  const scatter_pipeline<Element>& computation,
-  device_array<Element>&           output,
-  device_array<std::uint32_t>&     count_out) -> std::expected<void, error_t>
-{
-  const auto count = computation.source().size();
-  if (
-    output.size() != count ||
-    computation.flags().size() != count ||
-    computation.indices().size() != count ||
-    count_out.size() != 1U)
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-
-  auto kernel = context.kernel<Element, fiat::scatter_stage>();
-  if (!kernel) { return std::unexpected {kernel.error()}; }
-
-  auto input_view   = computation.source().addressed_view(context.device());
-  auto output_view  = output.addressed_view(context.device());
-  auto flags_view   = computation.flags().addressed_view(context.device());
-  auto indices_view = computation.indices().addressed_view(context.device());
-  auto count_view   = count_out.addressed_view(context.device());
-  if (!input_view) { return std::unexpected {input_view.error()}; }
-  if (!output_view) { return std::unexpected {output_view.error()}; }
-  if (!flags_view) { return std::unexpected {flags_view.error()}; }
-  if (!indices_view) { return std::unexpected {indices_view.error()}; }
-  if (!count_view) { return std::unexpected {count_view.error()}; }
-
-  if (
-    auto error = check_distinct_addresses(
-      std::array {
-        input_view->device_address(),
-        output_view->device_address(),
-        flags_view->device_address(),
-        indices_view->device_address(),
-        count_view->device_address(),
-      });
-    !error)
-  {
-    return error;
-  }
-
-  record_barrier(command_buffer, compute_reuse);
-  record_chunks(
-    command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
-      return fiat::detail::scatter_push {
-        .input     = input_view->device_address(),
-        .output    = output_view->device_address(),
-        .count     = count,
-        .first     = first,
-        .flags     = flags_view->device_address(),
-        .indices   = indices_view->device_address(),
-        .count_out = count_view->device_address(),
-      };
-    });
-  return {};
-}
-
-export
-template<fiat::scalar Element>
-[[nodiscard]]
-auto
-run(
-  context&                         context,
-  const scatter_pipeline<Element>& computation,
-  device_array<Element>&           output,
-  device_array<std::uint32_t>&     count_out) -> std::expected<void, error_t>
-{
-  return submit_and_wait(
-    context,
-    [ & ](
-      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      if (
-        auto error =
-          record(command_buffer, context, computation, output, count_out);
-        !error)
-      {
-        return error;
-      }
-      record_barrier(command_buffer, compute_write_to_any_read);
-      return {};
-    });
-}
-
-export
-template<fiat::scalar Element>
-[[nodiscard]]
-auto
-run(context& context, const scatter_pipeline<Element>& computation)
-  -> std::expected<compacted<Element>, error_t>
-{
-  auto output = context.allocate<Element>(computation.source().size());
-  if (!output) { return std::unexpected {output.error()}; }
-
-  auto count_out = context.allocate<std::uint32_t>(1U);
-  if (!count_out) { return std::unexpected {count_out.error()}; }
-
-  return run(context, computation, *output, *count_out)
-    .transform([ & ] -> compacted<Element> {
-      return compacted<Element> {
-        .values = std::move(*output),
-        .count  = std::move(*count_out),
-      };
-    });
-}
-
-export
 template<fiat::scalar Element, class Compare>
 [[nodiscard]]
 auto
@@ -2049,11 +1886,14 @@ record(
 
   record_barrier(command_buffer, compute_write_to_any_read);
 
-  return record(
+  return record_kernel<Element>(
     command_buffer,
     context,
-    scatter(computation.source(), flags, indices),
+    fiat::scatter(),
+    {},
     output,
+    flags,
+    indices,
     count_out);
 }
 
