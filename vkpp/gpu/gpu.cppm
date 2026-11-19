@@ -1960,6 +1960,147 @@ run(context& context, const compact_pipeline<Element, Compare>& computation)
     });
 }
 
+export template<class PredicateStage>
+struct select_stage
+{
+  PredicateStage predicate;
+};
+
+export
+template<class Predicate, class... Arguments>
+[[nodiscard]]
+constexpr auto
+select(Predicate predicate, Arguments... arguments)
+  -> select_stage<decltype(fiat::predicate(predicate, arguments...))>
+{ return {fiat::predicate(predicate, arguments...)}; }
+
+export template<fiat::scalar Element, class PredicateStage>
+class select_pipeline
+{
+public:
+  explicit select_pipeline(
+    const device_array<Element>& source, PredicateStage stage)
+  : source_ {source}, stage_ {std::move(stage)}
+  {}
+
+  [[nodiscard]]
+  auto
+  source() const noexcept -> const device_array<Element>&
+  { return source_; }
+
+  [[nodiscard]]
+  auto
+  stage() const noexcept -> const PredicateStage&
+  { return stage_; }
+
+private:
+  const device_array<Element>& source_;
+  PredicateStage               stage_;
+};
+
+export
+template<fiat::scalar Element, class PredicateStage>
+[[nodiscard]]
+auto
+operator |(
+  const device_array<Element>& source, select_stage<PredicateStage> stage)
+  -> select_pipeline<Element, PredicateStage>
+{
+  return select_pipeline<Element, PredicateStage> {
+    source, std::move(stage.predicate)
+  };
+}
+
+export
+template<fiat::scalar Element, class PredicateStage>
+[[nodiscard]]
+auto
+record(
+  vk::raii::CommandBuffer&                        command_buffer,
+  context&                                        context,
+  const select_pipeline<Element, PredicateStage>& computation,
+  device_array<std::uint32_t>&                    flags,
+  device_array<std::uint32_t>&                    indices,
+  compacted<Element>&                             result,
+  workspace& workspace) -> std::expected<void, error_t>
+{
+  if (
+    auto error = record(
+      command_buffer, context, computation.source() | computation.stage(), flags);
+    !error)
+  {
+    return error;
+  }
+  if (
+    auto error = record(
+      command_buffer,
+      context,
+      flags | fiat::exclusive_scan(fiat::plus {}, 0U),
+      indices,
+      workspace);
+    !error)
+  {
+    return error;
+  }
+  record_barrier(command_buffer, compute_write_to_any_read);
+  return record_kernel<Element>(
+    command_buffer,
+    context,
+    fiat::scatter(),
+    {},
+    computation.source(),
+    result.values,
+    flags,
+    indices,
+    result.count);
+}
+
+export
+template<fiat::scalar Element, class PredicateStage>
+[[nodiscard]]
+auto
+run(
+  context& context, const select_pipeline<Element, PredicateStage>& computation)
+  -> std::expected<compacted<Element>, error_t>
+{
+  const auto count = computation.source().size();
+
+  auto flags = context.allocate<std::uint32_t>(count);
+  if (!flags) { return std::unexpected {flags.error()}; }
+  auto indices = context.allocate<std::uint32_t>(count);
+  if (!indices) { return std::unexpected {indices.error()}; }
+  auto values = context.allocate<Element>(count);
+  if (!values) { return std::unexpected {values.error()}; }
+  auto kept_count = context.allocate<std::uint32_t>(1U);
+  if (!kept_count) { return std::unexpected {kept_count.error()}; }
+
+  compacted<Element> result {
+    .values = std::move(*values),
+    .count  = std::move(*kept_count),
+  };
+  return submit_and_wait(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      if (
+        auto error = record(
+          command_buffer,
+          context,
+          computation,
+          *flags,
+          *indices,
+          result,
+          context.default_workspace());
+        !error)
+      {
+        return error;
+      }
+      record_barrier(command_buffer, compute_write_to_any_read);
+      return {};
+    })
+    .transform([ & ] -> compacted<Element> { return std::move(result); });
+}
+
 namespace detail
 {
 
