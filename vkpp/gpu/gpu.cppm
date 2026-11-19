@@ -184,15 +184,6 @@ struct kernel_traits<Element, fiat::foreach_stage<Operation>>
   static constexpr std::size_t push_size {sizeof(fiat::detail::foreach_push)};
 };
 
-template<fiat::scalar Element, fiat::compare_operation Compare>
-struct kernel_traits<Element, fiat::predicate_stage<Compare, Element>>
-{
-  static constexpr auto words =
-    fiat::compile<Element>(fiat::predicate_stage<Compare, Element> {});
-  static constexpr std::array  entries {fiat::predicate_entry};
-  static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
-};
-
 #if defined(__cpp_impl_reflection)
 
 template<fiat::soa_element Element>
@@ -801,9 +792,10 @@ inline constexpr std::string_view foreach_mismatch {
   "argument must be float, std::int32_t, or std::uint32_t"
 };
 
-inline constexpr std::string_view compact_mismatch {
-  "this fiat::predicate or fiat::compact cannot run on this array; the compare "
-  "threshold must have the array's element type"
+inline constexpr std::string_view select_mismatch {
+  "this vkpp::gpu::select cannot run on this array: the predicate must take "
+  "(value, arguments...) and return fiat::value<bool>, and every runtime "
+  "argument mus have the array's element type"
 };
 
 template<std::size_t first_slot, class... Arguments>
@@ -1650,134 +1642,6 @@ struct compacted
   device_array<std::uint32_t> count;
 };
 
-export template<fiat::scalar Element, class Compare>
-  requires fiat::compare_operation<Compare>
-class predicate_pipeline
-{
-public:
-  explicit predicate_pipeline(
-    const device_array<Element>& source, Element threshold)
-  : source_ {source}, threshold_ {threshold}
-  {}
-
-  [[nodiscard]]
-  auto
-  source() const noexcept -> const device_array<Element>&
-  { return source_; }
-
-  [[nodiscard]]
-  auto
-  threshold() const noexcept -> Element
-  { return threshold_; }
-
-private:
-  const device_array<Element>& source_;
-  Element                      threshold_;
-};
-
-export
-template<fiat::scalar Element, class Compare, class Threshold>
-[[nodiscard]]
-auto
-operator |(
-  const device_array<Element>&              source,
-  fiat::predicate_stage<Compare, Threshold> stage)
-{
-  if constexpr (
-    !std::same_as<Element, Threshold> || !fiat::compare_operation<Compare>)
-  {
-    static_assert(false, detail::compact_mismatch);
-  }
-  else
-  {
-    return predicate_pipeline<Element, Compare> {source, stage.threshold};
-  }
-}
-
-export
-template<fiat::scalar Element, class Compare>
-[[nodiscard]]
-auto
-record(
-  vk::raii::CommandBuffer&                    command_buffer,
-  context&                                    context,
-  const predicate_pipeline<Element, Compare>& computation,
-  device_array<std::uint32_t>& flags) -> std::expected<void, error_t>
-{
-  const auto count = computation.source().size();
-  if (flags.size() != count)
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-
-  using stage = fiat::predicate_stage<Compare, Element>;
-  auto kernel = context.kernel<Element, stage>();
-  if (!kernel) { return std::unexpected {kernel.error()}; }
-
-  auto input_view = computation.source().addressed_view(context.device());
-  auto flags_view = flags.addressed_view(context.device());
-  if (!input_view) { return std::unexpected {input_view.error()}; }
-  if (!flags_view) { return std::unexpected {flags_view.error()}; }
-
-  const auto arguments =
-    detail::pack_arguments<0UZ>(std::tuple<Element> {computation.threshold()});
-
-  record_barrier(command_buffer, compute_reuse);
-  record_chunks(
-    command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
-      return fiat::detail::transform_push {
-        .input     = input_view->device_address(),
-        .output    = flags_view->device_address(),
-        .count     = count,
-        .first     = first,
-        .arguments = arguments,
-      };
-    });
-  return {};
-}
-
-export
-template<fiat::scalar Element, class Compare>
-[[nodiscard]]
-auto
-run(
-  context&                                    context,
-  const predicate_pipeline<Element, Compare>& computation,
-  device_array<std::uint32_t>& flags) -> std::expected<void, error_t>
-{
-  return submit_and_wait(
-    context,
-    [ & ](
-      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      if (
-        auto error = record(command_buffer, context, computation, flags);
-        !error)
-      {
-        return error;
-      }
-      record_barrier(command_buffer, compute_write_to_any_read);
-      return {};
-    });
-}
-
-export
-template<fiat::scalar Element, class Compare>
-[[nodiscard]]
-auto
-run(context& context, const predicate_pipeline<Element, Compare>& computation)
-  -> std::expected<device_array<std::uint32_t>, error_t>
-{
-  return context.allocate<std::uint32_t>(computation.source().size())
-    .and_then(
-      [ & ](device_array<std::uint32_t>&& flags)
-        -> std::expected<device_array<std::uint32_t>, error_t> {
-        return run(context, computation, flags)
-          .transform([ & ] -> device_array<std::uint32_t> {
-            return std::move(flags);
-          });
-      });
-}
-
 export template<class PredicateStage>
 struct select_stage
 {
@@ -1822,11 +1686,17 @@ template<fiat::scalar Element, class PredicateStage>
 auto
 operator |(
   const device_array<Element>& source, select_stage<PredicateStage> stage)
-  -> select_pipeline<Element, PredicateStage>
 {
-  return select_pipeline<Element, PredicateStage> {
-    source, std::move(stage.predicate)
-  };
+  if constexpr (!fiat::archetype_stage<PredicateStage, Element>)
+  {
+    static_assert(false, detail::select_mismatch);
+  }
+  else
+  {
+    return select_pipeline<Element, PredicateStage> {
+      source, std::move(stage.predicate)
+    };
+  }
 }
 
 export
@@ -1842,9 +1712,15 @@ record(
   compacted<Element>&                             result,
   workspace& workspace) -> std::expected<void, error_t>
 {
+  record_barrier(command_buffer, compute_reuse);
   if (
-    auto error = record(
-      command_buffer, context, computation.source() | computation.stage(), flags);
+    auto error = record_kernel<Element>(
+      command_buffer,
+      context,
+      computation.stage(),
+      {},
+      computation.source(),
+      flags);
     !error)
   {
     return error;
