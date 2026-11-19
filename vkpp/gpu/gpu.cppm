@@ -1891,6 +1891,7 @@ record(
     context,
     fiat::scatter(),
     {},
+    computation.source(),
     output,
     flags,
     indices,
