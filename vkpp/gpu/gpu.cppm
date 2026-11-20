@@ -263,7 +263,7 @@ static_assert(
 
 static_assert(
   covers(
-    {.scratch_bytes = fiat::detail::reduce_scratch_bytes},
+    {.scratch_bytes = fiat::detail::partial_scratch_bytes},
     fiat::workspace_of<fiat::scan_stage<
       fiat::chain<>,
       fiat::plus,
@@ -723,7 +723,7 @@ private:
     const auto group_size = std::bit_floor(clamped_group_size);
 
     auto default_workspace = create_workspace(
-      *device, *pool, {.scratch_bytes = fiat::detail::reduce_scratch_bytes});
+      *device, *pool, {.scratch_bytes = fiat::detail::partial_scratch_bytes});
     if (!default_workspace)
     {
       return std::unexpected {default_workspace.error()};
