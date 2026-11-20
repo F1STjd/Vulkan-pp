@@ -165,16 +165,6 @@ struct kernel_traits<Element, Stage>
   };
 };
 
-template<fiat::scalar Element, class Uniform, class Operation>
-  requires fiat::uniform_traceable<Operation, Element, Uniform>
-struct kernel_traits<Element, fiat::transform_with_stage<Uniform, Operation>>
-{
-  static constexpr auto words =
-    fiat::compile<Element>(fiat::transform_with_stage<Uniform, Operation> {});
-  static constexpr std::array  entries {fiat::transform_entry};
-  static constexpr std::size_t push_size {sizeof(fiat::detail::transform_push)};
-};
-
 template<fiat::soa_element Element, class Operation>
 struct kernel_traits<Element, fiat::foreach_stage<Operation>>
 {
@@ -817,60 +807,6 @@ pack_arguments(const std::tuple<Arguments...>& arguments)
   return words;
 }
 
-template<class... Arguments>
-[[nodiscard]]
-constexpr
-auto
-pack_uniform_arguments(
-  std::uint64_t address, const std::tuple<Arguments...>& arguments)
-  -> std::array<std::uint32_t, fiat::argument_capacity>
-{
-  auto words = pack_arguments<2UZ>(arguments);
-  words[ 0 ] = static_cast<std::uint32_t>(address);
-  words[ 1 ] = static_cast<std::uint32_t>(address >> 32U);
-  return words;
-}
-
-template<fiat::scalar Element, class Stage>
-[[nodiscard]]
-auto
-record_transform_with(
-  vk::raii::CommandBuffer&                                  command_buffer,
-  context&                                                  context,
-  const device_array<Element>&                              source,
-  device_array<Element>&                                    output,
-  const std::array<std::uint32_t, fiat::argument_capacity>& arguments)
-  -> std::expected<void, error_t>
-{
-  const auto count = source.size();
-  if (output.size() != count)
-  {
-    return std::unexpected {make_app_error(app_error_code::invalid_data_size)};
-  }
-
-  auto kernel = context.kernel<Element, Stage>();
-  if (!kernel) { return std::unexpected {kernel.error()}; }
-
-  auto input_view  = source.addressed_view(context.device());
-  auto output_view = output.addressed_view(context.device());
-  if (!input_view) { return std::unexpected {input_view.error()}; }
-  if (!output_view) { return std::unexpected {output_view.error()}; }
-
-  const auto input_address  = input_view->device_address();
-  const auto output_address = output_view->device_address();
-  record_chunks(
-    command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
-      return fiat::detail::transform_push {
-        .input     = input_address,
-        .output    = output_address,
-        .count     = count,
-        .first     = first,
-        .arguments = arguments,
-      };
-    });
-  return {};
-}
-
 template<fiat::scalar Element, class Computation>
 [[nodiscard]]
 auto
@@ -1046,42 +982,6 @@ operator |(
       std::move(next)));
 }
 
-export template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
-  requires fiat::uniform_traceable<Operation, Element, Uniform>
-class transform_with_pipeline
-{
-public:
-  using argument_tuple =
-    decltype(fiat::transform_with_stage<Uniform, Operation>::arguments);
-
-  explicit transform_with_pipeline(
-    const device_array<Element>& source,
-    std::uint64_t                address,
-    argument_tuple               arguments)
-  : source_ {source}, address_ {address}, arguments_ {std::move(arguments)}
-  {}
-
-  [[nodiscard]]
-  auto
-  source() const noexcept -> const device_array<Element>&
-  { return source_; }
-
-  [[nodiscard]]
-  auto
-  address() const noexcept -> std::uint64_t
-  { return address_; }
-
-  [[nodiscard]]
-  auto
-  arguments() const noexcept -> const argument_tuple&
-  { return arguments_; }
-
-private:
-  const device_array<Element>& source_ {};
-  std::uint64_t                address_ {};
-  argument_tuple               arguments_;
-};
-
 export
 template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
 [[nodiscard]]
@@ -1096,11 +996,10 @@ operator |(
   }
   else
   {
-    return transform_with_pipeline<Element, Uniform, Operation> {
-      source,
-      stage.address,
-      std::move(stage.arguments),
-    };
+    return array_pipeline<
+      Element,
+      fiat::transform_with_stage<Uniform, Operation>
+    > {source, std::move(stage)};
   }
 }
 
@@ -1579,61 +1478,6 @@ run(context& context, const sink_pipeline<Element, Stage>& computation)
           });
       });
 }
-
-export
-template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
-[[nodiscard]]
-auto
-record(
-  vk::raii::CommandBuffer&                                    command_buffer,
-  context&                                                    context,
-  const transform_with_pipeline<Element, Uniform, Operation>& computation,
-  device_array<Element>& output) -> std::expected<void, error_t>
-{
-  return detail::record_transform_with<
-    Element,
-    fiat::transform_with_stage<Uniform, Operation>
-  >(command_buffer,
-    context,
-    computation.source(),
-    output,
-    detail::pack_uniform_arguments(
-      computation.address(), computation.arguments()));
-}
-
-export
-template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
-[[nodiscard]]
-auto
-run(
-  context&                                                    context,
-  const transform_with_pipeline<Element, Uniform, Operation>& computation,
-  device_array<Element>& output) -> std::expected<void, error_t>
-{
-  return submit_and_wait(
-    context,
-    [ & ](
-      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
-      if (
-        auto error = record(command_buffer, context, computation, output);
-        !error)
-      {
-        return error;
-      }
-      record_barrier(command_buffer, compute_write_to_any_read);
-      return {};
-    });
-}
-
-export
-template<fiat::scalar Element, fiat::scalar Uniform, class Operation>
-[[nodiscard]]
-auto
-run(
-  context&                                                    context,
-  const transform_with_pipeline<Element, Uniform, Operation>& computation)
-  -> std::expected<device_array<Element>, error_t>
-{ return detail::run_into_new_array<Element>(context, computation); }
 
 export template<fiat::scalar Element>
 struct compacted
