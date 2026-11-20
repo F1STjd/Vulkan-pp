@@ -795,7 +795,7 @@ inline constexpr std::string_view foreach_mismatch {
 inline constexpr std::string_view select_mismatch {
   "this vkpp::gpu::select cannot run on this array: the predicate must take "
   "(value, arguments...) and return fiat::value<bool>, and every runtime "
-  "argument mus have the array's element type"
+  "argument must have the array's element type"
 };
 
 template<std::size_t first_slot, class... Arguments>
