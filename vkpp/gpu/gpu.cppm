@@ -143,9 +143,6 @@ export struct context_create_info
   std::filesystem::path             pipeline_cache_path {};
 };
 
-namespace detail
-{
-
 template<class Element, class Stage>
 struct kernel_traits;
 
@@ -251,8 +248,6 @@ transpose_from_soa_bytes(std::span<const std::byte>, std::span<Element>)
 
 #endif
 
-} // namespace detail
-
 inline constexpr std::uint32_t shader_index_limit {
   std::numeric_limits<std::int32_t>::max(),
 };
@@ -330,7 +325,7 @@ public:
   kernel()
     -> std::expected<std::reference_wrapper<const compute_pipeline>, error_t>
   {
-    using traits = detail::kernel_traits<Element, Stage>;
+    using traits = kernel_traits<Element, Stage>;
     static_assert(
       EntryIndex < traits::entries.size(),
       "this kernel has no entry point with that index");
@@ -440,7 +435,7 @@ public:
     }
     const auto byte_count = fiat::detail::soa_bytes<Element>(*count);
     std::vector<std::byte> staging(static_cast<std::size_t>(byte_count));
-    detail::transpose_to_soa_bytes<Element>(host, staging);
+    transpose_to_soa_bytes<Element>(host, staging);
     return upload_device_local_buffer(
       buffer_upload_create_info_for<buffer_kind::device_address> {
         .device = device_,
@@ -519,7 +514,7 @@ public:
           return readback.copy_mapped_into(std::span {staging})
             .transform([ & ] -> std::vector<Element> {
               std::vector<Element> host(array.size());
-              detail::transpose_from_soa_bytes<Element>(staging, host);
+              transpose_from_soa_bytes<Element>(staging, host);
               return host;
             });
         });
@@ -760,9 +755,6 @@ private:
   readback_buffer                   reduce_readback_;
 };
 
-namespace detail
-{
-
 inline constexpr std::string_view transform_mismatch {
   "this fiat::transform cannot run on this array: every runtime argument must "
   "have the array's element type, and the lambda must take (value, "
@@ -872,8 +864,6 @@ read_scalar(context& context) -> std::expected<Element, error_t>
     .transform([ & ] -> Element { return value; });
 }
 
-} // namespace detail
-
 static_assert(
   fill_dispatch_push<float>(
     fiat::transform(fiat::multiplies {}, 3.0F) |
@@ -938,16 +928,13 @@ operator |(
 {
   if constexpr (!fiat::traceable<Operation, Element>)
   {
-    static_assert(false, detail::transform_mismatch);
+    static_assert(false, transform_mismatch);
   }
   else
   {
     return transform_pipeline<Element, Operation> {source, std::move(stage)};
   }
 }
-
-namespace detail
-{
 
 template<fiat::scalar Element, class Operation, class Fused>
 [[nodiscard]]
@@ -968,8 +955,6 @@ extend_transform_pipeline(
   }
 }
 
-} // namespace detail
-
 export
 template<fiat::scalar Element, class Operation, class Next>
 [[nodiscard]]
@@ -978,7 +963,7 @@ operator |(
   const transform_pipeline<Element, Operation>& current,
   fiat::transform_stage<Next>                   next)
 {
-  return detail::extend_transform_pipeline(
+  return extend_transform_pipeline(
     current,
     fiat::fuse(
       fiat::transform_stage<Operation> {.arguments = current.arguments()},
@@ -995,7 +980,7 @@ operator |(
 {
   if constexpr (!fiat::uniform_traceable<Operation, Element, Uniform>)
   {
-    static_assert(false, detail::transform_with_mismatch);
+    static_assert(false, transform_with_mismatch);
   }
   else
   {
@@ -1040,7 +1025,7 @@ operator |(soa_array<Element>& buffer, fiat::foreach_stage<Operation> stage)
 {
   if constexpr (!fiat::foreach_traceable<Operation, Element>)
   {
-    static_assert(false, detail::foreach_mismatch);
+    static_assert(false, foreach_mismatch);
   }
   else
   {
@@ -1068,7 +1053,7 @@ record(
   auto base = computation.buffer().base_address(context.device());
   if (!base) { return std::unexpected {base.error()}; }
 
-  const auto arguments = detail::pack_arguments<0UZ>(computation.arguments());
+  const auto arguments = pack_arguments<0UZ>(computation.arguments());
 
   record_chunks(
     command_buffer, context, kernel->get(), count, [ & ](std::uint32_t first) {
@@ -1271,7 +1256,7 @@ template<fiat::scalar Element, class Stage>
 auto
 run(context& context, const array_pipeline<Element, Stage>& computation)
   -> std::expected<device_array<Element>, error_t>
-{ return detail::run_into_new_array<Element>(context, computation); }
+{ return run_into_new_array<Element>(context, computation); }
 
 export struct execute_stage
 {
@@ -1341,7 +1326,7 @@ record_sink_result(
 {
   return record(command_buffer, context, computation, workspace)
     .transform([ & ] -> void {
-      detail::record_result_copy<Element>(
+      record_result_copy<Element>(
         command_buffer,
         workspace.buffer().buffer(),
         workspace.offset(workspace_region::scratch) + fiat::reduce_result_offset,
@@ -1372,7 +1357,7 @@ run(
         copy_write_to_host_read);
     })
     .and_then([ & ] -> std::expected<Element, error_t> {
-      return detail::read_scalar<Element>(context);
+      return read_scalar<Element>(context);
     });
 }
 
@@ -1392,7 +1377,7 @@ operator |(const sink_pipeline<Element, Stage>& computation, keep_stage stage)
   -> std::expected<device_scalar<Element>, error_t>
 {
   auto& context = stage.context;
-  auto  slot    = detail::allocate_scalar<Element>(context);
+  auto  slot    = allocate_scalar<Element>(context);
   if (!slot) { return std::unexpected {slot.error()}; }
 
   return submit_and_wait(
@@ -1536,7 +1521,7 @@ operator |(
 {
   if constexpr (!fiat::archetype_stage<PredicateStage, Element>)
   {
-    static_assert(false, detail::select_mismatch);
+    static_assert(false, select_mismatch);
   }
   else
   {
@@ -1642,18 +1627,13 @@ run(
     .transform([ & ] -> compacted<Element> { return std::move(result); });
 }
 
-namespace detail
-{
-
 template<class Computation>
 concept runnable = requires(context& context, const Computation& computation) {
   run(context, computation);
 };
 
-} // namespace detail
-
 export
-template<detail::runnable Computation>
+template<runnable Computation>
 [[nodiscard]]
 auto
 operator |(const Computation& computation, execute_stage stage)
