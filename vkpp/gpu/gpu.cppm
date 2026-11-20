@@ -875,19 +875,22 @@ read_scalar(context& context) -> std::expected<Element, error_t>
 } // namespace detail
 
 static_assert(
-  std::bit_cast<dispatch_words>(fiat::detail::transform_push {
-    .input     = 0x01'23'45'67'89'AB'CD'EFULL,
-    .output    = 0xFE'DC'BA'98'76'54'32'10ULL,
-    .count     = 1'048'576U,
-    .first     = 0U,
-    .arguments = detail::pack_arguments<0UZ>(std::tuple {3.0F, 7.0F}),
-  }) ==
-    fill_dispatch_push<float>(
-      fiat::transform(fiat::multiplies {}, 3.0F) |
-        fiat::transform(fiat::plus {}, 7.0F),
-      {0x01'23'45'67'89'AB'CD'EFULL, 0xFE'DC'BA'98'76'54'32'10ULL},
-      1'048'576U),
-  "the generic dispatch push is byte-equal to the transform push");
+  fill_dispatch_push<float>(
+    fiat::transform(fiat::multiplies {}, 3.0F) |
+      fiat::transform(fiat::plus {}, 7.0F),
+    {0x01'23'45'67'89'AB'CD'EFULL, 0xFE'DC'BA'98'76'54'32'10ULL},
+    1'048'576U) ==
+    dispatch_words {
+      0x89'AB'CD'EFU,
+      0x01'23'45'67U,
+      0x76'54'32'10U,
+      0xFE'DC'BA'98U,
+      1'048'576U,
+      0U,
+      std::bit_cast<std::uint32_t>(3.0F),
+      std::bit_cast<std::uint32_t>(7.0F),
+    },
+  "the generic dispatch push lays out the transform skeleton push block");
 
 export template<fiat::scalar Element, fiat::archetype_stage<Element> Stage>
   requires (
