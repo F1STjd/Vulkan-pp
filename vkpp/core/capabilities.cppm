@@ -54,6 +54,7 @@ export struct device_feature_requests
   capability_requirement graphics_pipeline_library {disabled};
   capability_requirement shader_object {disabled};
   capability_requirement maintenance4 {disabled};
+  capability_requirement maintenance9 {disabled};
   capability_requirement vulkan_memory_model {disabled};
   capability_requirement zero_initialize_workgroup_memory {disabled};
   capability_requirement subgroup_size_control {disabled};
@@ -109,6 +110,7 @@ export struct enabled_device_features
   bool descriptor_heap {false};
   bool pipeline_binary {false};
   bool maintenance4 {false};
+  bool maintenance9 {false};
   bool vulkan_memory_model {false};
   bool zero_initialize_workgroup_memory {false};
   bool subgroup_size_control {false};
@@ -151,6 +153,9 @@ export struct compute_capabilities
   std::uint32_t                maximum_push_constants_size {};
   vk::DeviceSize               maximum_buffer_size {};
   std::array<std::uint32_t, 3> maximum_workgroup_size {};
+  float                        timestamp_period {};
+  std::uint32_t                timestamp_valid_bits {};
+  bool                         maintenance9 {false};
   std::vector<vk::CooperativeMatrixPropertiesKHR>
     cooperative_matrix_properties {};
   vk::PhysicalDeviceShaderIntegerDotProductProperties
