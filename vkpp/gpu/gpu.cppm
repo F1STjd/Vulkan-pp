@@ -22,6 +22,7 @@ import vkpp.command;
 import vkpp.command.record;
 import vkpp.pipeline.compute;
 import vkpp.pipeline.cache;
+import vkpp.query;
 export import vkpp.cstring_view;
 export import :recorder;
 export import :workspace;
@@ -591,6 +592,11 @@ public:
   reduce_readback(this auto&& self) -> decltype(auto)
   { return std::forward_like<decltype(self)>(self.reduce_readback_); }
 
+  [[nodiscard]]
+  auto
+  timestamps(this auto&& self) -> decltype(auto)
+  { return std::forward_like<decltype(self)>(self.timestamps_); }
+
 private:
   static constexpr std::array validation_extensions {
     vk::EXTDebugUtilsExtensionName,
@@ -605,6 +611,7 @@ private:
         .synchronization2                 = capability_requirement::required,
         .buffer_device_address            = capability_requirement::required,
         .maintenance4                     = capability_requirement::required,
+        .maintenance9                     = capability_requirement::preferred,
         .vulkan_memory_model              = capability_requirement::required,
         .zero_initialize_workgroup_memory = capability_requirement::required,
         .subgroup_size_control            = capability_requirement::preferred,
@@ -631,7 +638,8 @@ private:
     std::uint32_t                     max_group_count,
     std::filesystem::path             pipeline_cache_path,
     workspace&&                       default_workspace,
-    readback_buffer&&                 reduce_readback)
+    readback_buffer&&                 reduce_readback,
+    timestamp_ring&&                  timestamps)
   : instance_ {std::move(instance)},
     device_ {std::move(device)},
     pool_ {std::move(pool)},
@@ -641,7 +649,8 @@ private:
     max_group_count_ {max_group_count},
     pipeline_cache_path_ {std::move(pipeline_cache_path)},
     default_workspace_ {std::move(default_workspace)},
-    reduce_readback_ {std::move(reduce_readback)}
+    reduce_readback_ {std::move(reduce_readback)},
+    timestamps_ {std::move(timestamps)}
   {}
 
   [[nodiscard]]
@@ -728,6 +737,22 @@ private:
       readback_buffer::create(device->allocator(), sizeof(std::uint32_t));
     if (!reduce_readback) { return std::unexpected {reduce_readback.error()}; }
 
+    const auto& capabilities = device->selected_capabilities().compute;
+    if (
+      capabilities.timestamp_period == 0.0F ||
+      capabilities.timestamp_valid_bits == 0U)
+    {
+      return std::unexpected {
+        make_app_error(app_error_code::feature_not_supported),
+      };
+    }
+    auto timestamps = timestamp_ring::create_elapsed(
+      device->device(),
+      capabilities.timestamp_period,
+      capabilities.timestamp_valid_bits,
+      capabilities.maintenance9);
+    if (!timestamps) { return std::unexpected {timestamps.error()}; }
+
     return context {
       std::move(instance),
       std::move(*device),
@@ -739,6 +764,7 @@ private:
       std::move(create_info.pipeline_cache_path),
       std::move(*default_workspace),
       std::move(*reduce_readback),
+      std::move(*timestamps),
     };
   }
 
@@ -753,6 +779,7 @@ private:
   std::filesystem::path             pipeline_cache_path_ {};
   workspace                         default_workspace_;
   readback_buffer                   reduce_readback_;
+  timestamp_ring                    timestamps_;
 };
 
 inline constexpr std::string_view transform_mismatch {
