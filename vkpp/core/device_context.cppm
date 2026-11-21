@@ -629,7 +629,8 @@ private:
     vk::PhysicalDeviceCooperativeMatrixFeaturesKHR,
     vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT,
     vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT,
-    vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR
+    vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR,
+    vk::PhysicalDeviceMaintenance9FeaturesKHR
   >;
 
   [[nodiscard]]
@@ -680,6 +681,9 @@ private:
     v13.shaderIntegerDotProduct = vk::Bool32 {compute.integer_dot_product};
     v13.shaderZeroInitializeWorkgroupMemory =
       vk::Bool32 {enabled.zero_initialize_workgroup_memory};
+
+    chain.get<vk::PhysicalDeviceMaintenance9FeaturesKHR>().maintenance9 =
+      vk::Bool32 {enabled.maintenance9};
 
     auto& eds = chain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
     eds.extendedDynamicState = vk::Bool32 {enabled.extended_dynamic_state};
@@ -789,6 +793,10 @@ private:
         vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR;
       chain.unlink<explicit_layout>();
     }
+    if (!enabled.maintenance9)
+    {
+      chain.unlink<vk::PhysicalDeviceMaintenance9FeaturesKHR>();
+    }
   }
 
   [[nodiscard]]
@@ -892,6 +900,18 @@ private:
       extensions,
       vk::KHRWorkgroupMemoryExplicitLayoutExtensionName);
 
+    const auto maintenance9_feature = query_extension_feature<
+      vk::PhysicalDeviceMaintenance9FeaturesKHR
+    >(physical_device, extensions, vk::KHRMaintenance9ExtensionName);
+
+    const auto queue_families = physical_device.getQueueFamilyProperties();
+    const auto it             = std::ranges::find_if(
+      queue_families, [](const vk::QueueFamilyProperties& qf) {
+        return static_cast<bool>(qf.queueFlags & vk::QueueFlagBits::eGraphics);
+      });
+    const std::uint32_t timestamp_valid_bits =
+      it != queue_families.end() ? it->timestampValidBits : 0U;
+
     compute_capabilities output {
       .subgroup_size                 = vulkan11.subgroupSize,
       .minimum_subgroup_size         = vulkan13.minSubgroupSize,
@@ -930,11 +950,15 @@ private:
       .maximum_shared_memory_size  = limits.maxComputeSharedMemorySize,
       .maximum_push_constants_size = limits.maxPushConstantsSize,
       .maximum_buffer_size         = vulkan13.maxBufferSize,
-      .maximum_workgroup_size      = {
-        limits.maxComputeWorkGroupSize[ 0 ],
-        limits.maxComputeWorkGroupSize[ 1 ],
-        limits.maxComputeWorkGroupSize[ 2 ],
-      },
+      .maximum_workgroup_size =
+        {
+          limits.maxComputeWorkGroupSize[ 0 ],
+          limits.maxComputeWorkGroupSize[ 1 ],
+          limits.maxComputeWorkGroupSize[ 2 ],
+        },
+      .timestamp_period     = limits.timestampPeriod,
+      .timestamp_valid_bits = timestamp_valid_bits,
+      .maintenance9         = maintenance9_feature.maintenance9 == vk::True,
     };
     if (output.cooperative_matrix)
     {
@@ -996,6 +1020,7 @@ private:
     support.workgroup_memory_explicit_layout =
       support.workgroup_memory_explicit_layout &&
       enabled.workgroup_memory_explicit_layout;
+    support.maintenance9 = support.maintenance9 && enabled.maintenance9;
     return support;
   }
 
@@ -1129,7 +1154,8 @@ private:
       missing(features.float_atomics, any_float_atomics(compute)) ||
       missing(
         features.workgroup_memory_explicit_layout,
-        compute.workgroup_memory_explicit_layout))
+        compute.workgroup_memory_explicit_layout) ||
+      missing(features.maintenance9, compute.maintenance9))
     {
       return false;
     }
@@ -1427,6 +1453,8 @@ private:
       profile.features.maintenance4,
       v13.maintenance4 == vk::True,
       "maintenance4");
+    enabled.maintenance9 = apply(
+      profile.features.maintenance9, compute.maintenance9, "maintenance9");
     enabled.zero_initialize_workgroup_memory = apply(
       profile.features.zero_initialize_workgroup_memory,
       v13.shaderZeroInitializeWorkgroupMemory == vk::True,
@@ -1585,6 +1613,7 @@ private:
     {
       push_unique(vk::KHRWorkgroupMemoryExplicitLayoutExtensionName);
     }
+    if (enabled.maintenance9) { push_unique(vk::KHRMaintenance9ExtensionName); }
     return names;
   }
 
