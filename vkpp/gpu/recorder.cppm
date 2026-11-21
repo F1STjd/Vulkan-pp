@@ -9,6 +9,7 @@ import vkpp.integer;
 import vkpp.capabilities;
 import vkpp.command;
 import vkpp.command.record;
+import vkpp.query;
 import vkpp.pipeline.compute;
 import :workspace;
 
@@ -337,6 +338,39 @@ record_kernel(
       });
   }
   return {};
+}
+
+export
+template<std::same_as<context> Context, class... Arguments>
+[[nodiscard]]
+auto
+timed(Context& context, Arguments&&... arguments)
+  -> std::expected<std::chrono::duration<double, std::nano>, error_t>
+  requires requires(vk::raii::CommandBuffer& command_buffer) {
+    {
+      record(command_buffer, context, arguments...)
+    } -> std::same_as<std::expected<void, error_t>>;
+  }
+{
+  return submit_and_wait(
+    context,
+    [ & ](
+      vk::raii::CommandBuffer& command_buffer) -> std::expected<void, error_t> {
+      context.timestamps().reset_elapsed(command_buffer);
+      context.timestamps().write(
+        command_buffer, 0U, 0U, vk::PipelineStageFlagBits2::eTopOfPipe);
+      if (auto error = record(command_buffer, context, arguments...); !error)
+      {
+        return error;
+      }
+      context.timestamps().write(
+        command_buffer, 0U, 1U, vk::PipelineStageFlagBits2::eBottomOfPipe);
+      return {};
+    })
+    .and_then(
+      [ & ] -> std::expected<std::chrono::duration<double, std::nano>, error_t> {
+        return context.timestamps().read_elapsed();
+      });
 }
 
 } // namespace vkpp::gpu
